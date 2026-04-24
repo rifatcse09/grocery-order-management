@@ -17,6 +17,8 @@ import { AdminCreateAccountPage } from "./pages/AdminCreateAccountPage";
 import { AdminOutstandingBillsPage } from "./pages/AdminOutstandingBillsPage";
 import { AdminBillingStatementsPage } from "./pages/AdminBillingStatementsPage";
 import { AdminFinancialLedgerPage } from "./pages/AdminFinancialLedgerPage";
+import { AdminOrdersPage } from "./pages/AdminOrdersPage";
+import { AdminOrderDetailPage } from "./pages/AdminOrderDetailPage";
 
 function RequireAuth() {
   const { user } = useAuth();
@@ -43,6 +45,8 @@ export default function App() {
           <Route path="/moderator/dashboard" element={<AdminDashboardPage />} />
           <Route path="/moderator/ledger" element={<AdminFinancialLedgerPage />} />
           <Route path="/admin" element={<AdminDashboardPage />} />
+          <Route path="/admin/orders" element={<AdminOrdersPage />} />
+          <Route path="/admin/orders/:id" element={<AdminOrderDetailPage />} />
           <Route path="/admin/statements" element={<AdminBillingStatementsPage />} />
           <Route path="/admin/outstanding" element={<AdminOutstandingBillsPage />} />
           <Route path="/admin/ledger" element={<AdminFinancialLedgerPage />} />
