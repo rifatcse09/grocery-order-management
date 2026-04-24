@@ -1,0 +1,68 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Bengali:wght@400;500;600;700;800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.font-bn {
+  font-family: "Noto Sans Bengali", "Hind Siliguri", Inter, sans-serif;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body > * {
+    visibility: hidden;
+  }
+
+  .print-invoice-only,
+  .print-invoice-only *,
+  .print-doc-only,
+  .print-doc-only * {
+    visibility: visible;
+  }
+
+  .print-invoice-only {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0 !important;
+    padding: 0 !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .print-doc-only {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0 !important;
+    padding: 0 !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+}
