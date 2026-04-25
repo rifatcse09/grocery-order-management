@@ -31,18 +31,18 @@ html {
     padding: 0 !important;
   }
 
-  body > * {
+  body.print-isolated > * {
     visibility: hidden;
   }
 
-  .print-invoice-only,
-  .print-invoice-only *,
-  .print-doc-only,
-  .print-doc-only * {
+  body.print-isolated .print-invoice-only,
+  body.print-isolated .print-invoice-only *,
+  body.print-isolated .print-doc-only,
+  body.print-isolated .print-doc-only * {
     visibility: visible;
   }
 
-  .print-invoice-only {
+  body.print-isolated .print-invoice-only {
     position: absolute;
     left: 0;
     top: 0;
@@ -54,7 +54,7 @@ html {
     page-break-inside: avoid;
   }
 
-  .print-doc-only {
+  body.print-isolated .print-doc-only {
     position: absolute;
     left: 0;
     top: 0;

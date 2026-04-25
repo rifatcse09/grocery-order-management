@@ -11,8 +11,10 @@ export function UserChallanDetailPage() {
   useEffect(() => {
     if (!order) return;
     const prevTitle = document.title;
+    document.body.classList.add("print-isolated");
     document.title = `Challan-${order.orderNo}`;
     return () => {
+      document.body.classList.remove("print-isolated");
       document.title = prevTitle;
     };
   }, [order]);

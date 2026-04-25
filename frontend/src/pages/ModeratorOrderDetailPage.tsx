@@ -67,11 +67,13 @@ export function ModeratorOrderDetailPage() {
   const printWithTitle = (doc: "challan" | "invoice", title: string) => {
     const prevTitle = document.title;
     setPrintDoc(doc);
+    document.body.classList.add("print-isolated");
     document.title = title;
     setTimeout(() => {
       window.print();
       setTimeout(() => {
         setPrintDoc(null);
+        document.body.classList.remove("print-isolated");
         document.title = prevTitle;
       }, 100);
     }, 0);

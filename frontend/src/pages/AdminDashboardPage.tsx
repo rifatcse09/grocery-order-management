@@ -393,7 +393,7 @@ export function AdminDashboardPage() {
               type="button"
               onClick={() => setTrendMode("weekly")}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                trendMode === "weekly" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                trendMode === "weekly" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
               Weekly
@@ -402,7 +402,7 @@ export function AdminDashboardPage() {
               type="button"
               onClick={() => setTrendMode("monthly")}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                trendMode === "monthly" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                trendMode === "monthly" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
               Monthly
@@ -488,33 +488,6 @@ export function AdminDashboardPage() {
             metricLabel="Orders"
             metric={(x) => String(x.orders)}
           />
-        </div>
-      </div>
-
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
-        <h2 className="text-sm font-semibold">Statements & reports</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          View filtered financial summary and export snapshot reports.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => downloadCsv(filteredOrders)}
-            className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
-          >
-            Download CSV report
-          </button>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold"
-          >
-            Print / Save PDF
-          </button>
-          <span className="text-xs text-slate-500">
-            Paid vs outstanding (filtered): ৳ {Math.round(stats.totalSales).toLocaleString("en-US")} /{" "}
-            ৳ {Math.max(0, Math.round(stats.totalSales - stats.avg * stats.invoiced)).toLocaleString("en-US")}
-          </span>
         </div>
       </div>
 
@@ -615,27 +588,6 @@ function Filter({ label, children }: { label: string; children: ReactNode }) {
       {children}
     </label>
   );
-}
-
-function downloadCsv(rows: Array<{ orderNo: string; orderDate: string; contactPerson: string; status: string; grandTotal?: number }>) {
-  const header = ["Order No", "Order Date", "Customer", "Status", "Grand Total"];
-  const body = rows.map((r) => [
-    r.orderNo,
-    r.orderDate,
-    r.contactPerson || "",
-    r.status,
-    String(r.grandTotal ?? 0),
-  ]);
-  const csv = [header, ...body]
-    .map((line) => line.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "admin-dashboard-report.csv";
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function StatusPill({
