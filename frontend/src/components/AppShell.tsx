@@ -18,10 +18,17 @@ import {
   BookText,
   PanelLeftClose,
   PanelLeftOpen,
+  Bell,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useOrders } from "../context/OrdersContext";
 import { BrandLogo } from "./BrandLogo";
+import {
+  moderatorNewSubmittedCount,
+  NOTIFICATIONS_EVENT,
+  readAdminNotifyOrderIds,
+} from "../lib/orderNotifications";
 import type { Role } from "../types";
 
 const navFor: Record<
@@ -52,7 +59,9 @@ const navFor: Record<
 
 export function AppShell() {
   const { user, logout, updateProfile, updatePassword } = useAuth();
+  const { orders } = useOrders();
   const navigate = useNavigate();
+  const [notifTick, setNotifTick] = useState(0);
   const [open, setOpen] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -64,12 +73,18 @@ export function AppShell() {
   const [nextPassword, setNextPassword] = useState("");
   const [message, setMessage] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
-  if (!user) return <Outlet />;
 
   useEffect(() => {
+    const bump = () => setNotifTick((t) => t + 1);
+    window.addEventListener(NOTIFICATIONS_EVENT, bump);
+    return () => window.removeEventListener(NOTIFICATIONS_EVENT, bump);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     setName(user.name);
     setPhone(user.phone);
-  }, [user.name, user.phone]);
+  }, [user?.name, user?.phone, user]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -79,10 +94,19 @@ export function AppShell() {
     return () => window.removeEventListener("click", onClick);
   }, []);
 
+  if (!user) return <Outlet />;
+
   const items = navFor[user.role];
   const dedup = items.filter(
     (item, i, arr) => arr.findIndex((x) => x.to === item.to) === i,
   );
+
+  const orderNotifyCount = useMemo(() => {
+    if (user.role === "admin") return readAdminNotifyOrderIds().length;
+    if (user.role === "moderator") return moderatorNewSubmittedCount(orders);
+    return 0;
+  }, [notifTick, user.role, orders]);
+  const showOrderNotifications = user.role === "admin" || user.role === "moderator";
 
   return (
     <div className="min-h-screen bg-brand-surface text-brand-dark">
@@ -175,7 +199,30 @@ export function AppShell() {
               </button>
               <BrandLogo className="max-w-[58vw] md:max-w-[min(100%,320px)]" />
             </div>
-            <div className="relative" ref={wrapRef}>
+            <div className="flex items-center gap-2">
+              {showOrderNotifications ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate(user.role === "admin" ? "/admin/orders" : "/moderator/orders")
+                  }
+                  className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm ring-2 ring-slate-100 transition hover:bg-slate-50"
+                  aria-label={
+                    orderNotifyCount > 0
+                      ? `${orderNotifyCount} order update${orderNotifyCount === 1 ? "" : "s"}`
+                      : "Orders — no new notifications"
+                  }
+                  title="Order notifications"
+                >
+                  <Bell className="h-4 w-4" />
+                  {orderNotifyCount > 0 ? (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-amber-950 shadow">
+                      {orderNotifyCount > 99 ? "99+" : orderNotifyCount}
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
+              <div className="relative" ref={wrapRef}>
               <button
                 type="button"
                 onClick={() => setOpen((x) => !x)}
@@ -240,6 +287,7 @@ export function AppShell() {
                     Logout
                   </button>
                 </div>
+              </div>
             </div>
           </div>
         </header>

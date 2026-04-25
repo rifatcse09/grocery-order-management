@@ -35,7 +35,12 @@ export function ReviewOrderPage() {
 
   const confirm = () => {
     if (!linesOk || !deliveryOk || !signed) return;
-    upsertOrder({ ...order, status: "submitted", signatureDataUrl: order.signatureDataUrl });
+    upsertOrder({
+      ...order,
+      status: "submitted",
+      signatureDataUrl: order.signatureDataUrl,
+      submittedAt: order.submittedAt ?? new Date().toISOString(),
+    });
     navigate("/user/orders");
   };
 

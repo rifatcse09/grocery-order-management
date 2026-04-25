@@ -5,6 +5,11 @@ import { DeliveryChallanTemplate } from "../components/DeliveryChallanTemplate";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
+import {
+  flagOrderForAdminReview,
+  markModeratorSeenOrder,
+  orderHasPricingData,
+} from "../lib/orderNotifications";
 import type { Order } from "../types";
 
 function applyMarkup(sub: number): { pct: number; grand: number } {
@@ -24,6 +29,10 @@ export function ModeratorOrderDetailPage() {
     if (base) setOrder(base);
   }, [base]);
 
+  useEffect(() => {
+    if (order?.id) markModeratorSeenOrder(order.id);
+  }, [order?.id]);
+
   if (!base || !order) {
     return (
       <p className="text-sm">
@@ -32,12 +41,18 @@ export function ModeratorOrderDetailPage() {
     );
   }
 
-  const save = () => upsertOrder(order);
+  const save = () => {
+    upsertOrder(order);
+    if (orderHasPricingData(order)) {
+      flagOrderForAdminReview(order.id);
+    }
+  };
 
   const genChallan = () => {
     const next = { ...order, challanGenerated: true, status: "under_review" as const };
     setOrder(next);
     upsertOrder(next);
+    flagOrderForAdminReview(order.id);
   };
 
   const finalizeInvoice = () => {
@@ -53,6 +68,7 @@ export function ModeratorOrderDetailPage() {
     };
     setOrder(next);
     upsertOrder(next);
+    flagOrderForAdminReview(order.id);
   };
 
   const markDelivered = () => {
@@ -62,6 +78,7 @@ export function ModeratorOrderDetailPage() {
     };
     setOrder(next);
     upsertOrder(next);
+    flagOrderForAdminReview(order.id);
   };
 
   const printWithTitle = (doc: "challan" | "invoice", title: string) => {

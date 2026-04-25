@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
+import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
 import type { OrderStatus } from "../types";
 
 export function AdminOrdersPage() {
@@ -14,6 +16,13 @@ export function AdminOrdersPage() {
   const [docFilter, setDocFilter] = useState<"all" | "challan_yes" | "challan_no" | "invoice_yes" | "invoice_no">("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [adminNewIds, setAdminNewIds] = useState(() => readAdminNotifyOrderIds());
+
+  useEffect(() => {
+    const sync = () => setAdminNewIds(readAdminNotifyOrderIds());
+    window.addEventListener(NOTIFICATIONS_EVENT, sync);
+    return () => window.removeEventListener(NOTIFICATIONS_EVENT, sync);
+  }, []);
 
   const customers = useMemo(
     () =>
@@ -137,6 +146,7 @@ export function AdminOrdersPage() {
             <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
               <tr>
                 <th className="px-4 py-3">Order</th>
+                <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Challan</th>
@@ -147,7 +157,17 @@ export function AdminOrdersPage() {
             <tbody>
               {pageList.map((o) => (
                 <tr key={o.id} className="border-t border-violet-100 bg-white/95">
-                  <td className="px-4 py-4 font-mono text-base font-semibold text-slate-900">{o.orderNo}</td>
+                  <td className="px-4 py-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-base font-semibold text-slate-900">{o.orderNo}</span>
+                      {adminNewIds.includes(o.id) ? (
+                        <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 shadow-sm">
+                          New
+                        </span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
                   <td className="px-4 py-4 text-base font-semibold text-slate-800">{o.contactPerson}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={o.status} />
@@ -193,10 +213,20 @@ export function AdminOrdersPage() {
           {pageList.map((o) => (
             <div key={o.id} className="rounded-2xl border border-violet-200 bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-2">
-                <p className="font-mono text-sm font-semibold text-slate-900">{o.orderNo}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-mono text-sm font-semibold text-slate-900">{o.orderNo}</p>
+                  {adminNewIds.includes(o.id) ? (
+                    <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-950">
+                      New
+                    </span>
+                  ) : null}
+                </div>
                 <StatusBadge status={o.status} />
               </div>
-              <p className="mt-2 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-2 text-sm text-slate-600">
+                Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
+              </p>
+              <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
               <div className="mt-2 flex flex-wrap gap-2 text-sm">
                 <span
                   className={`rounded-full px-2.5 py-1 font-semibold ${o.challanGenerated ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-500"}`}

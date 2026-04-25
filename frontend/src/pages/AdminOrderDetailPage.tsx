@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { useEffect } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -14,6 +15,8 @@ import { DeliveryChallanTemplate } from "../components/DeliveryChallanTemplate";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
+import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { clearAdminOrderNotification } from "../lib/orderNotifications";
 
 function formatQty(kg: string, gram: string, piece: string) {
   const parts: string[] = [];
@@ -27,6 +30,11 @@ export function AdminOrderDetailPage() {
   const { id } = useParams();
   const { getById } = useOrders();
   const order = id ? getById(id) : undefined;
+
+  useEffect(() => {
+    if (!order?.id) return;
+    clearAdminOrderNotification(order.id);
+  }, [order?.id]);
 
   if (!order) {
     return (
@@ -116,6 +124,7 @@ export function AdminOrderDetailPage() {
         </h2>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <DetailTile icon={Calendar} label="Order date" value={order.orderDate} />
+          <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={order.deliveryTime || "—"} />

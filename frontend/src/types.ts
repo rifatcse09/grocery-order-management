@@ -41,6 +41,8 @@ export interface Order {
   ownerId?: string;
   orderNo: string;
   orderDate: string;
+  /** ISO timestamp when the user confirmed submit (optional on legacy / seed data). */
+  submittedAt?: string;
   deliveryDate: string;
   deliveryTime?: string;
   status: OrderStatus;
