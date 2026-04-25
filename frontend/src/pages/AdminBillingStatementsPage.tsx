@@ -151,7 +151,8 @@ export function AdminBillingStatementsPage() {
       <div>
         <h1 className="text-2xl font-bold">Billing cycle statements</h1>
         <p className="text-sm text-slate-600">
-          Customer-wise weekly bills with invoice totals, previous due carry-over, and status.
+          Customer-wise weekly bills with invoice totals, previous due carry-over, and due status. Tables scroll when
+          there are many rows or on narrow screens.
         </p>
       </div>
 
@@ -182,9 +183,9 @@ export function AdminBillingStatementsPage() {
           </label>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200">
-          <table className="w-full text-left text-base">
-            <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
+        <div className="mt-3 max-h-[min(70vh,640px)] overflow-auto rounded-2xl border border-violet-200 shadow-inner">
+          <table className="min-w-[920px] w-full text-left text-base">
+            <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
               <tr>
                 <th className="px-3 py-2">Customer</th>
                 <th className="px-3 py-2">Period</th>
@@ -305,9 +306,9 @@ export function AdminBillingStatementsPage() {
             </div>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200">
-            <table className="w-full text-left text-base">
-              <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
+          <div className="mt-3 max-h-[min(50vh,420px)] overflow-auto rounded-2xl border border-violet-200 shadow-inner">
+            <table className="min-w-[480px] w-full text-left text-base">
+              <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
                 <tr>
                   <th className="px-3 py-2">Invoice/Order</th>
                   <th className="px-3 py-2">Date</th>

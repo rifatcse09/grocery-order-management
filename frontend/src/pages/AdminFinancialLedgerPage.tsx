@@ -94,7 +94,8 @@ export function AdminFinancialLedgerPage() {
       <div>
         <h1 className="text-2xl font-bold">Financial ledger</h1>
         <p className="text-sm text-slate-600">
-          Invoice debits, statement-wise payments, and running balance.
+          Invoice debits, statement-wise payments, and running balance. Scroll the table on mobile or when there
+          are many rows.
         </p>
       </div>
 
@@ -153,9 +154,9 @@ export function AdminFinancialLedgerPage() {
           </label>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200 bg-white">
-        <table className="w-full text-left text-base">
-          <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
+        <div className="mt-3 max-h-[min(70vh,640px)] overflow-auto rounded-2xl border border-violet-200 bg-white shadow-inner">
+        <table className="min-w-[800px] w-full text-left text-base">
+          <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
             <tr>
               <th className="px-3 py-2">Date</th>
               <th className="px-3 py-2">Customer</th>

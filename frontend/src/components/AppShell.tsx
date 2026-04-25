@@ -113,14 +113,14 @@ export function AppShell() {
       {mobileNavOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/30 md:hidden"
+          className="fixed inset-0 z-40 bg-slate-900/60 backdrop-blur-sm md:hidden"
           onClick={() => setMobileNavOpen(false)}
           aria-label="Close menu overlay"
         />
       ) : null}
 
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-full w-72 flex-col border-r border-indigo-100 bg-gradient-to-b from-white via-indigo-50/40 to-violet-50/40 py-4 shadow-sm transition-all md:z-40 ${
+        className={`fixed left-0 top-0 z-50 flex h-full w-72 flex-col border-r py-4 transition-all max-md:border-slate-200 max-md:bg-white max-md:shadow-2xl md:z-40 md:border-indigo-100 md:bg-gradient-to-b md:from-white md:via-indigo-50/40 md:to-violet-50/40 md:shadow-sm ${
           sidebarCollapsed ? "md:w-20" : "md:w-60"
         } ${
           mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
@@ -159,7 +159,7 @@ export function AppShell() {
                 `group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
                   isActive
                     ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow"
-                    : "text-slate-700 hover:bg-white/80"
+                    : "text-slate-700 hover:bg-slate-100 md:hover:bg-white/80"
                 }`
               }
             >
