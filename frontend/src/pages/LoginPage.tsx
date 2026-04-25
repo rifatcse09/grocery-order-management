@@ -123,7 +123,7 @@ export function LoginPage() {
                   }}
                   className={`rounded-2xl border p-4 text-left transition ${
                     role === r.role
-                      ? "border-brand-orange bg-brand-orange/5 ring-2 ring-brand-orange/40"
+                      ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300"
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
@@ -140,7 +140,7 @@ export function LoginPage() {
                 <div>
                   <label className="text-xs font-medium text-slate-600">Full name</label>
                   <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Your name"
@@ -149,7 +149,7 @@ export function LoginPage() {
                 <div>
                   <label className="text-xs font-medium text-slate-600">Phone</label>
                   <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="+8801XXXXXXXXX"
@@ -160,7 +160,7 @@ export function LoginPage() {
             <div>
               <label className="text-xs font-medium text-slate-600">Email</label>
               <input
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
@@ -170,7 +170,7 @@ export function LoginPage() {
               <label className="text-xs font-medium text-slate-600">Password</label>
               <input
                 type="password"
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
@@ -181,7 +181,7 @@ export function LoginPage() {
                 <div>
                   <label className="text-xs font-medium text-slate-600">Billing address</label>
                   <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                     value={billingAddress}
                     onChange={(e) => setBillingAddress(e.target.value)}
                     placeholder="Billing address"
@@ -190,7 +190,7 @@ export function LoginPage() {
                 <div>
                   <label className="text-xs font-medium text-slate-600">Delivery address</label>
                   <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-brand-orange/30 focus:ring-2"
+                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
                     value={deliveryAddress}
                     onChange={(e) => setDeliveryAddress(e.target.value)}
                     placeholder="Delivery address"
@@ -203,7 +203,7 @@ export function LoginPage() {
               <button
                 type="button"
                 onClick={go}
-                className="w-full rounded-xl bg-brand-orange py-2.5 text-sm font-semibold text-white shadow hover:bg-[#e54d2e]"
+                className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
               >
                 Sign in
               </button>
@@ -211,7 +211,7 @@ export function LoginPage() {
               <button
                 type="button"
                 onClick={goSignup}
-                className="w-full rounded-xl bg-brand-orange py-2.5 text-sm font-semibold text-white shadow hover:bg-[#e54d2e]"
+                className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
               >
                 Create account
               </button>

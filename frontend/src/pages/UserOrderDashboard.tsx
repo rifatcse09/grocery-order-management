@@ -47,7 +47,7 @@ export function UserOrderDashboard() {
         </div>
         <Link
           to="/user/orders/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-orange px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-[#e54d2e] sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700 sm:w-auto"
         >
           <Plus className="h-4 w-4" />
           New order

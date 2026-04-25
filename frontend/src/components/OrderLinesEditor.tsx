@@ -35,7 +35,13 @@ export function OrderLinesEditor({
   };
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-card">
+    <div
+      className={`overflow-x-auto rounded-2xl border shadow-card ${
+        showPricing
+          ? "border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50"
+          : "border-slate-200 bg-white"
+      }`}
+    >
       <table
         className={`min-w-[720px] w-full border-collapse ${
           showPricing ? "text-base" : largeText ? "text-base" : "text-sm"
@@ -43,7 +49,9 @@ export function OrderLinesEditor({
       >
         <thead>
           <tr
-            className={`bg-slate-50 text-left font-semibold uppercase tracking-wide text-slate-500 ${
+            className={`text-left font-semibold uppercase tracking-wide ${
+              showPricing ? "bg-indigo-100/80 text-indigo-900" : "bg-slate-50 text-slate-500"
+            } ${
               showPricing || largeText ? "text-sm" : "text-xs"
             }`}
           >
@@ -66,7 +74,7 @@ export function OrderLinesEditor({
           {lines.map((line) => {
             const cat = catMap.get(line.categoryId);
             return (
-              <tr key={line.id} className="border-t border-slate-100 align-top">
+              <tr key={line.id} className={`${showPricing ? "border-t border-indigo-100 bg-white/95" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
                   {line.serial}
                 </td>
@@ -88,21 +96,21 @@ export function OrderLinesEditor({
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 px-2 py-1 ${largeText ? "text-base" : "text-sm"}`}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.kg}
                     onChange={(e) => update(line.id, { kg: e.target.value })}
                   />
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 px-2 py-1 ${largeText ? "text-base" : "text-sm"}`}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.gram}
                     onChange={(e) => update(line.id, { gram: e.target.value })}
                   />
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 px-2 py-1 ${largeText ? "text-base" : "text-sm"}`}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.piece}
                     onChange={(e) => update(line.id, { piece: e.target.value })}
                   />
@@ -113,7 +121,7 @@ export function OrderLinesEditor({
                       <input
                         type="number"
                         min={0}
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm"
+                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm"
                         value={line.unitPrice ?? ""}
                         onChange={(e) => {
                           const unit = parseFloat(e.target.value) || 0;

@@ -16,6 +16,8 @@ import {
   UserCog,
   UserPlus,
   BookText,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -55,6 +57,7 @@ export function AppShell() {
   const [showProfile, setShowProfile] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [name, setName] = useState(user?.name ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -93,14 +96,25 @@ export function AppShell() {
       ) : null}
 
       <aside
-        className={`fixed left-0 top-0 z-50 h-full w-72 border-r border-slate-200/80 bg-white py-4 shadow-sm transition-transform md:z-40 md:w-60 ${
+        className={`fixed left-0 top-0 z-50 flex h-full w-72 flex-col border-r border-indigo-100 bg-gradient-to-b from-white via-indigo-50/40 to-violet-50/40 py-4 shadow-sm transition-all md:z-40 ${
+          sidebarCollapsed ? "md:w-20" : "md:w-60"
+        } ${
           mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
       >
-        <div className="mb-4 flex items-center justify-between px-3 md:justify-center md:px-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-brand-orange/10 text-brand-orange">
+        <div className="mb-4 flex items-center justify-between px-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600">
             <LayoutDashboard className="h-5 w-5" />
           </div>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            className="hidden rounded-lg p-2 text-indigo-600 hover:bg-indigo-100 md:inline-flex"
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+          </button>
           <button
             type="button"
             onClick={() => setMobileNavOpen(false)}
@@ -118,21 +132,36 @@ export function AppShell() {
               title={label}
               onClick={() => setMobileNavOpen(false)}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
+                `group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
                   isActive
-                    ? "bg-brand-dark text-white shadow"
-                    : "text-slate-600 hover:bg-slate-100"
+                    ? "bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow"
+                    : "text-slate-700 hover:bg-white/80"
                 }`
               }
             >
               <Icon className="h-5 w-5 shrink-0" />
-              <span>{label}</span>
+              <span className={`${sidebarCollapsed ? "md:hidden" : ""}`}>{label}</span>
             </NavLink>
           ))}
         </nav>
+
+        <div className="mt-auto px-2 pt-3">
+          <button
+            type="button"
+            onClick={() => {
+              logout();
+              navigate("/login", { replace: true });
+            }}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+            title="Logout"
+          >
+            <LogOut className="h-5 w-5 shrink-0" />
+            <span className={`${sidebarCollapsed ? "md:hidden" : ""}`}>Logout</span>
+          </button>
+        </div>
       </aside>
 
-      <div className="md:pl-60">
+      <div className={`${sidebarCollapsed ? "md:pl-20" : "md:pl-60"}`}>
         <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 px-4 py-3 backdrop-blur md:px-6 md:py-4">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
             <div className="flex items-center gap-2">

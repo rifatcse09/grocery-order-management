@@ -125,7 +125,7 @@ export function AdminOutstandingBillsPage() {
         <Card title="Overdue payments" value={String(overdueCount)} danger />
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
+      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
           <label className="text-xs text-slate-600">
             Date range
@@ -157,9 +157,9 @@ export function AdminOutstandingBillsPage() {
           </label>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-100 text-xs text-slate-600">
+        <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200">
+          <table className="w-full text-left text-base">
+            <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
               <tr>
                 <th className="px-3 py-2">Invoice / Order</th>
                 <th className="px-3 py-2">Customer</th>
@@ -173,16 +173,16 @@ export function AdminOutstandingBillsPage() {
               {pagedRows.map((r) => (
                 <tr
                   key={r.id}
-                  className={`border-t border-slate-100 ${r.isOverdue ? "bg-red-50/70" : "bg-white"}`}
+                  className={`border-t border-violet-100 ${r.isOverdue ? "bg-red-50/70" : "bg-white/95"}`}
                 >
-                  <td className="px-3 py-2 font-medium">{r.orderNo}</td>
-                  <td className="px-3 py-2">{r.customer}</td>
-                  <td className="px-3 py-2">{formatIso(r.issue)}</td>
-                  <td className="px-3 py-2">{formatIso(r.due)}</td>
-                  <td className="px-3 py-2 text-right font-semibold">
+                  <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>
+                  <td className="px-3 py-3.5 font-medium">{r.customer}</td>
+                  <td className="px-3 py-3.5">{formatIso(r.issue)}</td>
+                  <td className="px-3 py-3.5">{formatIso(r.due)}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold">
                     ৳ {Math.round(r.remaining).toLocaleString("en-US")}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-3.5">
                     {r.isOverdue ? (
                       <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                         {r.overdueDays} days

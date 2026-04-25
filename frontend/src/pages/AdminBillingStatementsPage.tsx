@@ -155,7 +155,7 @@ export function AdminBillingStatementsPage() {
         </p>
       </div>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
+      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
         <div className="grid gap-2 md:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <p className="text-xs text-slate-500">Cycle</p>
@@ -182,9 +182,9 @@ export function AdminBillingStatementsPage() {
           </label>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-100 text-xs text-slate-600">
+        <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200">
+          <table className="w-full text-left text-base">
+            <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
               <tr>
                 <th className="px-3 py-2">Customer</th>
                 <th className="px-3 py-2">Period</th>
@@ -202,21 +202,21 @@ export function AdminBillingStatementsPage() {
                 <tr
                   key={r.key}
                   onClick={() => setSelectedKey(r.key)}
-                  className={`cursor-pointer border-t border-slate-100 ${
+                  className={`cursor-pointer border-t border-violet-100 ${
                     selected?.key === r.key ? "bg-blue-50" : r.status === "Overdue" ? "bg-red-50/60" : "bg-white"
                   }`}
                 >
-                  <td className="px-3 py-2 font-medium">{r.customer}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-3.5 font-semibold">{r.customer}</td>
+                  <td className="px-3 py-3.5">
                     {formatIso(r.start)} to {formatIso(r.end)}
                   </td>
-                  <td className="px-3 py-2">{r.invoiceCount}</td>
-                  <td className="px-3 py-2 text-right">৳ {Math.round(r.invoiceTotal).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-2 text-right">৳ {Math.round(r.previousDue).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-2 text-right font-semibold">
+                  <td className="px-3 py-3.5">{r.invoiceCount}</td>
+                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.invoiceTotal).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.previousDue).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold">
                     ৳ {Math.round(r.totalDue).toLocaleString("en-US")}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-3.5">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         r.status === "Overdue" ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
@@ -225,7 +225,7 @@ export function AdminBillingStatementsPage() {
                       {r.status}
                     </span>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-3.5">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                         paymentStatusOf(r) === "Paid"
@@ -238,14 +238,14 @@ export function AdminBillingStatementsPage() {
                       {paymentStatusOf(r)}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-3.5 text-right">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         setSelectedKey(r.key);
                       }}
-                      className="rounded-lg bg-slate-900 px-2 py-1 text-xs font-medium text-white hover:bg-slate-800"
+                      className="rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3 py-1.5 text-xs font-semibold text-white hover:from-slate-800 hover:to-indigo-700"
                     >
                       View details
                     </button>
@@ -298,16 +298,16 @@ export function AdminBillingStatementsPage() {
               <button
                 type="button"
                 onClick={addPaymentForSelected}
-                className="rounded-lg bg-brand-dark px-3 py-2 text-xs font-medium text-white"
+                className="rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3 py-2 text-xs font-semibold text-white"
               >
                 Add payment
               </button>
             </div>
           </div>
 
-          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-100 text-xs text-slate-600">
+          <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200">
+            <table className="w-full text-left text-base">
+              <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
                 <tr>
                   <th className="px-3 py-2">Invoice/Order</th>
                   <th className="px-3 py-2">Date</th>
@@ -316,10 +316,10 @@ export function AdminBillingStatementsPage() {
               </thead>
               <tbody>
                 {selected.invoices.map((inv) => (
-                  <tr key={`${selected.key}-${inv.orderNo}`} className="border-t border-slate-100">
-                    <td className="px-3 py-2">{inv.orderNo}</td>
-                    <td className="px-3 py-2">{inv.orderDate}</td>
-                    <td className="px-3 py-2 text-right">৳ {Math.round(inv.amount).toLocaleString("en-US")}</td>
+                  <tr key={`${selected.key}-${inv.orderNo}`} className="border-t border-violet-100 bg-white/95">
+                    <td className="px-3 py-3.5 font-semibold">{inv.orderNo}</td>
+                    <td className="px-3 py-3.5">{inv.orderDate}</td>
+                    <td className="px-3 py-3.5 text-right">৳ {Math.round(inv.amount).toLocaleString("en-US")}</td>
                   </tr>
                 ))}
               </tbody>

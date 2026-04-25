@@ -286,7 +286,7 @@ export function OrderFormPage() {
           type="button"
           disabled={!linesOk || !editWindowOk}
           onClick={goReview}
-          className="rounded-2xl bg-brand-orange px-5 py-3 text-base font-semibold text-white shadow hover:bg-[#e54d2e] disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-2xl bg-indigo-600 px-5 py-3 text-base font-semibold text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Continue to review →
         </button>

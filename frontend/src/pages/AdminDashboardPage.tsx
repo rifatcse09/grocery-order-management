@@ -1,5 +1,17 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
+  ClipboardList,
+  Clock3,
+  DollarSign,
+  FileCheck2,
+  type LucideIcon,
+} from "lucide-react";
+import {
   Bar,
   BarChart,
   CartesianGrid,
@@ -192,13 +204,6 @@ export function AdminDashboardPage() {
     return { topSelling, leastSelling, frequent };
   }, [filteredOrders]);
 
-  const health =
-    (stats.byStatus.draft ?? 0) > 5
-      ? { label: "Warning", color: "text-amber-700", bg: "bg-amber-50" }
-      : (stats.byStatus.submitted ?? 0) > 8
-        ? { label: "Critical", color: "text-red-700", bg: "bg-red-50" }
-        : { label: "Good", color: "text-emerald-700", bg: "bg-emerald-50" };
-
   const limited = user?.role === "moderator";
   const deliveryMetrics = useMemo(() => {
     const now = new Date();
@@ -222,20 +227,19 @@ export function AdminDashboardPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Admin dashboard</h1>
-          <p className="text-sm text-brand-muted">
-            Sales, receivables, categories, and order health overview.
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 p-[2px] shadow-sm">
+            <div className="flex h-full w-full items-center justify-center rounded-2xl bg-white">
+              <img src="/hmc-logo.png" alt="Favicon logo" className="h-7 w-7 rounded-lg object-contain" />
+            </div>
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Admin dashboard</h1>
+            <p className="text-sm text-brand-muted">
+              Sales, receivables, categories, and order health overview.
+            </p>
+          </div>
         </div>
-      </div>
-
-      <div
-        className={`rounded-2xl border px-4 py-3 text-base sm:text-lg ${health.bg} border-slate-200 ${health.color}`}
-      >
-        Order health: <strong>{health.label}</strong> - Draft {stats.byStatus.draft ?? 0},
-        Submitted {stats.byStatus.submitted ?? 0}, Under review{" "}
-        {stats.byStatus.under_review ?? 0}
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
@@ -497,6 +501,7 @@ export function AdminDashboardPage() {
 
 function Stat({ title, value, sub }: { title: string; value: string; sub?: string }) {
   const isMoney = value.includes("৳");
+  const Icon = iconForStat(title);
   return (
     <div
       className={`rounded-3xl border p-5 shadow-card ${
@@ -505,11 +510,30 @@ function Stat({ title, value, sub }: { title: string; value: string; sub?: strin
           : "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
       }`}
     >
-      <p className="text-sm font-semibold text-slate-600">{title}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-slate-600">{title}</p>
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/90 text-indigo-600 ring-1 ring-indigo-200">
+          <Icon className="h-4.5 w-4.5" />
+        </span>
+      </div>
       <p className="mt-2 text-3xl font-extrabold text-brand-dark">{value}</p>
       {sub ? <p className="text-xs text-slate-400">{sub}</p> : null}
     </div>
   );
+}
+
+function iconForStat(title: string): LucideIcon {
+  const key = title.toLowerCase();
+  if (key.includes("today")) return DollarSign;
+  if (key.includes("weekly")) return CalendarDays;
+  if (key.includes("monthly")) return BarChart3;
+  if (key.includes("total orders")) return ClipboardList;
+  if (key.includes("average order")) return Activity;
+  if (key.includes("invoiced")) return FileCheck2;
+  if (key.includes("completion")) return CheckCircle2;
+  if (key.includes("processing")) return Clock3;
+  if (key.includes("delayed")) return AlertTriangle;
+  return Activity;
 }
 
 function InsightList({

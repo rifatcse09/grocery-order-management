@@ -104,7 +104,7 @@ export function AdminFinancialLedgerPage() {
         <LedgerCard title="Closing balance" value={limited ? "—" : `৳ ${Math.round(closing).toLocaleString("en-US")}`} />
       </div>
 
-      <div className="rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-4 shadow-card">
+      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4">
           <label className="text-xs text-slate-600">
             Search
@@ -153,9 +153,9 @@ export function AdminFinancialLedgerPage() {
           </label>
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-100 text-xs text-slate-600">
+        <div className="mt-3 overflow-hidden rounded-2xl border border-violet-200 bg-white">
+        <table className="w-full text-left text-base">
+          <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
             <tr>
               <th className="px-3 py-2">Date</th>
               <th className="px-3 py-2">Customer</th>
@@ -168,11 +168,11 @@ export function AdminFinancialLedgerPage() {
           </thead>
           <tbody>
             {pagedRows.map((r, i) => (
-              <tr key={`${r.ref}-${i}`} className="border-t border-slate-100">
-                <td className="px-3 py-2">{r.date}</td>
-                <td className="px-3 py-2">{r.customer}</td>
-                <td className="px-3 py-2">{r.ref}</td>
-                <td className="px-3 py-2">
+              <tr key={`${r.ref}-${i}`} className="border-t border-violet-100 bg-white/95">
+                <td className="px-3 py-3.5">{r.date}</td>
+                <td className="px-3 py-3.5 font-medium">{r.customer}</td>
+                <td className="px-3 py-3.5 font-semibold">{r.ref}</td>
+                <td className="px-3 py-3.5">
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                       r.type === "Invoice" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"
@@ -181,9 +181,9 @@ export function AdminFinancialLedgerPage() {
                     {r.type}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-right">{limited ? "—" : `৳ ${Math.round(r.debit).toLocaleString("en-US")}`}</td>
-                <td className="px-3 py-2 text-right">{limited ? "—" : `৳ ${Math.round(r.credit).toLocaleString("en-US")}`}</td>
-                <td className="px-3 py-2 text-right font-semibold">{limited ? "—" : `৳ ${Math.round(r.balance).toLocaleString("en-US")}`}</td>
+                <td className="px-3 py-3.5 text-right">{limited ? "—" : `৳ ${Math.round(r.debit).toLocaleString("en-US")}`}</td>
+                <td className="px-3 py-3.5 text-right">{limited ? "—" : `৳ ${Math.round(r.credit).toLocaleString("en-US")}`}</td>
+                <td className="px-3 py-3.5 text-right font-semibold">{limited ? "—" : `৳ ${Math.round(r.balance).toLocaleString("en-US")}`}</td>
               </tr>
             ))}
           </tbody>

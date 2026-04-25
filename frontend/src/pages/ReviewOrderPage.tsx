@@ -144,7 +144,7 @@ export function ReviewOrderPage() {
           type="button"
           disabled={!linesOk || !deliveryOk || !signed}
           onClick={confirm}
-          className="rounded-2xl bg-brand-orange px-6 py-3 text-sm font-semibold text-white shadow hover:bg-[#e54d2e] disabled:opacity-40"
+          className="rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-indigo-700 disabled:opacity-40"
         >
           Confirm &amp; submit
         </button>
