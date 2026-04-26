@@ -21,6 +21,7 @@ const PAYMENTS_KEY = "gom_statement_payments";
 export function AdminBillingStatementsPage() {
   const { orders } = useOrders();
   const [customer, setCustomer] = useState("all");
+  const [viewMode, setViewMode] = useState<"active" | "history">("active");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -108,11 +109,6 @@ export function AdminBillingStatementsPage() {
     return rows.sort((a, b) => b.start.getTime() - a.start.getTime());
   }, [orders, customer]);
 
-  const safePage = Math.min(page, Math.max(1, Math.ceil(statements.length / perPage)));
-  const paged = statements.slice((safePage - 1) * perPage, safePage * perPage);
-  const selected = selectedKey ? statements.find((s) => s.key === selectedKey) ?? null : null;
-  const adjusting = adjustKey ? statements.find((s) => s.key === adjustKey) ?? null : null;
-
   useEffect(() => {
     localStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments));
   }, [payments]);
@@ -131,6 +127,32 @@ export function AdminBillingStatementsPage() {
     if (paid >= row.totalDue) return "Paid";
     return "Partial";
   }
+
+  const activeStatements = useMemo(
+    () =>
+      statements.filter((row) => {
+        const fullyPaid = paymentStatusOf(row) === "Paid";
+        const olderThanSixWeeks = isOlderThanDays(row.end, 42);
+        return !(fullyPaid && olderThanSixWeeks);
+      }),
+    [statements, payments],
+  );
+
+  const historyStatements = useMemo(
+    () =>
+      statements.filter((row) => {
+        const fullyPaid = paymentStatusOf(row) === "Paid";
+        const olderThanSixWeeks = isOlderThanDays(row.end, 42);
+        return fullyPaid && olderThanSixWeeks;
+      }),
+    [statements, payments],
+  );
+
+  const listSource = viewMode === "active" ? activeStatements : historyStatements;
+  const safePage = Math.min(page, Math.max(1, Math.ceil(listSource.length / perPage)));
+  const paged = listSource.slice((safePage - 1) * perPage, safePage * perPage);
+  const selected = selectedKey ? listSource.find((s) => s.key === selectedKey) ?? null : null;
+  const adjusting = adjustKey ? statements.find((s) => s.key === adjustKey) ?? null : null;
 
   function openAdjustModal(row: StatementRow) {
     setAdjustKey(row.key);
@@ -182,6 +204,38 @@ export function AdminBillingStatementsPage() {
               ))}
             </select>
           </label>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode("active");
+              setPage(1);
+              setSelectedKey(null);
+            }}
+            className={
+              viewMode === "active"
+                ? "rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+                : "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            }
+          >
+            Active ({activeStatements.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode("history");
+              setPage(1);
+              setSelectedKey(null);
+            }}
+            className={
+              viewMode === "history"
+                ? "rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+                : "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+            }
+          >
+            History ({historyStatements.length})
+          </button>
         </div>
 
         <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
@@ -269,12 +323,21 @@ export function AdminBillingStatementsPage() {
                   </td>
                 </tr>
               ))}
+              {paged.length === 0 ? (
+                <tr className="border-t border-border bg-card">
+                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
+                    {viewMode === "active"
+                      ? "No active statements found."
+                      : "No history statements found."}
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
 
         <PaginationControls
-          totalItems={statements.length}
+          totalItems={listSource.length}
           page={safePage}
           perPage={perPage}
           onPageChange={setPage}
@@ -390,6 +453,15 @@ export function AdminBillingStatementsPage() {
       ) : null}
     </div>
   );
+}
+
+function isOlderThanDays(date: Date, days: number): boolean {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  const diffDays = Math.floor((now.getTime() - target.getTime()) / 86_400_000);
+  return diffDays > days;
 }
 
 function parseIso(iso: string): Date | null {
