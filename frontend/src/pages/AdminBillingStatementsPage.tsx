@@ -1,9 +1,6 @@
-import { Banknote, BadgeCheck, CircleDollarSign, Receipt, Scale, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
-import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
-import { TABLE_ACTION_CLASS_COMPACT } from "../lib/tableCellStyles";
 
 interface StatementRow {
   key: string;
@@ -38,7 +35,6 @@ export function AdminBillingStatementsPage() {
       return {};
     }
   });
-  const [payInput, setPayInput] = useState("");
   const [adjustInput, setAdjustInput] = useState("");
 
   const customers = useMemo(
@@ -121,10 +117,6 @@ export function AdminBillingStatementsPage() {
     localStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments));
   }, [payments]);
 
-  useEffect(() => {
-    setPayInput("");
-  }, [selectedKey]);
-
   function paidOf(key: string): number {
     return Math.max(0, payments[key] ?? 0);
   }
@@ -140,21 +132,9 @@ export function AdminBillingStatementsPage() {
     return "Partial";
   }
 
-  function addPaymentForSelected() {
-    if (!selected) return;
-    const amount = Number(payInput);
-    if (!Number.isFinite(amount) || amount <= 0) return;
-    setPayments((prev) => {
-      const current = prev[selected.key] ?? 0;
-      const next = Math.min(selected.totalDue, current + amount);
-      return { ...prev, [selected.key]: next };
-    });
-    setPayInput("");
-  }
-
   function openAdjustModal(row: StatementRow) {
     setAdjustKey(row.key);
-    setAdjustInput(String(Math.round(paidOf(row.key))));
+    setAdjustInput("");
   }
 
   function saveAdjustedPayment() {
@@ -205,14 +185,12 @@ export function AdminBillingStatementsPage() {
         </div>
 
         <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
-          <table className="min-w-[920px] w-full text-left text-base">
+          <table className="min-w-[1080px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-xs font-bold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
                 <th className="px-4 py-3.5">Customer</th>
                 <th className="px-4 py-3.5">Period</th>
                 <th className="px-4 py-3.5">Invoices</th>
-                <th className="px-4 py-3.5 text-right">Invoice total</th>
-                <th className="px-4 py-3.5 text-right">Previous due</th>
                 <th className="px-4 py-3.5 text-right">Total due</th>
                 <th className="px-4 py-3.5 text-right">Paid</th>
                 <th className="px-4 py-3.5 text-right">Balance</th>
@@ -233,10 +211,9 @@ export function AdminBillingStatementsPage() {
                   <td className="px-3 py-3.5 font-semibold">{r.customer}</td>
                   <td className="px-3 py-3.5">
                     {formatIso(r.start)} to {formatIso(r.end)}
+                    <span className="ml-1 text-xs text-slate-500">· Due {formatIso(r.dueDate)}</span>
                   </td>
                   <td className="px-3 py-3.5">{r.invoiceCount}</td>
-                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.invoiceTotal).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.previousDue).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5 text-right font-semibold">
                     ৳ {Math.round(r.totalDue).toLocaleString("en-US")}
                   </td>
@@ -315,75 +292,17 @@ export function AdminBillingStatementsPage() {
             {selected.customer} · {formatIso(selected.start)} to {formatIso(selected.end)} · Due{" "}
             {formatIso(selected.dueDate)}
           </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <StatMetricCard
-              compact
-              title="Invoice total"
-              value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`}
-              icon={Receipt}
-              tone="coral"
-              sparkSeed={`${selected.key}-inv-total`}
-            />
-            <StatMetricCard
-              compact
-              title="Previous due carry-over"
-              value={`৳ ${Math.round(selected.previousDue).toLocaleString("en-US")}`}
-              icon={Wallet}
-              tone="slate"
-              sparkSeed={`${selected.key}-prev-due`}
-            />
-            <StatMetricCard
-              compact
-              title="Total bill due"
-              value={`৳ ${Math.round(selected.totalDue).toLocaleString("en-US")}`}
-              icon={CircleDollarSign}
-              tone="navy"
-              sparkSeed={`${selected.key}-total-due`}
-            />
-            <StatMetricCard
-              compact
-              title="Paid (statement-wise)"
-              value={`৳ ${Math.round(paidOf(selected.key)).toLocaleString("en-US")}`}
-              icon={Banknote}
-              tone="teal"
-              sparkSeed={`${selected.key}-paid`}
-            />
-            <StatMetricCard
-              compact
-              title="Balance due"
-              value={`৳ ${Math.round(balanceOf(selected)).toLocaleString("en-US")}`}
-              icon={Scale}
-              tone="amber"
-              sparkSeed={`${selected.key}-balance`}
-            />
-            <StatMetricCard
-              compact
-              title="Payment status"
-              value={paymentStatusOf(selected)}
-              icon={BadgeCheck}
-              tone="rose"
-              sparkSeed={`${selected.key}-pay-status`}
-            />
-          </div>
-
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs text-slate-600">Record payment to this weekly statement</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <input
-                type="number"
-                min={0}
-                value={payInput}
-                onChange={(e) => setPayInput(e.target.value)}
-                placeholder="Enter received amount"
-                className="w-48 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <DetailStat label="Invoice total" value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`} />
+              <DetailStat
+                label="Previous due carry-over"
+                value={`৳ ${Math.round(selected.previousDue).toLocaleString("en-US")}`}
               />
-              <button
-                type="button"
-                onClick={addPaymentForSelected}
-                className={TABLE_ACTION_CLASS_COMPACT}
-              >
-                Add payment
-              </button>
+              <DetailStat label="Total bill due" value={`৳ ${Math.round(selected.totalDue).toLocaleString("en-US")}`} />
+              <DetailStat label="Paid (statement-wise)" value={`৳ ${Math.round(paidOf(selected.key)).toLocaleString("en-US")}`} />
+              <DetailStat label="Balance due" value={`৳ ${Math.round(balanceOf(selected)).toLocaleString("en-US")}`} />
+              <DetailStat label="Payment status" value={paymentStatusOf(selected)} />
             </div>
           </div>
 
@@ -416,26 +335,26 @@ export function AdminBillingStatementsPage() {
 
       {adjusting ? (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Adjust payment</h3>
-            <p className="mt-1 text-sm text-slate-600">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl">
+            <h3 className="text-2xl font-bold text-slate-900">Adjust payment</h3>
+            <p className="mt-2 text-base text-slate-600">
               {adjusting.customer} · {formatIso(adjusting.start)} to {formatIso(adjusting.end)}
             </p>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-              <div className="rounded-lg bg-slate-50 p-2">
+            <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+              <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-500">Total due</p>
                 <p className="font-semibold text-slate-900">৳ {Math.round(adjusting.totalDue).toLocaleString("en-US")}</p>
               </div>
-              <div className="rounded-lg bg-slate-50 p-2">
+              <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-500">Paid</p>
                 <p className="font-semibold text-slate-900">৳ {Math.round(paidOf(adjusting.key)).toLocaleString("en-US")}</p>
               </div>
-              <div className="rounded-lg bg-slate-50 p-2">
+              <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-500">Balance</p>
                 <p className="font-semibold text-slate-900">৳ {Math.round(balanceOf(adjusting)).toLocaleString("en-US")}</p>
               </div>
             </div>
-            <label className="mt-4 block text-xs font-semibold text-slate-600">
+            <label className="mt-5 block text-sm font-semibold text-slate-600">
               Set paid amount
               <input
                 type="number"
@@ -443,25 +362,25 @@ export function AdminBillingStatementsPage() {
                 max={Math.round(adjusting.totalDue)}
                 value={adjustInput}
                 onChange={(e) => setAdjustInput(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg"
                 placeholder="Enter total paid amount"
               />
             </label>
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setAdjustKey(null);
                   setAdjustInput("");
                 }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={saveAdjustedPayment}
-                className="rounded-lg bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-600"
+                className="rounded-lg bg-slate-700 px-4 py-2 text-base font-semibold text-white hover:bg-slate-600"
               >
                 Save adjustment
               </button>
@@ -498,4 +417,13 @@ function formatIso(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 text-base font-bold text-slate-900">{value}</p>
+    </div>
+  );
 }
