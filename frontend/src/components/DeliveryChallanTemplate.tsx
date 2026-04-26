@@ -19,7 +19,7 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
             <p className="text-xs text-slate-500">ভুলতা-গাউসিয়া, রূপগঞ্জ, নারায়ণগঞ্জ — ১৪৬০</p>
             <p className="text-xs text-slate-500">হটলাইন: +৮৮০১৫৭১ ২২৭৫৮৮</p>
           </div>
-          <img src="/hmc-logo.png" alt="হোসেন লোগো" className="ml-auto h-16 w-auto object-contain sm:h-20" />
+          <img src="/hmc-logo.png" alt="হোসেন মিট অ্যান্ড কো. লোগো" className="ml-auto h-16 w-auto object-contain sm:h-20" />
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -89,9 +89,14 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
           </table>
         </div>
 
-        <div className="mt-16 sm:mt-20">
-          <div className="w-44 border-t border-slate-900 pt-1 text-sm sm:w-56 sm:text-base">
-            অর্ডার প্রদানকারী
+        <div className="mt-24 flex items-end justify-between gap-12 sm:mt-32 sm:gap-24">
+          <div className="text-left">
+            <div className="h-0 w-32 border-t-2 border-black sm:w-44" />
+            <p className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">অর্ডার প্রস্তুতকারী</p>
+          </div>
+          <div className="text-right">
+            <div className="ml-auto h-0 w-32 border-t-2 border-black sm:w-44" />
+            <p className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">পক্ষে / কোম্পানি</p>
           </div>
         </div>
       </div>

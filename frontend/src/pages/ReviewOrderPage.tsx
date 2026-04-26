@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -10,6 +10,7 @@ import {
   Phone,
   User,
 } from "lucide-react";
+import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
@@ -25,9 +26,10 @@ function formatQty(kg: string, gram: string, piece: string) {
 
 export function ReviewOrderPage() {
   const { id } = useParams();
-  const { getById, upsertOrder } = useOrders();
+  const { getById, upsertOrder, deleteOrder } = useOrders();
   const navigate = useNavigate();
   const base = id ? getById(id) : undefined;
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const order = useMemo(() => {
     if (!base) return undefined;
@@ -36,11 +38,11 @@ export function ReviewOrderPage() {
 
   if (!order) {
     return (
-      <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-8 text-center">
+      <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Order not found.</p>
         <Link
           to="/user/orders"
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2 text-sm font-semibold text-white"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to order list
@@ -73,24 +75,25 @@ export function ReviewOrderPage() {
 
   const lineCount = order.lines.length;
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
+  const canDeleteBeforeSubmit = order.status === "draft" && !order.submittedAt;
   const primaryBtn =
-    "rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:from-slate-800 hover:to-indigo-700 disabled:cursor-not-allowed disabled:opacity-40";
+    "rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
   const secondaryBtn =
-    "rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-violet-50";
+    "rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-muted";
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           to="/user/orders"
-          className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+          className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           Order list
         </Link>
         <Link
           to={`/user/orders/${order.id}/edit`}
-          className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+          className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-foreground"
         >
           Edit form
         </Link>
@@ -103,22 +106,20 @@ export function ReviewOrderPage() {
       ) : null}
 
       {/* Hero — same family as admin / moderator */}
-      <div className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-600 via-indigo-600 to-fuchsia-600 p-6 text-white shadow-xl sm:p-8">
-        <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute -bottom-20 -left-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
+      <div className="rounded-3xl border border-border bg-primary p-6 text-primary-foreground shadow-xl sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-100">Review before submit</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground">Review before submit</p>
             <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight sm:text-3xl">{order.orderNo}</h1>
-            <p className="mt-2 flex items-center gap-2 text-violet-100">
+            <p className="mt-2 flex items-center gap-2 text-primary-foreground">
               <User className="h-4 w-4 shrink-0" />
-              <span className="font-medium text-white">{order.contactPerson}</span>
+              <span className="font-medium text-primary-foreground">{order.contactPerson}</span>
             </p>
           </div>
           <div className="flex flex-col items-end gap-2">
             <StatusBadge status={order.status} />
-            <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-violet-100">
-              <span className="rounded-full bg-white/15 px-3 py-1 backdrop-blur">
+            <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-primary-foreground">
+              <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-900">
                 {lineCount} line{lineCount !== 1 ? "s" : ""}
               </span>
             </div>
@@ -127,27 +128,27 @@ export function ReviewOrderPage() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-violet-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">Lines</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Lines</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
         </div>
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-fuchsia-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-800">Line total (sum)</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
           </p>
         </div>
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-indigo-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Grand total</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {order.grandTotal != null ? `৳ ${Math.round(order.grandTotal).toLocaleString("en-US")}` : "—"}
           </p>
         </div>
       </div>
 
-      <section className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50/60 via-white to-fuchsia-50/40 p-5 shadow-card sm:p-6">
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-6">
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted text-primary">
             <Package className="h-5 w-5" />
           </span>
           Order details
@@ -159,18 +160,18 @@ export function ReviewOrderPage() {
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={order.deliveryTime || "—"} />
           <div className="sm:col-span-2">
-            <div className="rounded-2xl border border-violet-100 bg-white/90 p-4 shadow-sm">
+            <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <MapPin className="h-3.5 w-3.5 text-indigo-500" />
+                <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
                 Billing address
               </p>
               <p className="mt-2 text-sm leading-relaxed text-slate-800">{order.billingAddress}</p>
             </div>
           </div>
           <div className="sm:col-span-2">
-            <div className="rounded-2xl border border-violet-100 bg-white/90 p-4 shadow-sm">
+            <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <MapPin className="h-3.5 w-3.5 text-fuchsia-500" />
+                <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
                 Delivery address
               </p>
               <p className="mt-2 text-sm leading-relaxed text-slate-800">{order.deliveryAddress}</p>
@@ -179,34 +180,36 @@ export function ReviewOrderPage() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-3xl border border-violet-200 bg-white shadow-card">
-        <div className="border-b border-violet-100 bg-violet-50/80 px-5 py-4">
-          <h2 className="flex items-center gap-2 text-lg font-bold text-violet-950">
-            <Package className="h-5 w-5 text-indigo-600" />
+      <section className="overflow-hidden rounded-3xl border border-border bg-white shadow-card">
+        <div className="border-b border-border bg-muted px-5 py-4">
+          <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
+            <Package className="h-5 w-5 text-foreground" />
             Line items
-            <span className="ml-2 rounded-full bg-violet-200/80 px-2.5 py-0.5 text-xs font-semibold text-violet-900">
+            <span className="ml-2 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-foreground">
               Read-only
             </span>
           </h2>
         </div>
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <table className="min-w-[600px] w-full text-left text-base">
-            <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
+            <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
               <tr>
                 <th className="px-4 py-3">#</th>
                 <th className="px-4 py-3">Item</th>
                 <th className="px-4 py-3">Qty</th>
+                <th className="px-4 py-3">Instructions</th>
               </tr>
             </thead>
             <tbody>
               {order.lines.map((line) => (
-                <tr key={line.id} className="border-t border-violet-100 bg-white/95">
+                <tr key={line.id} className="border-t border-border bg-card">
                   <td className="px-4 py-3.5 font-mono text-sm text-slate-600">{line.serial}</td>
                   <td className="px-4 py-3.5">
                     <p className="font-semibold text-slate-900">{line.itemNameEn}</p>
                     <p className="font-bn text-sm text-slate-500">{line.itemNameBn}</p>
                   </td>
                   <td className="px-4 py-3.5 text-slate-700">{formatQty(line.kg, line.gram, line.piece)}</td>
+                  <td className="px-4 py-3.5 text-slate-700">{line.instructions?.trim() || "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -214,14 +217,14 @@ export function ReviewOrderPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50/60 via-white to-fuchsia-50/40 p-5 shadow-card sm:p-6">
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-6">
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted text-primary">
             <Pen className="h-5 w-5" />
           </span>
           Signature
         </h2>
-        <div className="mt-4 rounded-2xl border border-violet-100 bg-white/90 p-4 shadow-sm">
+        <div className="mt-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
           {order.signatureDataUrl ? (
             <img
               src={order.signatureDataUrl}
@@ -239,7 +242,7 @@ export function ReviewOrderPage() {
       {!linesOk ? <p className="text-sm font-medium text-red-600">Some lines break quantity rules.</p> : null}
       {!signed ? <p className="text-sm font-medium text-amber-800">Signature is required to submit.</p> : null}
 
-      <section className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50/60 via-white to-fuchsia-50/40 p-5 shadow-card sm:p-6">
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-6">
         <h2 className="text-base font-bold text-slate-900">Submit</h2>
         <p className="mt-1 text-sm text-slate-600">Save as draft, continue editing, or confirm your order</p>
         <div className="mt-4 flex flex-wrap gap-3">
@@ -249,11 +252,31 @@ export function ReviewOrderPage() {
           <button type="button" onClick={saveAsDraft} className={secondaryBtn}>
             Save as draft
           </button>
+          {canDeleteBeforeSubmit ? (
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-100"
+            >
+              Delete order
+            </button>
+          ) : null}
           <button type="button" disabled={!linesOk || !deliveryOk || !signed} onClick={confirm} className={primaryBtn}>
             Confirm &amp; submit
           </button>
         </div>
       </section>
+      <ConfirmActionModal
+        open={showDeleteModal}
+        title="Delete order"
+        description={`Are you sure you want to delete ${order.orderNo}? This action cannot be undone.`}
+        onCancel={() => setShowDeleteModal(false)}
+        onConfirm={() => {
+          deleteOrder(order.id);
+          setShowDeleteModal(false);
+          navigate("/user/orders");
+        }}
+      />
     </div>
   );
 }
@@ -268,9 +291,9 @@ function DetailTile({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-violet-100 bg-white/90 p-4 shadow-sm">
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
       <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        <Icon className="h-3.5 w-3.5 text-indigo-500" />
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         {label}
       </p>
       <p className="mt-2 text-base font-semibold text-slate-900">{value}</p>

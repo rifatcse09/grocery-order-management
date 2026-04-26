@@ -9,7 +9,10 @@ import {
   Clock3,
   DollarSign,
   FileCheck2,
-  type LucideIcon,
+  FilePenLine,
+  Hourglass,
+  Send,
+  Truck,
 } from "lucide-react";
 import {
   Bar,
@@ -26,11 +29,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { StatMetricCard, type MetricCardTone } from "../components/StatMetricCard";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import type { OrderStatus } from "../types";
 
-const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#8B5CF6", "#64748B"];
+const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#0f766e", "#64748B"];
 
 export function AdminDashboardPage() {
   const { orders } = useOrders();
@@ -228,10 +232,8 @@ export function AdminDashboardPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500 p-[2px] shadow-sm">
-            <div className="flex h-full w-full items-center justify-center rounded-2xl bg-white">
-              <img src="/hmc-logo.png" alt="Favicon logo" className="h-7 w-7 rounded-lg object-contain" />
-            </div>
+          <div className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-2xl bg-primary px-2 shadow-sm">
+            <span className="text-xs font-extrabold tracking-tight text-primary-foreground">HMC</span>
           </div>
           <div>
             <h1 className="text-2xl font-bold">Admin dashboard</h1>
@@ -263,11 +265,11 @@ export function AdminDashboardPage() {
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             >
               <option value="all">All statuses</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
-              <option value="under_review">Under review</option>
+              <option value="draft">Drafted</option>
+              <option value="submitted">Ordered</option>
+              <option value="under_review">Processing</option>
               <option value="delivered">Delivered</option>
-              <option value="invoiced">Invoiced</option>
+              <option value="invoiced">Completed (Invoice)</option>
             </select>
           </Filter>
           <Filter label="Customer">
@@ -316,32 +318,72 @@ export function AdminDashboardPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Stat title="Today's sales" value="৳ 85,000" />
-        <Stat title="Weekly sales" value="৳ 420,000" />
-        <Stat title="Monthly sales" value="৳ 1,800,000" />
+        <StatMetricCard title="Today's sales" value="৳ 85,000" icon={DollarSign} tone="coral" sparkSeed="dash-today-sales" />
+        <StatMetricCard title="Weekly sales" value="৳ 420,000" icon={CalendarDays} tone="teal" sparkSeed="dash-weekly-sales" />
+        <StatMetricCard title="Monthly sales" value="৳ 1,800,000" icon={BarChart3} tone="navy" sparkSeed="dash-monthly-sales" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Stat title="Total orders" value={String(filteredOrders.length)} sub="Filtered scope" />
-        <Stat
+        <StatMetricCard
+          title="Total orders"
+          value={String(filteredOrders.length)}
+          icon={ClipboardList}
+          tone="amber"
+          sparkSeed="dash-total-orders"
+          secondaryLine="Filtered scope"
+        />
+        <StatMetricCard
           title="Average order value"
           value={limited ? "—" : `৳ ${Math.round(stats.avg).toLocaleString("en-US")}`}
+          icon={Activity}
+          tone="slate"
+          sparkSeed="dash-aov"
         />
-        <Stat title="Invoiced count" value={String(stats.invoiced)} />
+        <StatMetricCard title="Invoiced count" value={String(stats.invoiced)} icon={FileCheck2} tone="coral" sparkSeed="dash-invoiced" />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Stat title="Order completion rate" value={`${stats.completionRate.toFixed(1)}%`} />
-        <Stat title="Average processing time" value={`${stats.avgProcessing.toFixed(1)} days`} />
-        <Stat title="Delayed orders" value={String(stats.delayed)} />
+        <StatMetricCard
+          title="Order completion rate"
+          value={`${stats.completionRate.toFixed(1)}%`}
+          icon={CheckCircle2}
+          tone="teal"
+          sparkSeed="dash-completion"
+        />
+        <StatMetricCard
+          title="Average processing time"
+          value={`${stats.avgProcessing.toFixed(1)} days`}
+          icon={Clock3}
+          tone="navy"
+          sparkSeed="dash-processing"
+        />
+        <StatMetricCard title="Delayed orders" value={String(stats.delayed)} icon={AlertTriangle} tone="rose" sparkSeed="dash-delayed" />
       </div>
 
-      <div className="rounded-3xl border border-cyan-200 bg-gradient-to-br from-cyan-50 via-white to-white p-5 shadow-card">
-        <h2 className="text-lg font-bold text-cyan-900">Order delivery status</h2>
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+        <h2 className="text-lg font-bold text-foreground">Order delivery status</h2>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <StatusPill label="Delivered / Closed" value={deliveryMetrics.delivered} tone="good" />
-          <StatusPill label="Upcoming deliveries" value={deliveryMetrics.upcoming} tone="warn" />
-          <StatusPill label="Delayed deliveries" value={deliveryMetrics.delayed} tone="bad" />
+          <StatMetricCard
+            title="Delivered / Closed"
+            value={String(deliveryMetrics.delivered)}
+            icon={Truck}
+            tone="teal"
+            sparkSeed="delivery-delivered"
+          />
+          <StatMetricCard
+            title="Upcoming deliveries"
+            value={String(deliveryMetrics.upcoming)}
+            icon={CalendarDays}
+            tone="amber"
+            sparkSeed="delivery-upcoming"
+          />
+          <StatMetricCard
+            title="Delayed deliveries"
+            value={String(deliveryMetrics.delayed)}
+            icon={AlertTriangle}
+            tone="rose"
+            sparkSeed="delivery-delayed"
+          />
         </div>
       </div>
 
@@ -397,7 +439,7 @@ export function AdminDashboardPage() {
               type="button"
               onClick={() => setTrendMode("weekly")}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                trendMode === "weekly" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                trendMode === "weekly" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
               Weekly
@@ -406,7 +448,7 @@ export function AdminDashboardPage() {
               type="button"
               onClick={() => setTrendMode("monthly")}
               className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
-                trendMode === "monthly" ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                trendMode === "monthly" ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-100"
               }`}
             >
               Monthly
@@ -415,21 +457,33 @@ export function AdminDashboardPage() {
         </div>
 
         <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <TrendKpi
+          <StatMetricCard
             title="Growth (WoW)"
             value={`${trendAnalytics.wow >= 0 ? "+" : ""}${trendAnalytics.wow.toFixed(1)}%`}
-            positive={trendAnalytics.wow >= 0}
+            icon={Activity}
+            tone="teal"
+            sparkSeed="trend-wow"
+            showTrendRow={false}
+            caption="vs prior week (invoiced revenue)"
           />
-          <TrendKpi
+          <StatMetricCard
             title="Growth (MoM)"
             value={`${trendAnalytics.mom >= 0 ? "+" : ""}${trendAnalytics.mom.toFixed(1)}%`}
-            positive={trendAnalytics.mom >= 0}
+            icon={BarChart3}
+            tone="navy"
+            sparkSeed="trend-mom"
+            showTrendRow={false}
+            caption="vs prior month (invoiced revenue)"
           />
-          <TrendKpi
+          <StatMetricCard
             title="Billing cycle comparison"
             value={`${trendAnalytics.cycleDelta >= 0 ? "+" : ""}${trendAnalytics.cycleDelta.toFixed(1)}%`}
-            positive={trendAnalytics.cycleDelta >= 0}
-            sub={`Current: ৳ ${trendAnalytics.currentWeek.toLocaleString("en-US")} · Previous: ৳ ${trendAnalytics.previousWeek.toLocaleString("en-US")}`}
+            icon={DollarSign}
+            tone="coral"
+            sparkSeed="trend-cycle"
+            showTrendRow={false}
+            caption="Week-over-week change"
+            secondaryLine={`Current ৳ ${trendAnalytics.currentWeek.toLocaleString("en-US")} · Previous ৳ ${trendAnalytics.previousWeek.toLocaleString("en-US")}`}
           />
         </div>
 
@@ -446,9 +500,9 @@ export function AdminDashboardPage() {
         </div>
       </div>
 
-      <div className="rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white p-5 shadow-card">
-        <h2 className="text-lg font-bold text-indigo-900">Orders by status</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+        <h2 className="text-lg font-bold text-foreground">Orders by status</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
           {(
             [
               "draft",
@@ -457,22 +511,28 @@ export function AdminDashboardPage() {
               "delivered",
               "invoiced",
             ] as OrderStatus[]
-          ).map((st) => (
-            <div
-              key={st}
-              className="flex items-center justify-between rounded-2xl border border-white/80 bg-white px-4 py-3 shadow-sm"
-            >
-              <span className="text-sm font-semibold capitalize text-slate-700">{st.replace("_", " ")}</span>
-              <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-sm font-bold text-indigo-800">
-                {stats.byStatus[st] ?? 0}
-              </span>
-            </div>
-          ))}
+          ).map((st, idx) => {
+            const label = orderStatusLabel(st);
+            const tones: MetricCardTone[] = ["slate", "amber", "teal", "navy", "coral"];
+            const icons = [FilePenLine, Send, Hourglass, Truck, FileCheck2] as const;
+            const Icon = icons[idx] ?? ClipboardList;
+            return (
+              <StatMetricCard
+                key={st}
+                compact
+                title={label}
+                value={String(stats.byStatus[st] ?? 0)}
+                icon={Icon}
+                tone={tones[idx] ?? "slate"}
+                sparkSeed={`order-status-${st}`}
+              />
+            );
+          })}
         </div>
       </div>
 
-      <div className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white p-5 shadow-card">
-        <h2 className="text-lg font-bold text-emerald-900">Product-level insights</h2>
+      <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+        <h2 className="text-lg font-bold text-foreground">Product-level insights</h2>
         <div className="mt-3 grid gap-4 lg:grid-cols-3">
           <InsightList
             title="Top selling products"
@@ -499,41 +559,12 @@ export function AdminDashboardPage() {
   );
 }
 
-function Stat({ title, value, sub }: { title: string; value: string; sub?: string }) {
-  const isMoney = value.includes("৳");
-  const Icon = iconForStat(title);
-  return (
-    <div
-      className={`rounded-3xl border p-5 shadow-card ${
-        isMoney
-          ? "border-indigo-200 bg-gradient-to-br from-indigo-50 to-white"
-          : "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white"
-      }`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-slate-600">{title}</p>
-        <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/90 text-indigo-600 ring-1 ring-indigo-200">
-          <Icon className="h-4.5 w-4.5" />
-        </span>
-      </div>
-      <p className="mt-2 text-3xl font-extrabold text-brand-dark">{value}</p>
-      {sub ? <p className="text-xs text-slate-400">{sub}</p> : null}
-    </div>
-  );
-}
-
-function iconForStat(title: string): LucideIcon {
-  const key = title.toLowerCase();
-  if (key.includes("today")) return DollarSign;
-  if (key.includes("weekly")) return CalendarDays;
-  if (key.includes("monthly")) return BarChart3;
-  if (key.includes("total orders")) return ClipboardList;
-  if (key.includes("average order")) return Activity;
-  if (key.includes("invoiced")) return FileCheck2;
-  if (key.includes("completion")) return CheckCircle2;
-  if (key.includes("processing")) return Clock3;
-  if (key.includes("delayed")) return AlertTriangle;
-  return Activity;
+function orderStatusLabel(st: OrderStatus): string {
+  if (st === "draft") return "Drafted";
+  if (st === "submitted") return "Ordered";
+  if (st === "under_review") return "Processing";
+  if (st === "invoiced") return "Completed (Invoice)";
+  return "Delivered";
 }
 
 function InsightList({
@@ -548,7 +579,7 @@ function InsightList({
   metric: (x: { name: string; orders: number; qtyScore: number; sales: number }) => string;
 }) {
   return (
-    <div className="rounded-2xl border border-white bg-white/90 p-4 shadow-sm">
+    <div className="rounded-2xl border border-white bg-card p-4 shadow-sm">
       <p className="text-base font-bold text-slate-800">{title}</p>
       <div className="mt-3 space-y-2.5">
         {items.map((x, idx) => (
@@ -565,30 +596,6 @@ function InsightList({
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function TrendKpi({
-  title,
-  value,
-  positive,
-  sub,
-}: {
-  title: string;
-  value: string;
-  positive: boolean;
-  sub?: string;
-}) {
-  return (
-    <div
-      className={`rounded-2xl border px-3 py-2 ${
-        positive ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
-      }`}
-    >
-      <p className="text-xs text-slate-600">{title}</p>
-      <p className={`text-lg font-bold ${positive ? "text-emerald-700" : "text-red-700"}`}>{value}</p>
-      {sub ? <p className="text-[11px] text-slate-500">{sub}</p> : null}
     </div>
   );
 }
@@ -611,28 +618,5 @@ function Filter({ label, children }: { label: string; children: ReactNode }) {
       {label}
       {children}
     </label>
-  );
-}
-
-function StatusPill({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "good" | "warn" | "bad";
-}) {
-  const style =
-    tone === "good"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-      : tone === "warn"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-red-200 bg-red-50 text-red-800";
-  return (
-    <div className={`rounded-2xl border px-3 py-3 ${style}`}>
-      <p className="text-xs">{label}</p>
-      <p className="mt-1 text-2xl font-bold">{value}</p>
-    </div>
   );
 }

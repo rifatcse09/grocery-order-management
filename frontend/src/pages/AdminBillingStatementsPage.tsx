@@ -1,6 +1,9 @@
+import { Banknote, BadgeCheck, CircleDollarSign, Receipt, Scale, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
+import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
+import { TABLE_ACTION_CLASS_COMPACT } from "../lib/tableCellStyles";
 
 interface StatementRow {
   key: string;
@@ -24,6 +27,7 @@ export function AdminBillingStatementsPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [adjustKey, setAdjustKey] = useState<string | null>(null);
   const [payments, setPayments] = useState<Record<string, number>>(() => {
     try {
       const raw = localStorage.getItem(PAYMENTS_KEY);
@@ -35,6 +39,7 @@ export function AdminBillingStatementsPage() {
     }
   });
   const [payInput, setPayInput] = useState("");
+  const [adjustInput, setAdjustInput] = useState("");
 
   const customers = useMemo(
     () =>
@@ -44,7 +49,7 @@ export function AdminBillingStatementsPage() {
   );
 
   const statements = useMemo(() => {
-    const cycleDays: 7 = 7;
+    const cycleDays = 7 as const;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -110,6 +115,7 @@ export function AdminBillingStatementsPage() {
   const safePage = Math.min(page, Math.max(1, Math.ceil(statements.length / perPage)));
   const paged = statements.slice((safePage - 1) * perPage, safePage * perPage);
   const selected = selectedKey ? statements.find((s) => s.key === selectedKey) ?? null : null;
+  const adjusting = adjustKey ? statements.find((s) => s.key === adjustKey) ?? null : null;
 
   useEffect(() => {
     localStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments));
@@ -146,6 +152,21 @@ export function AdminBillingStatementsPage() {
     setPayInput("");
   }
 
+  function openAdjustModal(row: StatementRow) {
+    setAdjustKey(row.key);
+    setAdjustInput(String(Math.round(paidOf(row.key))));
+  }
+
+  function saveAdjustedPayment() {
+    if (!adjusting) return;
+    const amount = Number(adjustInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    const bounded = Math.min(adjusting.totalDue, amount);
+    setPayments((prev) => ({ ...prev, [adjusting.key]: bounded }));
+    setAdjustKey(null);
+    setAdjustInput("");
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -156,7 +177,7 @@ export function AdminBillingStatementsPage() {
         </p>
       </div>
 
-      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
+      <div className="rounded-3xl border border-border bg-card p-4 shadow-card">
         <div className="grid gap-2 md:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <p className="text-xs text-slate-500">Cycle</p>
@@ -183,19 +204,21 @@ export function AdminBillingStatementsPage() {
           </label>
         </div>
 
-        <div className="mt-3 max-h-[min(70vh,640px)] overflow-auto rounded-2xl border border-violet-200 shadow-inner">
+        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
           <table className="min-w-[920px] w-full text-left text-base">
-            <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
+            <thead className="sticky top-0 z-10 border-b border-border bg-muted text-xs font-bold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
-                <th className="px-3 py-2">Customer</th>
-                <th className="px-3 py-2">Period</th>
-                <th className="px-3 py-2">Invoices</th>
-                <th className="px-3 py-2 text-right">Invoice total</th>
-                <th className="px-3 py-2 text-right">Previous due</th>
-                <th className="px-3 py-2 text-right">Total due</th>
-                <th className="px-3 py-2">Due status</th>
-                <th className="px-3 py-2">Payment</th>
-                <th className="px-3 py-2 text-right">Action</th>
+                <th className="px-4 py-3.5">Customer</th>
+                <th className="px-4 py-3.5">Period</th>
+                <th className="px-4 py-3.5">Invoices</th>
+                <th className="px-4 py-3.5 text-right">Invoice total</th>
+                <th className="px-4 py-3.5 text-right">Previous due</th>
+                <th className="px-4 py-3.5 text-right">Total due</th>
+                <th className="px-4 py-3.5 text-right">Paid</th>
+                <th className="px-4 py-3.5 text-right">Balance</th>
+                <th className="px-4 py-3.5">Due status</th>
+                <th className="px-4 py-3.5">Payment</th>
+                <th className="px-4 py-3.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -203,8 +226,8 @@ export function AdminBillingStatementsPage() {
                 <tr
                   key={r.key}
                   onClick={() => setSelectedKey(r.key)}
-                  className={`cursor-pointer border-t border-violet-100 ${
-                    selected?.key === r.key ? "bg-blue-50" : r.status === "Overdue" ? "bg-red-50/60" : "bg-white"
+                  className={`cursor-pointer border-t border-border ${
+                    selected?.key === r.key ? "bg-muted" : r.status === "Overdue" ? "bg-red-50" : "bg-card"
                   }`}
                 >
                   <td className="px-3 py-3.5 font-semibold">{r.customer}</td>
@@ -216,6 +239,10 @@ export function AdminBillingStatementsPage() {
                   <td className="px-3 py-3.5 text-right">৳ {Math.round(r.previousDue).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5 text-right font-semibold">
                     ৳ {Math.round(r.totalDue).toLocaleString("en-US")}
+                  </td>
+                  <td className="px-3 py-3.5 text-right">৳ {Math.round(paidOf(r.key)).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold">
+                    ৳ {Math.round(balanceOf(r)).toLocaleString("en-US")}
                   </td>
                   <td className="px-3 py-3.5">
                     <span
@@ -240,16 +267,28 @@ export function AdminBillingStatementsPage() {
                     </span>
                   </td>
                   <td className="px-3 py-3.5 text-right">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedKey(r.key);
-                      }}
-                      className="rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3 py-1.5 text-xs font-semibold text-white hover:from-slate-800 hover:to-indigo-700"
-                    >
-                      View details
-                    </button>
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedKey(r.key);
+                        }}
+                        className="relative z-[1] inline-flex rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm hover:border-slate-400 hover:bg-slate-50 dark:border-slate-600 dark:bg-zinc-900 dark:text-zinc-50 dark:hover:bg-zinc-800"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openAdjustModal(r);
+                        }}
+                        className="relative z-[1] inline-flex rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 shadow-sm hover:bg-blue-100"
+                      >
+                        Adjust
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -277,12 +316,54 @@ export function AdminBillingStatementsPage() {
             {formatIso(selected.dueDate)}
           </div>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <MiniStat label="Invoice total" value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`} />
-            <MiniStat label="Previous due carry-over" value={`৳ ${Math.round(selected.previousDue).toLocaleString("en-US")}`} />
-            <MiniStat label="Total bill due" value={`৳ ${Math.round(selected.totalDue).toLocaleString("en-US")}`} strong />
-            <MiniStat label="Paid (statement-wise)" value={`৳ ${Math.round(paidOf(selected.key)).toLocaleString("en-US")}`} />
-            <MiniStat label="Balance due" value={`৳ ${Math.round(balanceOf(selected)).toLocaleString("en-US")}`} strong />
-            <MiniStat label="Payment status" value={paymentStatusOf(selected)} />
+            <StatMetricCard
+              compact
+              title="Invoice total"
+              value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`}
+              icon={Receipt}
+              tone="coral"
+              sparkSeed={`${selected.key}-inv-total`}
+            />
+            <StatMetricCard
+              compact
+              title="Previous due carry-over"
+              value={`৳ ${Math.round(selected.previousDue).toLocaleString("en-US")}`}
+              icon={Wallet}
+              tone="slate"
+              sparkSeed={`${selected.key}-prev-due`}
+            />
+            <StatMetricCard
+              compact
+              title="Total bill due"
+              value={`৳ ${Math.round(selected.totalDue).toLocaleString("en-US")}`}
+              icon={CircleDollarSign}
+              tone="navy"
+              sparkSeed={`${selected.key}-total-due`}
+            />
+            <StatMetricCard
+              compact
+              title="Paid (statement-wise)"
+              value={`৳ ${Math.round(paidOf(selected.key)).toLocaleString("en-US")}`}
+              icon={Banknote}
+              tone="teal"
+              sparkSeed={`${selected.key}-paid`}
+            />
+            <StatMetricCard
+              compact
+              title="Balance due"
+              value={`৳ ${Math.round(balanceOf(selected)).toLocaleString("en-US")}`}
+              icon={Scale}
+              tone="amber"
+              sparkSeed={`${selected.key}-balance`}
+            />
+            <StatMetricCard
+              compact
+              title="Payment status"
+              value={paymentStatusOf(selected)}
+              icon={BadgeCheck}
+              tone="rose"
+              sparkSeed={`${selected.key}-pay-status`}
+            />
           </div>
 
           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -299,16 +380,16 @@ export function AdminBillingStatementsPage() {
               <button
                 type="button"
                 onClick={addPaymentForSelected}
-                className="rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3 py-2 text-xs font-semibold text-white"
+                className={TABLE_ACTION_CLASS_COMPACT}
               >
                 Add payment
               </button>
             </div>
           </div>
 
-          <div className="mt-3 max-h-[min(50vh,420px)] overflow-auto rounded-2xl border border-violet-200 shadow-inner">
+          <div className="table-scroll mt-3 max-h-[min(50vh,420px)] rounded-2xl border border-border shadow-inner">
             <table className="min-w-[480px] w-full text-left text-base">
-              <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
+              <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
                 <tr>
                   <th className="px-3 py-2">Invoice/Order</th>
                   <th className="px-3 py-2">Date</th>
@@ -317,7 +398,7 @@ export function AdminBillingStatementsPage() {
               </thead>
               <tbody>
                 {selected.invoices.map((inv) => (
-                  <tr key={`${selected.key}-${inv.orderNo}`} className="border-t border-violet-100 bg-white/95">
+                  <tr key={`${selected.key}-${inv.orderNo}`} className="border-t border-border bg-card">
                     <td className="px-3 py-3.5 font-semibold">{inv.orderNo}</td>
                     <td className="px-3 py-3.5">{inv.orderDate}</td>
                     <td className="px-3 py-3.5 text-right">৳ {Math.round(inv.amount).toLocaleString("en-US")}</td>
@@ -332,15 +413,62 @@ export function AdminBillingStatementsPage() {
           Click <strong>View details</strong> in any statement row to open details.
         </div>
       )}
-    </div>
-  );
-}
 
-function MiniStat({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className={`text-sm ${strong ? "font-bold text-brand-dark" : "font-semibold"}`}>{value}</p>
+      {adjusting ? (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Adjust payment</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {adjusting.customer} · {formatIso(adjusting.start)} to {formatIso(adjusting.end)}
+            </p>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-lg bg-slate-50 p-2">
+                <p className="text-slate-500">Total due</p>
+                <p className="font-semibold text-slate-900">৳ {Math.round(adjusting.totalDue).toLocaleString("en-US")}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-2">
+                <p className="text-slate-500">Paid</p>
+                <p className="font-semibold text-slate-900">৳ {Math.round(paidOf(adjusting.key)).toLocaleString("en-US")}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-2">
+                <p className="text-slate-500">Balance</p>
+                <p className="font-semibold text-slate-900">৳ {Math.round(balanceOf(adjusting)).toLocaleString("en-US")}</p>
+              </div>
+            </div>
+            <label className="mt-4 block text-xs font-semibold text-slate-600">
+              Set paid amount
+              <input
+                type="number"
+                min={0}
+                max={Math.round(adjusting.totalDue)}
+                value={adjustInput}
+                onChange={(e) => setAdjustInput(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                placeholder="Enter total paid amount"
+              />
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdjustKey(null);
+                  setAdjustInput("");
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveAdjustedPayment}
+                className="rounded-lg bg-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-600"
+              >
+                Save adjustment
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

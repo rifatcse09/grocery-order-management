@@ -3,10 +3,23 @@ import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
-import { ClipboardCheck, FileBadge2, FileText, ReceiptText, Search } from "lucide-react";
+import { ClipboardCheck, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readModeratorSeenOrderIds } from "../lib/orderNotifications";
 import type { OrderStatus } from "../types";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  tableActionsContainerClass,
+  tableActionsTightSingle,
+  tableActionsWideSingle,
+} from "@/lib/tableActionsLayout";
+import { StatMetricCard } from "../components/StatMetricCard";
 
 export function ModeratorOrdersPage() {
   const { orders } = useOrders();
@@ -58,7 +71,7 @@ export function ModeratorOrdersPage() {
   const safePage = Math.min(page, totalPages);
   const pageList = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
   const challanCount = orders.filter((o) => o.challanGenerated).length;
-  const invoiceCount = orders.filter((o) => o.invoiceGenerated || o.status === "invoiced").length;
+  const invoiceCount = orders.filter((o) => o.status === "delivered").length;
   const underReview = orders.filter((o) => o.status === "under_review").length;
 
   return (
@@ -66,35 +79,38 @@ export function ModeratorOrdersPage() {
       <div>
         <h1 className="text-3xl font-extrabold text-slate-900">Moderator panel</h1>
         <p className="mt-1 text-base font-medium text-slate-600">
-          Edit quantities, add pricing, generate challan, finalize billing.
+          Edit quantities, add pricing, generate challan, and submit delivered orders for invoicing.
         </p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <MiniCard
+        <StatMetricCard
           title="Under review"
-          value={underReview}
+          value={String(underReview)}
           icon={ClipboardCheck}
-          tone="from-amber-100 to-amber-50 text-amber-800 ring-amber-200"
+          tone="amber"
+          sparkSeed="mod-under-review"
         />
-        <MiniCard
+        <StatMetricCard
           title="Challan ready"
-          value={challanCount}
+          value={String(challanCount)}
           icon={FileText}
-          tone="from-cyan-100 to-cyan-50 text-cyan-800 ring-cyan-200"
+          tone="teal"
+          sparkSeed="mod-challan-ready"
         />
-        <MiniCard
-          title="Invoice finalized"
-          value={invoiceCount}
+        <StatMetricCard
+          title="Delivered for invoicing"
+          value={String(invoiceCount)}
           icon={ReceiptText}
-          tone="from-violet-100 to-violet-50 text-violet-800 ring-violet-200"
+          tone="navy"
+          sparkSeed="mod-delivered-invoice"
         />
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 shadow-card">
-        <div className="border-b border-indigo-100 bg-white/80 px-4 py-4 sm:px-5">
+      <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
+        <div className="border-b border-border bg-card px-4 py-4 sm:px-5">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs font-semibold uppercase tracking-wide text-indigo-900 sm:col-span-2 lg:col-span-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-foreground sm:col-span-2 lg:col-span-2">
               <span className="mb-1 flex items-center gap-1.5 text-slate-600">
                 <Search className="h-3.5 w-3.5" />
                 Search
@@ -106,7 +122,7 @@ export function ModeratorOrdersPage() {
                   setPage(1);
                 }}
                 placeholder="Order no., customer, phone, address…"
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none ring-indigo-200/50 focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </label>
             <label className="text-xs font-semibold text-slate-600">
@@ -117,14 +133,14 @@ export function ModeratorOrdersPage() {
                   setStatus(e.target.value as "all" | OrderStatus);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All statuses</option>
-                <option value="draft">Draft</option>
-                <option value="submitted">Submitted</option>
-                <option value="under_review">Under review</option>
+                <option value="draft">Drafted</option>
+                <option value="submitted">Ordered</option>
+                <option value="under_review">Processing</option>
                 <option value="delivered">Delivered</option>
-                <option value="invoiced">Invoiced</option>
+                <option value="invoiced">Completed (Invoice)</option>
               </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">
@@ -135,7 +151,7 @@ export function ModeratorOrdersPage() {
                   setCustomer(e.target.value);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All customers</option>
                 {customers.map((c) => (
@@ -153,7 +169,7 @@ export function ModeratorOrdersPage() {
                   setDocFilter(e.target.value as typeof docFilter);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All orders</option>
                 <option value="challan_yes">Challan available</option>
@@ -168,9 +184,9 @@ export function ModeratorOrdersPage() {
           </p>
         </div>
 
-        <div className="hidden overflow-x-auto md:block">
+        <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="w-full text-left text-base">
-          <thead className="bg-indigo-100/80 text-sm uppercase tracking-wide text-indigo-900">
+          <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
             <tr>
               <th className="px-4 py-3">Order</th>
               <th className="px-4 py-3">Submitted</th>
@@ -181,7 +197,7 @@ export function ModeratorOrdersPage() {
           </thead>
           <tbody>
             {pageList.map((o) => (
-              <tr key={o.id} className="border-t border-indigo-100 bg-white/95">
+              <tr key={o.id} className="border-t border-border bg-card">
                 <td className="px-4 py-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-base font-semibold text-slate-900">{o.orderNo}</span>
@@ -198,13 +214,30 @@ export function ModeratorOrdersPage() {
                   <StatusBadge status={o.status} />
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link
-                    to={`/moderator/orders/${o.id}`}
-                    className="inline-flex items-center gap-1 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3.5 py-2 text-sm font-semibold text-white hover:from-slate-800 hover:to-indigo-700"
-                  >
-                    <FileBadge2 className="h-4 w-4" />
-                    Open
-                  </Link>
+                  <div className={tableActionsWideSingle()}>
+                    <Button variant="ghost" size="icon" className="h-9 w-9 text-primary hover:text-primary" asChild title="Open order">
+                      <Link to={`/moderator/orders/${o.id}`} aria-label="Open order">
+                        <FileBadge2 className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                  <div className={tableActionsTightSingle()}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground" aria-label="Order actions">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuItem asChild>
+                          <Link to={`/moderator/orders/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                            <FileBadge2 className="h-4 w-4" />
+                            Open
+                          </Link>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -216,7 +249,7 @@ export function ModeratorOrdersPage() {
         </div>
         <div className="space-y-3 p-3 md:hidden">
           {pageList.map((o) => (
-            <div key={o.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5 shadow-sm">
+            <div key={o.id} className="rounded-2xl border border-border bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-mono text-sm font-semibold text-slate-900">{o.orderNo}</p>
@@ -234,7 +267,7 @@ export function ModeratorOrdersPage() {
               <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
               <Link
                 to={`/moderator/orders/${o.id}`}
-                className="mt-3 inline-flex items-center gap-1 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3.5 py-2 text-sm font-semibold text-white"
+                className="mt-3 inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white"
               >
                 <FileBadge2 className="h-4 w-4" />
                 Open
@@ -258,28 +291,6 @@ export function ModeratorOrdersPage() {
           />
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function MiniCard({
-  title,
-  value,
-  icon: Icon,
-  tone,
-}: {
-  title: string;
-  value: number;
-  icon: typeof ClipboardCheck;
-  tone: string;
-}) {
-  return (
-    <div className={`rounded-2xl bg-gradient-to-br p-4 ring-1 ${tone}`}>
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold">{title}</p>
-        <Icon className="h-5 w-5" />
-      </div>
-      <p className="mt-2 text-3xl font-extrabold">{value}</p>
     </div>
   );
 }

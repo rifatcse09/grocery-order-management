@@ -26,16 +26,18 @@ export function UserInvoiceDetailPage() {
     () => (order ? order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0) : 0),
     [order],
   );
+  const printDoc = () => window.print();
+  const saveAsPdf = () => window.print();
 
   const hasInvoice = order && (order.invoiceGenerated || order.status === "invoiced");
 
   if (!order) {
     return (
-      <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-8 text-center">
+      <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Order not found.</p>
         <Link
           to="/user/invoices"
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2 text-sm font-semibold text-white"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           Billing documents
@@ -46,11 +48,11 @@ export function UserInvoiceDetailPage() {
 
   if (!hasInvoice) {
     return (
-      <div className="rounded-2xl border border-violet-200 bg-violet-50/50 p-8 text-center">
+      <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Invoice is not available for this order yet.</p>
         <Link
           to="/user/invoices"
-          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2 text-sm font-semibold text-white"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           Billing documents
@@ -63,49 +65,47 @@ export function UserInvoiceDetailPage() {
     <div className="space-y-8 print:space-y-0">
       <Link
         to="/user/invoices"
-        className="inline-flex items-center gap-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900 print:hidden"
+        className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-foreground print:hidden"
       >
         <ArrowLeft className="h-4 w-4" />
         Billing documents
       </Link>
 
-      <div className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-600 via-indigo-600 to-fuchsia-600 p-6 text-white shadow-xl sm:p-8 print:hidden">
-        <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
-        <div className="absolute -bottom-20 -left-10 h-40 w-40 rounded-full bg-white/10 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
+      <div className="rounded-3xl border border-border bg-primary p-6 text-primary-foreground shadow-xl sm:p-8 print:hidden">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-100">E-invoice</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground">E-invoice</p>
             <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight sm:text-3xl">{order.orderNo}</h1>
-            <p className="mt-2 flex items-center gap-2 text-violet-100">
+            <p className="mt-2 flex items-center gap-2 text-primary-foreground">
               <User className="h-4 w-4 shrink-0" />
-              <span className="font-medium text-white">{order.contactPerson}</span>
+              <span className="font-medium text-primary-foreground">{order.contactPerson}</span>
             </p>
           </div>
           <div className="flex flex-col items-end gap-2">
             <StatusBadge status={order.status} />
-            <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-violet-100">
-              <span className="rounded-full bg-white/15 px-3 py-1 backdrop-blur">
+            <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-primary-foreground">
+              <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-900">
                 {lineCount} line{lineCount !== 1 ? "s" : ""}
               </span>
-              <span className="rounded-full bg-blue-400/30 px-3 py-1 text-blue-50">Invoice</span>
+              <span className="rounded-full bg-blue-800 px-3 py-1 text-white">Invoice</span>
             </div>
           </div>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3 print:hidden">
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-violet-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-violet-800">Lines</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Lines</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
         </div>
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-fuchsia-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-fuchsia-800">Line total (sum)</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
           </p>
         </div>
-        <div className="rounded-2xl border border-violet-200 bg-gradient-to-br from-white to-indigo-50/80 p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Grand total</p>
+        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {order.grandTotal != null ? `৳ ${Math.round(order.grandTotal).toLocaleString("en-US")}` : "—"}
           </p>
@@ -113,23 +113,32 @@ export function UserInvoiceDetailPage() {
       </div>
 
       <section className="space-y-3 print:space-y-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-4 py-3 print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted px-4 py-3 print:hidden">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-primary">
               <Receipt className="h-5 w-5" />
             </span>
             <div>
-              <h2 className="text-base font-bold text-indigo-950">Invoice preview</h2>
-              <p className="text-xs text-indigo-800/80">Final billing document</p>
+              <h2 className="text-base font-bold text-foreground">Invoice preview</h2>
+              <p className="text-xs text-foreground">Final billing document</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => window.print()}
-            className="rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2 text-sm font-semibold text-white hover:from-slate-800 hover:to-indigo-700"
-          >
-            Print / Save as PDF
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={printDoc}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
+            >
+              Print
+            </button>
+            <button
+              type="button"
+              onClick={saveAsPdf}
+              className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600"
+            >
+              Save as PDF
+            </button>
+          </div>
         </div>
         <div className="print-invoice-only print:p-0">
           <BanglaInvoiceTemplate order={order} />

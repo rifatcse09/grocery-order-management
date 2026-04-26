@@ -1,4 +1,6 @@
+import { AlertTriangle, DollarSign, FileStack } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
 
@@ -121,12 +123,30 @@ export function AdminOutstandingBillsPage() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <Card title="Total unpaid amount" value={`৳ ${Math.round(totalUnpaid).toLocaleString("en-US")}`} />
-        <Card title="Pending invoices" value={String(pendingCount)} />
-        <Card title="Overdue payments" value={String(overdueCount)} danger />
+        <StatMetricCard
+          title="Total unpaid amount"
+          value={`৳ ${Math.round(totalUnpaid).toLocaleString("en-US")}`}
+          icon={DollarSign}
+          tone="coral"
+          sparkSeed="outstanding-total-unpaid"
+        />
+        <StatMetricCard
+          title="Pending invoices"
+          value={String(pendingCount)}
+          icon={FileStack}
+          tone="slate"
+          sparkSeed="outstanding-pending"
+        />
+        <StatMetricCard
+          title="Overdue payments"
+          value={String(overdueCount)}
+          icon={AlertTriangle}
+          tone="rose"
+          sparkSeed="outstanding-overdue"
+        />
       </div>
 
-      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
+      <div className="rounded-3xl border border-border bg-card p-4 shadow-card">
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
           <label className="text-xs text-slate-600">
             Date range
@@ -158,9 +178,9 @@ export function AdminOutstandingBillsPage() {
           </label>
         </div>
 
-        <div className="mt-3 max-h-[min(70vh,640px)] overflow-auto rounded-2xl border border-violet-200 shadow-inner">
+        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
           <table className="min-w-[720px] w-full text-left text-base">
-            <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
+            <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
                 <th className="px-3 py-2">Invoice / Order</th>
                 <th className="px-3 py-2">Customer</th>
@@ -174,7 +194,7 @@ export function AdminOutstandingBillsPage() {
               {pagedRows.map((r) => (
                 <tr
                   key={r.id}
-                  className={`border-t border-violet-100 ${r.isOverdue ? "bg-red-50/70" : "bg-white/95"}`}
+                  className={`border-t border-border ${r.isOverdue ? "bg-red-50" : "bg-card"}`}
                 >
                   <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>
                   <td className="px-3 py-3.5 font-medium">{r.customer}</td>
@@ -215,26 +235,6 @@ export function AdminOutstandingBillsPage() {
   );
 }
 
-function Card({ title, value, danger }: { title: string; value: string; danger?: boolean }) {
-  return (
-    <div
-      className={`rounded-3xl border p-5 shadow-card ${
-        danger
-          ? "border-red-200 bg-gradient-to-br from-red-50 to-white"
-          : "border-blue-200 bg-gradient-to-br from-blue-50 to-white"
-      }`}
-    >
-      <p className="text-sm font-semibold text-slate-600">{title}</p>
-      <p
-        className={`mt-2 break-words text-2xl font-extrabold leading-tight sm:text-3xl ${
-          danger ? "text-red-600" : "text-brand-dark"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
 
 function parseIso(iso: string): Date | null {
   const d = new Date(iso);

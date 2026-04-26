@@ -1,28 +1,28 @@
 import type { OrderStatus } from "../types";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 const styles: Record<OrderStatus, string> = {
-  draft: "bg-slate-100 text-slate-700 ring-slate-200",
-  submitted: "bg-blue-50 text-blue-700 ring-blue-200",
-  under_review: "bg-amber-50 text-amber-800 ring-amber-200",
-  delivered: "bg-emerald-50 text-emerald-800 ring-emerald-200",
-  invoiced: "bg-violet-50 text-violet-800 ring-violet-200",
+  draft: "border-transparent bg-slate-200 text-slate-900 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-100",
+  submitted: "border-transparent bg-blue-600 text-white hover:bg-blue-600 dark:bg-blue-500 dark:text-white",
+  under_review: "border-transparent bg-amber-500 text-amber-950 hover:bg-amber-500 dark:bg-amber-400 dark:text-amber-950",
+  delivered: "border-transparent bg-emerald-600 text-white hover:bg-emerald-600 dark:bg-emerald-500 dark:text-white",
+  invoiced: "border-transparent bg-violet-600 text-white hover:bg-violet-600 dark:bg-violet-500 dark:text-white",
 };
 
 const labels: Record<OrderStatus, string> = {
-  draft: "Draft",
-  submitted: "Submitted",
-  under_review: "Under Review",
+  draft: "Drafted",
+  submitted: "Ordered",
+  under_review: "Processing",
   delivered: "Delivered",
-  invoiced: "Invoiced",
+  invoiced: "Completed (Invoice)",
 };
 
 export function StatusBadge({ status }: { status: OrderStatus }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${styles[status]}`}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+    <Badge variant="outline" className={cn("gap-1 rounded-full px-2.5 py-0.5 font-medium", styles[status])}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
       <span>{labels[status]}</span>
-    </span>
+    </Badge>
   );
 }

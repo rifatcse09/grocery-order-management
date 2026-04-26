@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle } from "lucide-react";
 import { OrderLinesEditor } from "../components/OrderLinesEditor";
+import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { SignatureCapture } from "../components/SignatureCapture";
 import { useAuth } from "../context/AuthContext";
 import { useCatalog } from "../context/CatalogContext";
@@ -31,7 +32,7 @@ export function OrderFormPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { categories, addCustomItem } = useCatalog();
-  const { orders, upsertOrder, getById } = useOrders();
+  const { orders, upsertOrder, deleteOrder, getById } = useOrders();
 
   const [order, setOrder] = useState<Order | null>(null);
   const [addRowModal, setAddRowModal] = useState(false);
@@ -40,6 +41,7 @@ export function OrderFormPage() {
   const [pickItem, setPickItem] = useState("");
   const [customBn, setCustomBn] = useState("");
   const [customEn, setCustomEn] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -92,6 +94,7 @@ export function OrderFormPage() {
 
   // New and draft orders are always editable; non-draft orders lock inside 48h.
   const editWindowOk = isNew || order.status === "draft" || canEditOrder(order.deliveryDate);
+  const canDeleteBeforeSubmit = !isNew && order.status === "draft" && !order.submittedAt;
   const linesOk =
     order.lines.length > 0 &&
     order.lines.every((l) => validateLineQuantity(l.kg, l.gram, l.piece) == null);
@@ -140,10 +143,8 @@ export function OrderFormPage() {
         <Link to="/user/orders" className="text-xs text-accent hover:underline">
           ← Orders
         </Link>
-        <h1 className="mt-2 text-2xl font-extrabold text-brand-dark sm:text-3xl">Order form</h1>
-        <p className="mt-1 text-base font-medium text-slate-700">
-          Order number and date are automatic. Quantities: kg and/or g, or pieces only.
-        </p>
+        <h1 className="mt-2 text-2xl font-extrabold text-brand-dark sm:text-3xl">{isNew ? "Create order" : "Edit order"}</h1>
+        <p className="mt-1 text-base font-medium text-slate-700">Add basic details, line items, and signature before review.</p>
       </div>
 
       {!editWindowOk && !isNew ? (
@@ -152,155 +153,188 @@ export function OrderFormPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-purple-50 p-5 shadow-card sm:p-7 md:grid-cols-2">
-        <div>
-          <p className="text-sm font-semibold text-slate-600">Order no.</p>
-          <p className="font-mono text-xl font-bold text-slate-900">{order.orderNo}</p>
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-7">
+        <h2 className="text-lg font-bold text-slate-900">Order details</h2>
+        <p className="mt-1 text-sm text-slate-600">Basic order information.</p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="text-sm font-semibold text-slate-600">Order no.</p>
+            <p className="font-mono text-xl font-bold text-slate-900">{order.orderNo}</p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-600">Date</p>
+            <p className="font-mono text-lg font-semibold text-slate-900">{order.orderDate}</p>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-sm font-semibold text-slate-700">Billing address</label>
+            <textarea
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              rows={2}
+              value={order.billingAddress}
+              onChange={(e) => setOrder({ ...order, billingAddress: e.target.value })}
+              disabled={!editWindowOk}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-sm font-semibold text-slate-700">Delivery address</label>
+            <textarea
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              rows={2}
+              value={order.deliveryAddress}
+              onChange={(e) => setOrder({ ...order, deliveryAddress: e.target.value })}
+              disabled={!editWindowOk}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Delivery date</label>
+            <input
+              type="date"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              value={order.deliveryDate}
+              onChange={(e) => setOrder({ ...order, deliveryDate: e.target.value })}
+              disabled={!editWindowOk}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Time window (text)</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              value={order.deliveryTime ?? ""}
+              onChange={(e) => setOrder({ ...order, deliveryTime: e.target.value })}
+              placeholder="e.g. 10:00 — 12:00"
+              disabled={!editWindowOk}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Contact person</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              value={order.contactPerson}
+              onChange={(e) => setOrder({ ...order, contactPerson: e.target.value })}
+              disabled={!editWindowOk}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700">Phone</label>
+            <input
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              value={order.phone}
+              onChange={(e) => setOrder({ ...order, phone: e.target.value })}
+              disabled={!editWindowOk}
+            />
+          </div>
         </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-600">Date</p>
-          <p className="font-mono text-lg font-semibold text-slate-900">{order.orderDate}</p>
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-sm font-semibold text-slate-700">Billing address</label>
-          <textarea
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            rows={2}
-            value={order.billingAddress}
-            onChange={(e) => setOrder({ ...order, billingAddress: e.target.value })}
-            disabled={!editWindowOk}
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-sm font-semibold text-slate-700">Delivery address</label>
-          <textarea
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            rows={2}
-            value={order.deliveryAddress}
-            onChange={(e) => setOrder({ ...order, deliveryAddress: e.target.value })}
-            disabled={!editWindowOk}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-700">Delivery date</label>
-          <input
-            type="date"
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            value={order.deliveryDate}
-            onChange={(e) => setOrder({ ...order, deliveryDate: e.target.value })}
-            disabled={!editWindowOk}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-700">Time window (text)</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            value={order.deliveryTime ?? ""}
-            onChange={(e) => setOrder({ ...order, deliveryTime: e.target.value })}
-            placeholder="e.g. 10:00 — 12:00"
-            disabled={!editWindowOk}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-700">Contact person</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            value={order.contactPerson}
-            onChange={(e) => setOrder({ ...order, contactPerson: e.target.value })}
-            disabled={!editWindowOk}
-          />
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-slate-700">Phone</label>
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-            value={order.phone}
-            onChange={(e) => setOrder({ ...order, phone: e.target.value })}
-            disabled={!editWindowOk}
-          />
-        </div>
-      </div>
+      </section>
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-xl font-bold text-slate-900">Line items</h2>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            disabled={!editWindowOk}
-            onClick={() => {
-              setPickCat(categories[0]?.id ?? "");
-              setPickItem(categories[0]?.items[0]?.id ?? "");
-              setAddItemModal(true);
-            }}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm disabled:opacity-40"
-          >
-            + Add new item
-          </button>
-          <button
-            type="button"
-            disabled={!editWindowOk}
-            onClick={() => {
-              setPickCat(categories[0]?.id ?? "");
-              setPickItem(categories[0]?.items[0]?.id ?? "");
-              setAddRowModal(true);
-            }}
-            className="rounded-xl bg-brand-dark px-3 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
-          >
-            + Add row
-          </button>
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Line items</h2>
+            <p className="mt-1 text-sm text-slate-600">Add products to this order.</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!editWindowOk}
+              onClick={() => {
+                setPickCat(categories[0]?.id ?? "");
+                setPickItem(categories[0]?.items[0]?.id ?? "");
+                setAddItemModal(true);
+              }}
+              className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm disabled:cursor-not-allowed disabled:border-border disabled:bg-muted disabled:text-muted-foreground"
+            >
+              + Add new item
+            </button>
+            <button
+              type="button"
+              disabled={!editWindowOk}
+              onClick={() => {
+                setPickCat(categories[0]?.id ?? "");
+                setPickItem(categories[0]?.items[0]?.id ?? "");
+                setAddRowModal(true);
+              }}
+              className="rounded-xl bg-brand-dark px-3 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+            >
+              + Add row
+            </button>
+          </div>
         </div>
-      </div>
 
-      {!linesOk ? (
-        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            Some rows break quantity rules: use kg and/or g, or pieces only
-            (কেজি/গ্রাম অথবা শুধু পিচ).
-          </p>
+        {!linesOk ? (
+          <div className="mt-4 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              Some rows break quantity rules: use kg and/or g, or pieces only
+              (কেজি/গ্রাম অথবা শুধু পিচ).
+            </p>
+          </div>
+        ) : null}
+
+        <div className="mt-4">
+          <OrderLinesEditor
+            lines={order.lines}
+            categories={categories}
+            largeText
+            onChange={(lines) => setOrder({ ...order, lines })}
+          />
         </div>
-      ) : null}
+      </section>
 
-      <OrderLinesEditor
-        lines={order.lines}
-        categories={categories}
-        largeText
-        onChange={(lines) => setOrder({ ...order, lines })}
-      />
+      <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-7">
+        <h2 className="text-lg font-bold text-slate-900">Signature</h2>
+        <p className="mt-1 text-sm text-slate-600">Sign before reviewing and submitting the order.</p>
+        <div className="mt-4">
+          <SignatureCapture
+            value={order.signatureDataUrl}
+            onChange={(url) => setOrder({ ...order, signatureDataUrl: url })}
+          />
+        </div>
+      </section>
 
-      <SignatureCapture
-        value={order.signatureDataUrl}
-        onChange={(url) => setOrder({ ...order, signatureDataUrl: url })}
-      />
-
-      <div className="grid gap-3 sm:flex sm:flex-wrap">
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          onClick={() => navigate("/user/orders")}
+          className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-base font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+        >
+          Cancel
+        </button>
         <button
           type="button"
           onClick={save}
           disabled={!editWindowOk || !linesOk}
-          className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-base font-semibold shadow-sm hover:bg-slate-50"
+          className="rounded-2xl bg-slate-700 px-5 py-3 text-base font-semibold text-white shadow-sm hover:bg-slate-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700"
         >
-          Save draft
+          {isNew ? "Create order" : "Save draft"}
         </button>
         <button
           type="button"
           disabled={!linesOk || !editWindowOk}
           onClick={goReview}
-          className="rounded-2xl bg-indigo-600 px-5 py-3 text-base font-semibold text-white shadow hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex min-w-[180px] items-center justify-center rounded-2xl bg-slate-700 px-5 py-3 text-base font-semibold text-white shadow-sm hover:bg-slate-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-700"
         >
-          Continue to review →
+          {isNew ? "Review order →" : "Continue to review →"}
         </button>
+        {canDeleteBeforeSubmit ? (
+          <button
+            type="button"
+            onClick={() => setShowDeleteModal(true)}
+            className="rounded-2xl border border-red-200 bg-red-50 px-5 py-3 text-base font-semibold text-red-700 shadow-sm hover:bg-red-100"
+          >
+            Delete order
+          </button>
+        ) : null}
       </div>
 
       {addRowModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold">Add line</h3>
+        <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Add line</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category (ধরন)</label>
                 <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                   value={pickCat}
                   onChange={(e) => {
                     setPickCat(e.target.value);
@@ -318,7 +352,7 @@ export function OrderFormPage() {
               <div>
                 <label className="text-xs text-slate-600">Item (বস্তু)</label>
                 <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                   value={pickItem}
                   onChange={(e) => setPickItem(e.target.value)}
                 >
@@ -332,14 +366,14 @@ export function OrderFormPage() {
               <button
                 type="button"
                 onClick={addFromCatalog}
-                className="w-full rounded-xl bg-brand-dark py-2 text-sm font-semibold text-white"
+                className="w-full rounded-xl bg-slate-700 py-2 text-sm font-semibold text-white hover:bg-slate-600"
               >
                 Add from catalog
               </button>
               <button
                 type="button"
                 onClick={() => setAddRowModal(false)}
-                className="w-full rounded-xl py-2 text-sm text-slate-600 hover:bg-slate-50"
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Close
               </button>
@@ -349,17 +383,17 @@ export function OrderFormPage() {
       ) : null}
 
       {addItemModal ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-bold">Add new item to category</h3>
-            <p className="mt-1 text-xs text-slate-500">
+        <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Add new item to category</h3>
+            <p className="mt-1 text-xs text-slate-600">
               This saves the item for future orders (local demo catalog).
             </p>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category</label>
                 <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                   value={pickCat}
                   onChange={(e) => setPickCat(e.target.value)}
                 >
@@ -371,13 +405,13 @@ export function OrderFormPage() {
                 </select>
               </div>
               <input
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-bn"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bn"
                 placeholder="Name (Bangla)"
                 value={customBn}
                 onChange={(e) => setCustomBn(e.target.value)}
               />
               <input
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                 placeholder="Name (English)"
                 value={customEn}
                 onChange={(e) => setCustomEn(e.target.value)}
@@ -386,14 +420,14 @@ export function OrderFormPage() {
                 <button
                   type="button"
                   onClick={saveNewItemOnly}
-                  className="flex-1 rounded-xl bg-brand-dark py-2 text-sm font-semibold text-white"
+                  className="flex-1 rounded-xl bg-slate-700 py-2 text-sm font-semibold text-white hover:bg-slate-600"
                 >
                   Save item
                 </button>
                 <button
                   type="button"
                   onClick={() => setAddItemModal(false)}
-                  className="flex-1 rounded-xl border border-slate-200 py-2 text-sm text-slate-700"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                 >
                   Cancel
                 </button>
@@ -402,6 +436,18 @@ export function OrderFormPage() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmActionModal
+        open={showDeleteModal}
+        title="Delete order"
+        description={`Are you sure you want to delete ${order.orderNo}? This action cannot be undone.`}
+        onCancel={() => setShowDeleteModal(false)}
+        onConfirm={() => {
+          deleteOrder(order.id);
+          setShowDeleteModal(false);
+          navigate("/user/orders");
+        }}
+      />
     </div>
   );
 }

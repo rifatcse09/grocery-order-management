@@ -1,4 +1,6 @@
+import { Banknote, Receipt, Scale } from "lucide-react";
 import { useMemo, useState } from "react";
+import { StatMetricCard } from "../components/StatMetricCard";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
@@ -100,12 +102,30 @@ export function AdminFinancialLedgerPage() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
-        <LedgerCard title="Total debit (invoices)" value={limited ? "—" : `৳ ${Math.round(totalDebit).toLocaleString("en-US")}`} />
-        <LedgerCard title="Total credit (payments)" value={limited ? "—" : `৳ ${Math.round(totalCredit).toLocaleString("en-US")}`} />
-        <LedgerCard title="Closing balance" value={limited ? "—" : `৳ ${Math.round(closing).toLocaleString("en-US")}`} />
+        <StatMetricCard
+          title="Total debit (invoices)"
+          value={limited ? "—" : `৳ ${Math.round(totalDebit).toLocaleString("en-US")}`}
+          icon={Receipt}
+          tone="coral"
+          sparkSeed="ledger-total-debit"
+        />
+        <StatMetricCard
+          title="Total credit (payments)"
+          value={limited ? "—" : `৳ ${Math.round(totalCredit).toLocaleString("en-US")}`}
+          icon={Banknote}
+          tone="teal"
+          sparkSeed="ledger-total-credit"
+        />
+        <StatMetricCard
+          title="Closing balance"
+          value={limited ? "—" : `৳ ${Math.round(closing).toLocaleString("en-US")}`}
+          icon={Scale}
+          tone="navy"
+          sparkSeed="ledger-closing"
+        />
       </div>
 
-      <div className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-4 shadow-card">
+      <div className="rounded-3xl border border-border bg-card p-4 shadow-card">
         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4">
           <label className="text-xs text-slate-600">
             Search
@@ -154,9 +174,9 @@ export function AdminFinancialLedgerPage() {
           </label>
         </div>
 
-        <div className="mt-3 max-h-[min(70vh,640px)] overflow-auto rounded-2xl border border-violet-200 bg-white shadow-inner">
+        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border bg-white shadow-inner">
         <table className="min-w-[800px] w-full text-left text-base">
-          <thead className="sticky top-0 z-10 bg-violet-100/95 text-sm uppercase tracking-wide text-violet-900 shadow-sm backdrop-blur-sm">
+          <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
             <tr>
               <th className="px-3 py-2">Date</th>
               <th className="px-3 py-2">Customer</th>
@@ -169,14 +189,14 @@ export function AdminFinancialLedgerPage() {
           </thead>
           <tbody>
             {pagedRows.map((r, i) => (
-              <tr key={`${r.ref}-${i}`} className="border-t border-violet-100 bg-white/95">
+              <tr key={`${r.ref}-${i}`} className="border-t border-border bg-card">
                 <td className="px-3 py-3.5">{r.date}</td>
                 <td className="px-3 py-3.5 font-medium">{r.customer}</td>
                 <td className="px-3 py-3.5 font-semibold">{r.ref}</td>
                 <td className="px-3 py-3.5">
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                      r.type === "Invoice" ? "bg-indigo-100 text-indigo-700" : "bg-emerald-100 text-emerald-700"
+                      r.type === "Invoice" ? "bg-muted text-primary" : "bg-emerald-100 text-emerald-700"
                     }`}
                   >
                     {r.type}
@@ -206,11 +226,3 @@ export function AdminFinancialLedgerPage() {
   );
 }
 
-function LedgerCard({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-3xl border border-cyan-200 bg-gradient-to-br from-cyan-50 to-white p-4 shadow-card">
-      <p className="text-sm font-semibold text-slate-600">{title}</p>
-      <p className="mt-2 text-3xl font-extrabold">{value}</p>
-    </div>
-  );
-}

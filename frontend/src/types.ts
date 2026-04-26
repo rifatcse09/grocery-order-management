@@ -31,6 +31,7 @@ export interface OrderLine {
   kg: string;
   gram: string;
   piece: string;
+  instructions?: string;
   unitPrice?: number;
   lineTotal?: number;
 }

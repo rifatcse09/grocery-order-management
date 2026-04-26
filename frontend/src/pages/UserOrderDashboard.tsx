@@ -1,22 +1,37 @@
 import { Link } from "react-router-dom";
-import { Plus, Pencil, FileCheck2, Search } from "lucide-react";
+import { Plus, Pencil, FileCheck2, Search, Trash2, MoreVertical } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder } from "../lib/quantityRules";
 import { PaginationControls } from "../components/PaginationControls";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import type { OrderStatus } from "../types";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  tableActionsContainerClass,
+  tableActionsTightUserRow,
+  tableActionsWideUserRow,
+} from "@/lib/tableActionsLayout";
 
 export function UserOrderDashboard() {
   const { user } = useAuth();
-  const { orders } = useOrders();
+  const { orders, deleteOrder } = useOrders();
   const mine = orders.filter((o) => o.ownerId === user?.id || user?.role === "admin");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; orderNo: string } | null>(null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -37,18 +52,20 @@ export function UserOrderDashboard() {
   const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const btnPrimary =
-    "inline-flex items-center gap-1 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-slate-800 hover:to-indigo-700";
+    "inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900";
   const btnPrimaryNew =
-    "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:from-slate-800 hover:to-indigo-700 sm:w-auto";
+    "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 sm:w-auto";
   const btnOutline =
-    "inline-flex items-center gap-1 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-indigo-50";
+    "inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-muted";
   const btnDisabled = "inline-flex cursor-not-allowed items-center gap-1 rounded-xl bg-slate-100 px-3.5 py-2 text-sm font-semibold text-slate-400";
+  const btnDanger =
+    "inline-flex items-center gap-1 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-100";
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-900">User · Procurement requester</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">User</p>
           <h1 className="mt-1 text-3xl font-extrabold text-slate-900">Order dashboard</h1>
           <p className="mt-1 text-base font-medium text-slate-600">
             Search, filter, and paginate orders. Existing orders are editable until 48h before delivery.
@@ -60,10 +77,10 @@ export function UserOrderDashboard() {
         </Link>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 shadow-card">
-        <div className="border-b border-indigo-100 bg-white/80 px-4 py-4 sm:px-5">
+      <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
+        <div className="border-b border-border bg-card px-4 py-4 sm:px-5">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-indigo-900 sm:col-span-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-foreground sm:col-span-2">
               <span className="mb-1 flex items-center gap-1.5 text-slate-600">
                 <Search className="h-3.5 w-3.5" />
                 Search
@@ -75,7 +92,7 @@ export function UserOrderDashboard() {
                   setPage(1);
                 }}
                 placeholder="Order no., contact, phone, address…"
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none ring-indigo-200/50 focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:ring-2 focus:ring-ring"
               />
             </label>
             <label className="text-xs font-semibold text-slate-600">
@@ -86,14 +103,14 @@ export function UserOrderDashboard() {
                   setStatus(e.target.value as "all" | OrderStatus);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All statuses</option>
-                <option value="draft">Draft</option>
-                <option value="submitted">Submitted</option>
-                <option value="under_review">Under review</option>
+                <option value="draft">Drafted</option>
+                <option value="submitted">Ordered</option>
+                <option value="under_review">Processing</option>
                 <option value="delivered">Delivered</option>
-                <option value="invoiced">Invoiced</option>
+                <option value="invoiced">Completed (Invoice)</option>
               </select>
             </label>
           </div>
@@ -102,9 +119,9 @@ export function UserOrderDashboard() {
           </p>
         </div>
 
-        <div className="hidden overflow-x-auto md:block">
+        <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="w-full text-left text-base">
-            <thead className="bg-indigo-100/80 text-sm uppercase tracking-wide text-indigo-900">
+            <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Submitted</th>
@@ -117,9 +134,10 @@ export function UserOrderDashboard() {
             <tbody>
               {pageItems.map((o) => {
                 const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+                const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
                 const lockTitle = "Less than 48h to delivery — editing and review are locked";
                 return (
-                  <tr key={o.id} className="border-t border-indigo-100 bg-white/95">
+                  <tr key={o.id} className="border-t border-border bg-card">
                     <td className="px-4 py-4 font-mono text-base font-semibold text-slate-900">{o.orderNo}</td>
                     <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
                     <td className="px-4 py-4 text-slate-700">{o.orderDate}</td>
@@ -128,33 +146,113 @@ export function UserOrderDashboard() {
                       <StatusBadge status={o.status} />
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="inline-flex flex-wrap items-center justify-end gap-2">
+                      <div className={tableActionsWideUserRow()}>
                         {editable ? (
-                          <Link
-                            to={`/user/orders/${o.id}/review`}
-                            className={btnOutline}
-                            title="Review summary and submit"
+                          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground" asChild title="Review summary and submit">
+                            <Link to={`/user/orders/${o.id}/review`} aria-label="Review order">
+                              <FileCheck2 className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-muted-foreground"
+                            disabled
+                            title={lockTitle}
+                            aria-label="Review order (locked)"
                           >
                             <FileCheck2 className="h-4 w-4" />
-                            Review
-                          </Link>
-                        ) : (
-                          <span className={btnDisabled} title={lockTitle}>
-                            <FileCheck2 className="h-4 w-4" />
-                            Review
-                          </span>
+                          </Button>
                         )}
                         {editable ? (
-                          <Link to={`/user/orders/${o.id}/edit`} className={btnPrimary} title="Edit order">
-                            <Pencil className="h-4 w-4" />
-                            Edit
-                          </Link>
+                          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground" asChild title="Edit order">
+                            <Link to={`/user/orders/${o.id}/edit`} aria-label="Edit order">
+                              <Pencil className="h-4 w-4" />
+                            </Link>
+                          </Button>
                         ) : (
-                          <span className={btnDisabled} title={lockTitle}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-muted-foreground"
+                            disabled
+                            title={lockTitle}
+                            aria-label="Edit order (locked)"
+                          >
                             <Pencil className="h-4 w-4" />
-                            Edit
-                          </span>
+                          </Button>
                         )}
+                        {canDeleteBeforeSubmit ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-destructive hover:text-destructive"
+                            title="Delete order before submit"
+                            aria-label="Delete order before submit"
+                            onClick={() => setDeleteTarget({ id: o.id, orderNo: o.orderNo })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className={tableActionsTightUserRow()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground"
+                              aria-label="Order actions"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-44">
+                            {editable ? (
+                              <DropdownMenuItem asChild>
+                                <Link to={`/user/orders/${o.id}/review`} className="flex cursor-pointer items-center gap-2">
+                                  <FileCheck2 className="h-4 w-4" />
+                                  Review
+                                </Link>
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem disabled className="gap-2">
+                                <FileCheck2 className="h-4 w-4" />
+                                Review
+                              </DropdownMenuItem>
+                            )}
+                            {editable ? (
+                              <DropdownMenuItem asChild>
+                                <Link to={`/user/orders/${o.id}/edit`} className="flex cursor-pointer items-center gap-2">
+                                  <Pencil className="h-4 w-4" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem disabled className="gap-2">
+                                <Pencil className="h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
+                            {canDeleteBeforeSubmit ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="gap-2 text-destructive focus:text-destructive data-[highlighted]:bg-red-50 data-[highlighted]:text-destructive dark:data-[highlighted]:bg-red-950"
+                                  onSelect={() => setDeleteTarget({ id: o.id, orderNo: o.orderNo })}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>
@@ -170,9 +268,10 @@ export function UserOrderDashboard() {
         <div className="space-y-3 p-3 md:hidden">
           {pageItems.map((o) => {
             const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+            const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
             const lockTitle = "Less than 48h to delivery — editing and review are locked";
             return (
-              <div key={o.id} className="rounded-2xl border border-indigo-200 bg-white p-3.5 shadow-sm">
+              <div key={o.id} className="rounded-2xl border border-border bg-white p-3.5 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
                   <p className="font-mono text-sm font-semibold text-slate-900">{o.orderNo}</p>
                   <StatusBadge status={o.status} />
@@ -209,6 +308,16 @@ export function UserOrderDashboard() {
                       Edit
                     </span>
                   )}
+                  {canDeleteBeforeSubmit ? (
+                    <button
+                      type="button"
+                      className={`${btnDanger} flex-1 justify-center`}
+                      onClick={() => setDeleteTarget({ id: o.id, orderNo: o.orderNo })}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
@@ -231,6 +340,21 @@ export function UserOrderDashboard() {
           />
         ) : null}
       </div>
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title="Delete order"
+        description={
+          deleteTarget
+            ? `Are you sure you want to delete ${deleteTarget.orderNo}? This action cannot be undone.`
+            : ""
+        }
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteOrder(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }

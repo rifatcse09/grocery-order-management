@@ -12,6 +12,7 @@ import { dummyOrders } from "../data/dummyOrders";
 interface OrdersState {
   orders: Order[];
   upsertOrder: (o: Order) => void;
+  deleteOrder: (id: string) => void;
   getById: (id: string) => Order | undefined;
 }
 
@@ -47,9 +48,17 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
     [orders],
   );
 
+  const deleteOrder = useCallback((id: string) => {
+    setOrders((prev) => {
+      const next = prev.filter((x) => x.id !== id);
+      localStorage.setItem(KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const value = useMemo(
-    () => ({ orders, upsertOrder, getById }),
-    [orders, upsertOrder, getById],
+    () => ({ orders, upsertOrder, deleteOrder, getById }),
+    [orders, upsertOrder, deleteOrder, getById],
   );
 
   return <OrdersContext.Provider value={value}>{children}</OrdersContext.Provider>;

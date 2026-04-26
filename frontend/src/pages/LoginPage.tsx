@@ -3,16 +3,21 @@ import { useNavigate } from "react-router-dom";
 import { BrandLogo } from "../components/BrandLogo";
 import { useAuth } from "../context/AuthContext";
 import type { Role } from "../types";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 const roleCards: { role: Role; title: string; hint: string }[] = [
   {
     role: "user",
-    title: "Procurement requester",
+    title: "User",
     hint: "Create orders and view invoices",
   },
   {
     role: "moderator",
-    title: "Supplier / Moderator",
+    title: "Moderator",
     hint: "Quantities, pricing, challan & billing",
   },
   {
@@ -69,156 +74,162 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-surface via-white to-accent-soft">
+    <div className="min-h-screen bg-muted">
       <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
-        <div className="mb-8 rounded-3xl border border-slate-200/80 bg-white p-8 shadow-card">
-          <BrandLogo className="mb-8" />
-          <div className="mb-4 flex rounded-xl bg-slate-100 p-1 text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setMode("signin");
-                setError("");
-              }}
-              className={`flex-1 rounded-lg px-3 py-2 font-semibold ${
-                mode === "signin" ? "bg-white shadow" : "text-slate-500"
-              }`}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode("signup");
-                setRole("user");
-                setError("");
-              }}
-              className={`flex-1 rounded-lg px-3 py-2 font-semibold ${
-                mode === "signup" ? "bg-white shadow" : "text-slate-500"
-              }`}
-            >
-              Sign up
-            </button>
-          </div>
-          <h1 className="text-2xl font-bold text-brand-dark">
-            {mode === "signin" ? "Welcome back" : "Create account"}
-          </h1>
-          <p className="mt-1 text-sm text-brand-muted">
-            {mode === "signin"
-              ? "Use your role account to sign in. For demo roles, any password works."
-              : "New registration is for procurement requester (user role)."}
-          </p>
-
-          {mode === "signin" ? (
-            <div className="mt-6 grid gap-3">
-              {roleCards.map((r) => (
-                <button
-                  key={r.role}
-                  type="button"
-                  onClick={() => {
-                    setRole(r.role);
-                    setEmail(demoCreds[r.role].email);
-                    setPassword(demoCreds[r.role].password);
-                    setError("");
-                  }}
-                  className={`rounded-2xl border p-4 text-left transition ${
-                    role === r.role
-                      ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300"
-                      : "border-slate-200 hover:border-slate-300"
-                  }`}
-                >
-                  <p className="text-base font-semibold">{r.title}</p>
-                  <p className="mt-1 text-xs text-brand-muted">{r.hint}</p>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="mt-6 space-y-3">
-            {mode === "signup" ? (
-              <>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Full name</label>
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Your name"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Phone</label>
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="+8801XXXXXXXXX"
-                  />
-                </div>
-              </>
-            ) : null}
-            <div>
-              <label className="text-xs font-medium text-slate-600">Email</label>
-              <input
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600">Password</label>
-              <input
-                type="password"
-                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </div>
-            {mode === "signup" ? (
-              <>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Billing address</label>
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                    value={billingAddress}
-                    onChange={(e) => setBillingAddress(e.target.value)}
-                    placeholder="Billing address"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Delivery address</label>
-                  <input
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none ring-indigo-300/40 focus:ring-2"
-                    value={deliveryAddress}
-                    onChange={(e) => setDeliveryAddress(e.target.value)}
-                    placeholder="Delivery address"
-                  />
-                </div>
-              </>
-            ) : null}
-            {error ? <p className="text-xs text-red-600">{error}</p> : null}
-            {mode === "signin" ? (
-              <button
+        <Card className="border-border shadow-card">
+          <CardHeader className="space-y-1 pb-4">
+            <BrandLogo showMark className="mb-2" />
+            <div className="flex rounded-lg bg-muted p-1 text-xs">
+              <Button
                 type="button"
-                onClick={go}
-                className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
+                variant={mode === "signin" ? "secondary" : "ghost"}
+                size="sm"
+                className={cn(
+                  "flex-1 rounded-md shadow-none",
+                  mode === "signin"
+                    ? "bg-slate-700 text-white hover:bg-slate-600 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-100"
+                    : "text-slate-600 hover:bg-slate-100",
+                )}
+                onClick={() => {
+                  setMode("signin");
+                  setError("");
+                }}
               >
                 Sign in
-              </button>
-            ) : (
-              <button
+              </Button>
+              <Button
                 type="button"
-                onClick={goSignup}
-                className="w-full rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700"
+                variant={mode === "signup" ? "secondary" : "ghost"}
+                size="sm"
+                className={cn(
+                  "flex-1 rounded-md shadow-none",
+                  mode === "signup"
+                    ? "bg-slate-700 text-white hover:bg-slate-600 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-100"
+                    : "text-slate-600 hover:bg-slate-100",
+                )}
+                onClick={() => {
+                  setMode("signup");
+                  setRole("user");
+                  setError("");
+                }}
               >
-                Create account
-              </button>
-            )}
-          </div>
-        </div>
-        <p className="text-center text-xs text-slate-500">
+                Sign up
+              </Button>
+            </div>
+            <CardTitle className="text-2xl text-brand-dark">
+              {mode === "signin" ? "Welcome back" : "Create account"}
+            </CardTitle>
+            <CardDescription>
+              {mode === "signin"
+                ? "Use your role account to sign in. For demo roles, any password works."
+                : "New registration is for procurement requester (user role)."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {mode === "signin" ? (
+              <div className="grid gap-3">
+                {roleCards.map((r) => (
+                  <button
+                    key={r.role}
+                    type="button"
+                    onClick={() => {
+                      setRole(r.role);
+                      setEmail(demoCreds[r.role].email);
+                      setPassword(demoCreds[r.role].password);
+                      setError("");
+                    }}
+                    className={cn(
+                      "rounded-2xl border p-4 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      role === r.role
+                        ? "border-primary bg-muted ring-2 ring-primary"
+                        : "border-border hover:bg-muted",
+                    )}
+                  >
+                    <p className="text-base font-semibold">{r.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{r.hint}</p>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="space-y-3">
+              {mode === "signup" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-name">Full name</Label>
+                    <Input
+                      id="signup-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Your name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-phone">Phone</Label>
+                    <Input
+                      id="signup-phone"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+8801XXXXXXXXX"
+                    />
+                  </div>
+                </>
+              ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="auth-email">Email</Label>
+                <Input
+                  id="auth-email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="auth-password">Password</Label>
+                <Input
+                  id="auth-password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              {mode === "signup" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-billing">Billing address</Label>
+                    <Input
+                      id="signup-billing"
+                      value={billingAddress}
+                      onChange={(e) => setBillingAddress(e.target.value)}
+                      placeholder="Billing address"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-delivery">Delivery address</Label>
+                    <Input
+                      id="signup-delivery"
+                      value={deliveryAddress}
+                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      placeholder="Delivery address"
+                    />
+                  </div>
+                </>
+              ) : null}
+              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {mode === "signin" ? (
+                <Button type="button" className="w-full bg-slate-700 text-white hover:bg-slate-600" onClick={go}>
+                  Sign in
+                </Button>
+              ) : (
+                <Button type="button" className="w-full bg-slate-700 text-white hover:bg-slate-600" onClick={goSignup}>
+                  Create account
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        <p className="mt-6 text-center text-xs text-muted-foreground">
           Front-end prototype · Laravel API in a later phase
         </p>
       </div>

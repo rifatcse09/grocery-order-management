@@ -36,9 +36,9 @@ export function OrderLinesEditor({
 
   return (
     <div
-      className={`overflow-x-auto rounded-2xl border shadow-card ${
+      className={`table-scroll rounded-2xl border shadow-card ${
         showPricing
-          ? "border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50"
+          ? "border-border bg-muted"
           : "border-slate-200 bg-white"
       }`}
     >
@@ -50,7 +50,7 @@ export function OrderLinesEditor({
         <thead>
           <tr
             className={`text-left font-semibold uppercase tracking-wide ${
-              showPricing ? "bg-indigo-100/80 text-indigo-900" : "bg-slate-50 text-slate-500"
+              showPricing ? "bg-muted text-foreground" : "bg-slate-50 text-slate-500"
             } ${
               showPricing || largeText ? "text-sm" : "text-xs"
             }`}
@@ -61,6 +61,7 @@ export function OrderLinesEditor({
             <th className="px-3 py-3 normal-case">{COL.kg}</th>
             <th className="px-3 py-3 normal-case">{COL.gram}</th>
             <th className="px-3 py-3 normal-case">{COL.piece}</th>
+            <th className="px-3 py-3 normal-case">Instructions</th>
             {showPricing ? (
               <>
                 <th className="px-3 py-3 text-right normal-case">{COL.unitPrice}</th>
@@ -74,7 +75,7 @@ export function OrderLinesEditor({
           {lines.map((line) => {
             const cat = catMap.get(line.categoryId);
             return (
-              <tr key={line.id} className={`${showPricing ? "border-t border-indigo-100 bg-white/95" : "border-t border-slate-100"} align-top`}>
+              <tr key={line.id} className={`${showPricing ? "border-t border-border bg-card" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
                   {line.serial}
                 </td>
@@ -98,21 +99,41 @@ export function OrderLinesEditor({
                   <input
                     className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.kg}
-                    onChange={(e) => update(line.id, { kg: e.target.value })}
+                    onChange={(e) => {
+                      const kg = e.target.value;
+                      const hasWeight = (parseFloat(kg) || 0) > 0 || (parseFloat(line.gram) || 0) > 0;
+                      update(line.id, { kg, piece: hasWeight ? "" : line.piece });
+                    }}
                   />
                 </td>
                 <td className="px-3 py-2">
                   <input
                     className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.gram}
-                    onChange={(e) => update(line.id, { gram: e.target.value })}
+                    onChange={(e) => {
+                      const gram = e.target.value;
+                      const hasWeight = (parseFloat(line.kg) || 0) > 0 || (parseFloat(gram) || 0) > 0;
+                      update(line.id, { gram, piece: hasWeight ? "" : line.piece });
+                    }}
                   />
                 </td>
                 <td className="px-3 py-2">
                   <input
                     className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.piece}
-                    onChange={(e) => update(line.id, { piece: e.target.value })}
+                    onChange={(e) => {
+                      const piece = e.target.value;
+                      const hasPiece = (parseFloat(piece) || 0) > 0;
+                      update(line.id, { piece, kg: hasPiece ? "" : line.kg, gram: hasPiece ? "" : line.gram });
+                    }}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    className={`w-52 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
+                    value={line.instructions ?? ""}
+                    onChange={(e) => update(line.id, { instructions: e.target.value })}
+                    placeholder="Particulars / instructions"
                   />
                 </td>
                 {showPricing ? (

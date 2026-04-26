@@ -1,4 +1,8 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 export function PaginationControls({
   totalItems,
@@ -18,59 +22,65 @@ export function PaginationControls({
   const pages = compactPages(safePage, totalPages);
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-3 py-3 text-xs text-slate-500 sm:px-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-3 py-3 text-xs text-muted-foreground sm:px-4">
       <div className="flex items-center gap-2">
         <span>Rows</span>
-        <select
-          value={perPage}
-          onChange={(e) => onPerPageChange(parseInt(e.target.value, 10))}
-          className="rounded-lg border border-slate-200 px-2 py-1 text-xs"
+        <Select
+          value={String(perPage)}
+          onValueChange={(v) => onPerPageChange(parseInt(v, 10))}
         >
-          <option value={5}>5</option>
-          <option value={10}>10</option>
-          <option value={20}>20</option>
-        </select>
+          <SelectTrigger className="h-8 w-[4.5rem] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="5">5</SelectItem>
+            <SelectItem value="10">10</SelectItem>
+            <SelectItem value="20">20</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex flex-wrap items-center justify-end gap-1">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2"
           disabled={safePage <= 1}
           onClick={() => onPageChange(safePage - 1)}
-          className="inline-flex items-center rounded-lg border border-slate-200 px-2 py-1 disabled:opacity-40"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
-        </button>
+        </Button>
         {pages.map((p, idx) =>
           p === "..." ? (
-            <span key={`ellipsis-${idx}`} className="px-1 text-slate-400">
+            <span key={`ellipsis-${idx}`} className="px-1 text-muted-foreground">
               ...
             </span>
           ) : (
-            <button
+            <Button
               key={p}
               type="button"
+              variant={p === safePage ? "default" : "outline"}
+              size="sm"
+              className={cn("h-8 min-w-8 px-2", p === safePage && "pointer-events-none")}
               onClick={() => onPageChange(p)}
-              className={`rounded-lg px-2.5 py-1 ${
-                p === safePage
-                  ? "bg-slate-900 text-white"
-                  : "border border-slate-200 text-slate-600"
-              }`}
             >
               {p}
-            </button>
+            </Button>
           ),
         )}
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 px-2"
           disabled={safePage >= totalPages}
           onClick={() => onPageChange(safePage + 1)}
-          className="inline-flex items-center rounded-lg border border-slate-200 px-2 py-1 disabled:opacity-40"
         >
           <ChevronRight className="h-3.5 w-3.5" />
-        </button>
+        </Button>
         <span className="ml-2">Go to</span>
-        <input
+        <Input
           type="number"
           min={1}
           max={totalPages}
@@ -80,7 +90,7 @@ export function PaginationControls({
             const v = parseInt((e.currentTarget as HTMLInputElement).value, 10);
             if (Number.isFinite(v)) onPageChange(Math.min(totalPages, Math.max(1, v)));
           }}
-          className="w-14 rounded-lg border border-slate-200 px-2 py-1 text-xs"
+          className="h-8 w-14 text-xs"
         />
         <span>
           / {totalPages} ({totalItems})

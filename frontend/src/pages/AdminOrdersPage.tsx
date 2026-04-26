@@ -1,12 +1,33 @@
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { Eye, MoreVertical, Search } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
 import type { OrderStatus } from "../types";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  tableActionsContainerClass,
+  tableActionsTightSingle,
+  tableActionsWideSingle,
+} from "@/lib/tableActionsLayout";
+
+const statusFilters: { value: "all" | OrderStatus; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "draft", label: "Drafted" },
+  { value: "submitted", label: "Ordered" },
+  { value: "under_review", label: "Processing" },
+  { value: "delivered", label: "Delivered" },
+  { value: "invoiced", label: "Completed" },
+];
 
 export function AdminOrdersPage() {
   const { orders } = useOrders();
@@ -57,17 +78,48 @@ export function AdminOrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
         <h1 className="text-3xl font-extrabold text-slate-900">Admin order list</h1>
         <p className="mt-1 text-base font-medium text-slate-600">
-          Read-only review of all orders. Open any order to view challan and invoice previews.
+            Create/edit user orders, then update delivery challan and invoice request submitted by moderator.
         </p>
+        </div>
+        <Link
+          to="/admin/orders/new"
+          className="inline-flex items-center rounded-xl bg-slate-700 px-3.5 py-2 text-sm font-semibold text-white hover:bg-slate-600"
+        >
+          Create order
+        </Link>
       </div>
 
-      <div className="overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 shadow-card">
-        <div className="border-b border-violet-100 bg-white/80 px-4 py-4 sm:px-5">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs font-semibold uppercase tracking-wide text-violet-900 sm:col-span-2 lg:col-span-2">
+      <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
+        <div className="border-b border-border bg-card px-4 py-4 sm:px-5">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {statusFilters.map((tab) => {
+              const active = status === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  type="button"
+                  onClick={() => {
+                    setStatus(tab.value);
+                    setPage(1);
+                  }}
+                  className={
+                    active
+                      ? "rounded-lg border border-slate-900 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white"
+                      : "rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  }
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="text-xs font-semibold uppercase tracking-wide text-foreground sm:col-span-2 lg:col-span-1">
               <span className="mb-1 flex items-center gap-1.5 text-slate-600">
                 <Search className="h-3.5 w-3.5" />
                 Search
@@ -79,26 +131,8 @@ export function AdminOrdersPage() {
                   setPage(1);
                 }}
                 placeholder="Order no., customer, phone, address…"
-                className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm shadow-sm outline-none ring-violet-200/50 focus:ring-2"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm shadow-sm outline-none focus:ring-2 focus:ring-ring"
               />
-            </label>
-            <label className="text-xs font-semibold text-slate-600">
-              Status
-              <select
-                value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value as "all" | OrderStatus);
-                  setPage(1);
-                }}
-                className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm"
-              >
-                <option value="all">All statuses</option>
-                <option value="draft">Draft</option>
-                <option value="submitted">Submitted</option>
-                <option value="under_review">Under review</option>
-                <option value="delivered">Delivered</option>
-                <option value="invoiced">Invoiced</option>
-              </select>
             </label>
             <label className="text-xs font-semibold text-slate-600">
               Customer
@@ -108,7 +142,7 @@ export function AdminOrdersPage() {
                   setCustomer(e.target.value);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All customers</option>
                 {customers.map((c) => (
@@ -118,7 +152,7 @@ export function AdminOrdersPage() {
                 ))}
               </select>
             </label>
-            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 lg:col-span-2">
+            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 lg:col-span-1">
               Documents
               <select
                 value={docFilter}
@@ -126,7 +160,7 @@ export function AdminOrdersPage() {
                   setDocFilter(e.target.value as typeof docFilter);
                   setPage(1);
                 }}
-                className="mt-1 w-full rounded-xl border border-violet-200 bg-white px-3 py-2.5 text-sm"
+                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
               >
                 <option value="all">All orders</option>
                 <option value="challan_yes">Challan available</option>
@@ -141,9 +175,9 @@ export function AdminOrdersPage() {
           </p>
         </div>
 
-        <div className="hidden overflow-x-auto md:block">
+        <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="w-full text-left text-base">
-            <thead className="bg-violet-100/80 text-sm uppercase tracking-wide text-violet-900">
+            <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Submitted</th>
@@ -156,7 +190,7 @@ export function AdminOrdersPage() {
             </thead>
             <tbody>
               {pageList.map((o) => (
-                <tr key={o.id} className="border-t border-violet-100 bg-white/95">
+                <tr key={o.id} className="border-t border-border bg-card">
                   <td className="px-4 py-4">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-base font-semibold text-slate-900">{o.orderNo}</span>
@@ -193,12 +227,36 @@ export function AdminOrdersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Link
-                      to={`/admin/orders/${o.id}`}
-                      className="inline-flex items-center rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3.5 py-2 text-sm font-semibold text-white hover:from-slate-800 hover:to-indigo-700"
-                    >
-                      Review
-                    </Link>
+                    <div className={tableActionsWideSingle()}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-primary hover:text-primary"
+                        asChild
+                        title="Edit order"
+                      >
+                        <Link to={`/admin/orders/${o.id}`} aria-label="Edit order">
+                          <Eye className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    </div>
+                    <div className={tableActionsTightSingle()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground" aria-label="Order actions">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-40">
+                          <DropdownMenuItem asChild>
+                            <Link to={`/admin/orders/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                              <Eye className="h-4 w-4" />
+                              Edit
+                            </Link>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -211,7 +269,7 @@ export function AdminOrdersPage() {
 
         <div className="space-y-3 p-3 md:hidden">
           {pageList.map((o) => (
-            <div key={o.id} className="rounded-2xl border border-violet-200 bg-white p-3.5 shadow-sm">
+            <div key={o.id} className="rounded-2xl border border-border bg-white p-3.5 shadow-sm">
               <div className="flex items-start justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-mono text-sm font-semibold text-slate-900">{o.orderNo}</p>
@@ -245,9 +303,9 @@ export function AdminOrdersPage() {
               </div>
               <Link
                 to={`/admin/orders/${o.id}`}
-                className="mt-3 inline-flex rounded-xl bg-gradient-to-r from-slate-900 to-indigo-800 px-3.5 py-2 text-sm font-semibold text-white"
+                className="mt-3 inline-flex rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white"
               >
-                Review
+                Edit
               </Link>
             </div>
           ))}
