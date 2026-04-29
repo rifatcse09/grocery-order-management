@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { Eye, MoreVertical, Search } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
@@ -6,6 +6,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
+import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,16 +35,63 @@ export function AdminOrdersPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [customer, setCustomer] = useState("all");
-  const [docFilter, setDocFilter] = useState<"all" | "challan_yes" | "challan_no" | "invoice_yes" | "invoice_no">("all");
+  const [docFilter, setDocFilter] = useState<
+    | "all"
+    | "challan_yes"
+    | "challan_no"
+    | "purchase_yes"
+    | "purchase_no"
+    | "billing_yes"
+    | "billing_no"
+  >("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [adminNewIds, setAdminNewIds] = useState(() => readAdminNotifyOrderIds());
+  const [purchasePayments] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("gom_purchase_payments");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  const location = useLocation();
+
+  const mode = useMemo<"orders" | "purchase" | "purchase_pending" | "billing">(() => {
+    if (location.pathname.startsWith("/admin/purchase-invoices")) return "purchase";
+    if (location.pathname.startsWith("/admin/purchase-pending-bills")) return "purchase_pending";
+    if (location.pathname.startsWith("/admin/billing-invoices")) return "billing";
+    return "orders";
+  }, [location.pathname]);
 
   useEffect(() => {
     const sync = () => setAdminNewIds(readAdminNotifyOrderIds());
     window.addEventListener(NOTIFICATIONS_EVENT, sync);
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, sync);
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+    if (mode === "purchase" || mode === "purchase_pending") setDocFilter("purchase_yes");
+    else if (mode === "billing") setDocFilter("billing_yes");
+    else setDocFilter("all");
+  }, [mode]);
+
+  function purchaseAmountOf(orderId: string): number {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return 0;
+    return order.lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
+  }
+
+  function paidPurchaseOf(orderId: string): number {
+    return Math.max(0, Number(purchasePayments[orderId] ?? 0));
+  }
+
+  function purchaseBalanceOf(orderId: string): number {
+    return Math.max(0, purchaseAmountOf(orderId) - paidPurchaseOf(orderId));
+  }
 
   const customers = useMemo(
     () =>
@@ -60,8 +108,11 @@ export function AdminOrdersPage() {
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
       if (docFilter === "challan_no" && o.challanGenerated) return false;
-      if (docFilter === "invoice_yes" && !(o.invoiceGenerated || o.status === "invoiced")) return false;
-      if (docFilter === "invoice_no" && (o.invoiceGenerated || o.status === "invoiced")) return false;
+      if (docFilter === "purchase_yes" && !hasPurchaseInvoice(o)) return false;
+      if (docFilter === "purchase_no" && hasPurchaseInvoice(o)) return false;
+      if (docFilter === "billing_yes" && !hasBillingInvoice(o)) return false;
+      if (docFilter === "billing_no" && hasBillingInvoice(o)) return false;
+      if (mode === "purchase_pending" && (!hasPurchaseInvoice(o) || purchaseBalanceOf(o.id) <= 0)) return false;
       if (!q) return true;
       return (
         o.orderNo.toLowerCase().includes(q) ||
@@ -70,7 +121,7 @@ export function AdminOrdersPage() {
         o.deliveryAddress.toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter]);
+  }, [orders, query, status, customer, docFilter, mode, purchasePayments]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -80,9 +131,23 @@ export function AdminOrdersPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-        <h1 className="text-3xl font-extrabold text-slate-900">Admin order list</h1>
+        <h1 className="text-3xl font-extrabold text-slate-900">
+          {mode === "purchase"
+            ? "Purchase invoice list"
+            : mode === "purchase_pending"
+              ? "Purchase pending bills"
+              : mode === "billing"
+                ? "Billing invoice list"
+                : "Admin order list"}
+        </h1>
         <p className="mt-1 text-base font-medium text-slate-600">
-            Create/edit user orders, then update delivery challan and invoice request submitted by moderator.
+          {mode === "purchase"
+            ? "Orders with purchase invoices. Track available and pending purchase documents."
+            : mode === "purchase_pending"
+              ? "Only unpaid purchase invoices are shown here."
+            : mode === "billing"
+              ? "Orders with billing invoices. Open invoice details and track pending billing documents."
+              : "Admin can edit orders, add pricing, and generate challan, purchase invoice, and billing invoice."}
         </p>
         </div>
         <Link
@@ -165,8 +230,10 @@ export function AdminOrdersPage() {
                 <option value="all">All orders</option>
                 <option value="challan_yes">Challan available</option>
                 <option value="challan_no">Challan pending</option>
-                <option value="invoice_yes">Invoice available</option>
-                <option value="invoice_no">Invoice pending</option>
+                <option value="purchase_yes">Purchase invoice available</option>
+                <option value="purchase_no">Purchase invoice pending</option>
+                <option value="billing_yes">Billing invoice available</option>
+                <option value="billing_no">Billing invoice pending</option>
               </select>
             </label>
           </div>
@@ -184,7 +251,8 @@ export function AdminOrdersPage() {
                 <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Challan</th>
-                <th className="px-4 py-3">Invoice</th>
+                <th className="px-4 py-3">Purchase invoice</th>
+                <th className="px-4 py-3">Billing invoice</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -218,13 +286,29 @@ export function AdminOrdersPage() {
                   <td className="px-4 py-3">
                     <span
                       className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                        o.invoiceGenerated || o.status === "invoiced"
-                          ? "bg-blue-100 text-blue-800"
+                        hasPurchaseInvoice(o)
+                          ? "bg-amber-100 text-amber-800"
                           : "bg-slate-100 text-slate-500"
                       }`}
                     >
-                      {o.invoiceGenerated || o.status === "invoiced" ? "Available" : "Pending"}
+                      {hasPurchaseInvoice(o) ? "Available" : "Pending"}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
+                        }`}
+                      >
+                        {hasBillingInvoice(o) ? "Available" : "Pending"}
+                      </span>
+                      {hasBillingInvoice(o) ? (
+                        <Link to={`/user/invoices/${o.id}`} className="text-xs font-semibold text-primary hover:underline">
+                          Details
+                        </Link>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className={tableActionsWideSingle()}>
@@ -254,6 +338,14 @@ export function AdminOrdersPage() {
                               Edit
                             </Link>
                           </DropdownMenuItem>
+                          {hasBillingInvoice(o) ? (
+                            <DropdownMenuItem asChild>
+                              <Link to={`/user/invoices/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                                <Eye className="h-4 w-4" />
+                                Invoice details
+                              </Link>
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -293,12 +385,19 @@ export function AdminOrdersPage() {
                 </span>
                 <span
                   className={`rounded-full px-2.5 py-1 font-semibold ${
-                    o.invoiceGenerated || o.status === "invoiced"
-                      ? "bg-blue-100 text-blue-800"
+                    hasPurchaseInvoice(o)
+                      ? "bg-amber-100 text-amber-800"
                       : "bg-slate-100 text-slate-500"
                   }`}
                 >
-                  Invoice: {o.invoiceGenerated || o.status === "invoiced" ? "Available" : "Pending"}
+                  Purchase invoice: {hasPurchaseInvoice(o) ? "Available" : "Pending"}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 font-semibold ${
+                    hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Billing invoice: {hasBillingInvoice(o) ? "Available" : "Pending"}
                 </span>
               </div>
               <Link
@@ -307,6 +406,14 @@ export function AdminOrdersPage() {
               >
                 Edit
               </Link>
+              {hasBillingInvoice(o) ? (
+                <Link
+                  to={`/user/invoices/${o.id}`}
+                  className="mt-2 inline-flex rounded-xl border border-border bg-white px-3.5 py-2 text-sm font-semibold text-slate-700"
+                >
+                  Invoice details
+                </Link>
+              ) : null}
             </div>
           ))}
           {pageList.length === 0 ? (

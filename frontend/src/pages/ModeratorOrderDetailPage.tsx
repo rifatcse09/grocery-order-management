@@ -21,6 +21,8 @@ import {
   markModeratorSeenOrder,
   orderHasPricingData,
 } from "../lib/orderNotifications";
+import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { Order } from "../types";
 
 function applyMarkup(sub: number): { pct: number; grand: number } {
@@ -82,6 +84,8 @@ export function ModeratorOrderDetailPage() {
     const next: Order = {
       ...order,
       status: "delivered",
+      purchaseInvoiceGenerated: true,
+      purchaseInvoiceGeneratedBy: "moderator" as const,
     };
     setOrder(next);
     upsertOrder(next);
@@ -153,7 +157,7 @@ export function ModeratorOrderDetailPage() {
                 <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
               ) : null}
               {order.status === "delivered" ? (
-                <span className="rounded-full bg-amber-800 px-3 py-1 text-amber-50">Ready for admin invoice</span>
+                <span className="rounded-full bg-amber-800 px-3 py-1 text-amber-50">Purchase invoice sent to admin</span>
               ) : null}
             </div>
           </div>
@@ -193,7 +197,7 @@ export function ModeratorOrderDetailPage() {
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
-          <DetailTile icon={Clock} label="Time window" value={order.deliveryTime || "—"} />
+          <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -220,7 +224,7 @@ export function ModeratorOrderDetailPage() {
         <div className="border-b border-border bg-muted px-5 py-4">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
-            Line items &amp; pricing
+            Line items &amp; cost pricing
             <span className="ml-2 rounded-full bg-amber-200 px-2.5 py-0.5 text-xs font-semibold text-amber-950">
               Editable
             </span>
@@ -251,7 +255,7 @@ export function ModeratorOrderDetailPage() {
       {/* Workflow actions */}
       <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-6">
         <h2 className="text-base font-bold text-slate-900">Workflow</h2>
-        <p className="mt-1 text-sm text-slate-600">Moderator can prepare challan and submit delivery for admin invoicing</p>
+        <p className="mt-1 text-sm text-slate-600">Moderator sets cost price, creates purchase invoice, then submits to admin.</p>
         <div className="mt-4 flex flex-wrap gap-3">
           <button type="button" onClick={genChallan} disabled={Boolean(order.challanGenerated)} className={actionBtn}>
             Generate challan (no prices)
@@ -262,9 +266,12 @@ export function ModeratorOrderDetailPage() {
             disabled={order.status === "delivered" || order.status === "invoiced"}
             className={actionBtn}
           >
-            Mark delivery complete
+            Generate purchase invoice
           </button>
         </div>
+        {hasPurchaseInvoice(order) ? (
+          <p className="mt-2 text-xs font-semibold text-emerald-700">Purchase invoice is generated and visible to admin.</p>
+        ) : null}
       </section>
 
       {order.challanGenerated ? (

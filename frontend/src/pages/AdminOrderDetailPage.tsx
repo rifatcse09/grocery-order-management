@@ -21,6 +21,9 @@ import { StatusBadge } from "../components/StatusBadge";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { clearAdminOrderNotification } from "../lib/orderNotifications";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
+import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { loadCategoryMarkupSettings } from "../lib/categoryMarkupSettings";
+import { computeBillingTotalsFromCategoryMarkup, hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { Order } from "../types";
 
 function makeAdminDraftOrder(owner: {
@@ -63,6 +66,7 @@ export function AdminOrderDetailPage() {
   const [itemBn, setItemBn] = useState("");
   const [itemEn, setItemEn] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const categoryMarkups = loadCategoryMarkupSettings();
 
   useEffect(() => {
     if (isNew) {
@@ -113,17 +117,30 @@ export function AdminOrderDetailPage() {
     setOrder(next);
     upsertOrder(next);
   };
-  const finalizeInvoice = () => {
-    const sub = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
-    const pct = sub <= 125_000 ? 20 : 15;
-    const grand = sub + Math.round(sub * (pct / 100));
+  const generatePurchaseInvoice = () => {
     const next = {
       ...order,
+      purchaseInvoiceGenerated: true,
+      purchaseInvoiceGeneratedBy: "admin" as const,
+      status: "delivered" as const,
+    };
+    setOrder(next);
+    upsertOrder(next);
+  };
+  const finalizeInvoice = () => {
+    if (!hasPurchaseInvoice(order)) return;
+    const totals = computeBillingTotalsFromCategoryMarkup(order, categoryMarkups);
+    const next = {
+      ...order,
+      billingInvoiceGenerated: true,
       invoiceGenerated: true,
       status: "invoiced" as const,
-      subtotal: sub,
-      markupPercent: pct,
-      grandTotal: grand,
+      purchaseSubtotal: totals.purchaseSubtotal,
+      billingSubtotal: totals.billingSubtotal,
+      subtotal: totals.billingSubtotal,
+      markupPercent: undefined,
+      billingCategoryMarkups: categoryMarkups,
+      grandTotal: totals.grandTotal,
     };
     setOrder(next);
     upsertOrder(next);
@@ -161,8 +178,11 @@ export function AdminOrderDetailPage() {
               {order.challanGenerated ? (
                 <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
               ) : null}
-              {order.invoiceGenerated || order.status === "invoiced" ? (
-                <span className="rounded-full bg-blue-800 px-3 py-1 text-white">Invoice</span>
+              {hasPurchaseInvoice(order) ? (
+                <span className="rounded-full bg-amber-700 px-3 py-1 text-amber-50">Purchase invoice</span>
+              ) : null}
+              {hasBillingInvoice(order) ? (
+                <span className="rounded-full bg-blue-800 px-3 py-1 text-white">Billing invoice</span>
               ) : null}
             </div>
             {!isNew ? (
@@ -185,7 +205,7 @@ export function AdminOrderDetailPage() {
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
         </div>
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Purchase cost total</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
           </p>
@@ -238,7 +258,7 @@ export function AdminOrderDetailPage() {
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
-          <DetailTile icon={Clock} label="Time window" value={order.deliveryTime || "—"} />
+          <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -288,6 +308,7 @@ export function AdminOrderDetailPage() {
             lines={order.lines}
             categories={categories}
             showPricing
+            billingMarkupsByCategory={categoryMarkups}
             onChange={(lines) => setOrder({ ...order, lines })}
           />
           <div className="mt-4 flex flex-wrap gap-3">
@@ -303,16 +324,29 @@ export function AdminOrderDetailPage() {
               onClick={genChallan}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
             >
-              Edit delivery challan
+              Generate / edit challan
+            </button>
+            <button
+              type="button"
+              onClick={generatePurchaseInvoice}
+              className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Generate purchase invoice
             </button>
             <button
               type="button"
               onClick={finalizeInvoice}
+              disabled={!hasPurchaseInvoice(order)}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
             >
-              Approve invoice request
+              Generate customer billing invoice
             </button>
           </div>
+          {!hasPurchaseInvoice(order) ? (
+            <p className="mt-2 text-xs font-semibold text-amber-700">
+              Purchase invoice is required before customer billing invoice.
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -331,7 +365,7 @@ export function AdminOrderDetailPage() {
         </section>
       ) : null}
 
-      {order.invoiceGenerated || order.status === "invoiced" ? (
+      {hasBillingInvoice(order) ? (
         <section className="space-y-3">
           <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted px-4 py-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-primary">
@@ -339,7 +373,7 @@ export function AdminOrderDetailPage() {
             </span>
             <div>
               <h3 className="text-base font-bold text-foreground">Invoice preview</h3>
-              <p className="text-xs text-foreground">Final billing document</p>
+              <p className="text-xs text-foreground">Customer billing document generated by admin</p>
             </div>
           </div>
           <BanglaInvoiceTemplate order={order} />

@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { useEffect, useMemo, useState } from "react";
@@ -6,6 +6,7 @@ import { PaginationControls } from "../components/PaginationControls";
 import { ClipboardCheck, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readModeratorSeenOrderIds } from "../lib/orderNotifications";
+import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,13 +24,34 @@ import { StatMetricCard } from "../components/StatMetricCard";
 
 export function ModeratorOrdersPage() {
   const { orders } = useOrders();
+  const location = useLocation();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [customer, setCustomer] = useState("all");
-  const [docFilter, setDocFilter] = useState<"all" | "challan_yes" | "challan_no" | "invoice_yes" | "invoice_no">("all");
+  const [docFilter, setDocFilter] = useState<
+    | "all"
+    | "challan_yes"
+    | "challan_no"
+    | "purchase_yes"
+    | "purchase_no"
+    | "billing_yes"
+    | "billing_no"
+  >("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [seenTick, setSeenTick] = useState(0);
+  const [adjustOrderId, setAdjustOrderId] = useState<string | null>(null);
+  const [adjustInput, setAdjustInput] = useState("");
+  const [purchasePayments, setPurchasePayments] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem("gom_purchase_payments");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
 
   useEffect(() => {
     const sync = () => setSeenTick((t) => t + 1);
@@ -37,8 +59,60 @@ export function ModeratorOrdersPage() {
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, sync);
   }, []);
 
+  const mode = useMemo<"orders" | "purchase" | "purchase_pending" | "billing">(() => {
+    if (location.pathname.startsWith("/moderator/purchase-invoices")) return "purchase";
+    if (location.pathname.startsWith("/moderator/purchase-pending-bills")) return "purchase_pending";
+    if (location.pathname.startsWith("/moderator/billing-invoices")) return "billing";
+    return "orders";
+  }, [location.pathname]);
+
+  useEffect(() => {
+    setPage(1);
+    if (mode === "purchase" || mode === "purchase_pending") setDocFilter("purchase_yes");
+    else if (mode === "billing") setDocFilter("billing_yes");
+    else setDocFilter("all");
+  }, [mode]);
+
+  useEffect(() => {
+    localStorage.setItem("gom_purchase_payments", JSON.stringify(purchasePayments));
+  }, [purchasePayments]);
+
   const modSeen = useMemo(() => readModeratorSeenOrderIds(), [seenTick]);
   const isNewSubmitted = (id: string, status: string) => status === "submitted" && !modSeen.has(id);
+  const adjustOrder = adjustOrderId ? orders.find((o) => o.id === adjustOrderId) ?? null : null;
+
+  function purchaseAmountOf(orderId: string): number {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return 0;
+    return order.lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
+  }
+
+  function paidPurchaseOf(orderId: string): number {
+    return Math.max(0, Number(purchasePayments[orderId] ?? 0));
+  }
+
+  function purchaseBalanceOf(orderId: string): number {
+    return Math.max(0, purchaseAmountOf(orderId) - paidPurchaseOf(orderId));
+  }
+
+  function purchasePaymentStatusOf(orderId: string): "Paid" | "Partial" | "Pending" {
+    const total = purchaseAmountOf(orderId);
+    if (total <= 0) return "Pending";
+    const paid = paidPurchaseOf(orderId);
+    if (paid <= 0) return "Pending";
+    if (paid >= total) return "Paid";
+    return "Partial";
+  }
+
+  function savePurchaseAdjustment() {
+    if (!adjustOrder) return;
+    const amount = Number(adjustInput);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    const total = purchaseAmountOf(adjustOrder.id);
+    setPurchasePayments((prev) => ({ ...prev, [adjustOrder.id]: Math.min(total, amount) }));
+    setAdjustOrderId(null);
+    setAdjustInput("");
+  }
 
   const customers = useMemo(
     () =>
@@ -55,8 +129,11 @@ export function ModeratorOrdersPage() {
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
       if (docFilter === "challan_no" && o.challanGenerated) return false;
-      if (docFilter === "invoice_yes" && !(o.invoiceGenerated || o.status === "invoiced")) return false;
-      if (docFilter === "invoice_no" && (o.invoiceGenerated || o.status === "invoiced")) return false;
+      if (docFilter === "purchase_yes" && !hasPurchaseInvoice(o)) return false;
+      if (docFilter === "purchase_no" && hasPurchaseInvoice(o)) return false;
+      if (docFilter === "billing_yes" && !hasBillingInvoice(o)) return false;
+      if (docFilter === "billing_no" && hasBillingInvoice(o)) return false;
+      if (mode === "purchase_pending" && (!hasPurchaseInvoice(o) || purchaseBalanceOf(o.id) <= 0)) return false;
       if (!q) return true;
       return (
         o.orderNo.toLowerCase().includes(q) ||
@@ -65,7 +142,7 @@ export function ModeratorOrdersPage() {
         o.deliveryAddress.toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter]);
+  }, [orders, query, status, customer, docFilter, mode, purchasePayments]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -77,9 +154,23 @@ export function ModeratorOrdersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-extrabold text-slate-900">Moderator panel</h1>
+        <h1 className="text-3xl font-extrabold text-slate-900">
+          {mode === "purchase"
+            ? "Purchase invoice list"
+            : mode === "purchase_pending"
+              ? "Purchase pending bills"
+              : mode === "billing"
+                ? "Billing invoice list"
+                : "Moderator panel"}
+        </h1>
         <p className="mt-1 text-base font-medium text-slate-600">
-          Edit quantities, add pricing, generate challan, and submit delivered orders for invoicing.
+          {mode === "purchase"
+            ? "Purchase invoice status, payment adjustments, and pending balances."
+            : mode === "purchase_pending"
+              ? "Only unpaid purchase invoices are shown here with adjustment options."
+            : mode === "billing"
+              ? "Billing invoice availability and pending status by order."
+              : "Edit quantities, set cost pricing, generate challan, and send purchase invoice to admin."}
         </p>
       </div>
 
@@ -174,8 +265,10 @@ export function ModeratorOrdersPage() {
                 <option value="all">All orders</option>
                 <option value="challan_yes">Challan available</option>
                 <option value="challan_no">Challan pending</option>
-                <option value="invoice_yes">Invoice available</option>
-                <option value="invoice_no">Invoice pending</option>
+                <option value="purchase_yes">Purchase invoice available</option>
+                <option value="purchase_no">Purchase invoice pending</option>
+                <option value="billing_yes">Billing invoice available</option>
+                <option value="billing_no">Billing invoice pending</option>
               </select>
             </label>
           </div>
@@ -192,6 +285,10 @@ export function ModeratorOrdersPage() {
               <th className="px-4 py-3">Submitted</th>
               <th className="px-4 py-3">Customer</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Purchase invoice</th>
+              <th className="px-4 py-3">Billing invoice</th>
+              <th className="px-4 py-3 text-right">Purchase balance</th>
+              <th className="px-4 py-3">Purchase payment</th>
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -212,6 +309,40 @@ export function ModeratorOrdersPage() {
                 <td className="px-4 py-4 text-base font-semibold text-slate-800">{o.contactPerson}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={o.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      hasPurchaseInvoice(o) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {hasPurchaseInvoice(o) ? "Available" : "Pending"}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {hasBillingInvoice(o) ? "Available" : "Pending"}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right font-semibold">
+                  ৳ {Math.round(purchaseBalanceOf(o.id)).toLocaleString("en-US")}
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      purchasePaymentStatusOf(o.id) === "Paid"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : purchasePaymentStatusOf(o.id) === "Partial"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {purchasePaymentStatusOf(o.id)}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right">
                   <div className={tableActionsWideSingle()}>
@@ -235,6 +366,16 @@ export function ModeratorOrdersPage() {
                             Open
                           </Link>
                         </DropdownMenuItem>
+                          {hasPurchaseInvoice(o) ? (
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setAdjustOrderId(o.id);
+                                setAdjustInput(String(Math.round(paidPurchaseOf(o.id))));
+                              }}
+                            >
+                              Adjust payment
+                            </DropdownMenuItem>
+                          ) : null}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -265,6 +406,33 @@ export function ModeratorOrdersPage() {
                 Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
               </p>
               <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                <span
+                  className={`rounded-full px-2.5 py-1 font-semibold ${
+                    hasPurchaseInvoice(o) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Purchase invoice: {hasPurchaseInvoice(o) ? "Available" : "Pending"}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 font-semibold ${
+                    hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Billing invoice: {hasBillingInvoice(o) ? "Available" : "Pending"}
+                </span>
+                <span
+                  className={`rounded-full px-2.5 py-1 font-semibold ${
+                    purchasePaymentStatusOf(o.id) === "Paid"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : purchasePaymentStatusOf(o.id) === "Partial"
+                        ? "bg-amber-100 text-amber-800"
+                        : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Purchase payment: {purchasePaymentStatusOf(o.id)}
+                </span>
+              </div>
               <Link
                 to={`/moderator/orders/${o.id}`}
                 className="mt-3 inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white"
@@ -272,6 +440,18 @@ export function ModeratorOrdersPage() {
                 <FileBadge2 className="h-4 w-4" />
                 Open
               </Link>
+              {hasPurchaseInvoice(o) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdjustOrderId(o.id);
+                    setAdjustInput(String(Math.round(paidPurchaseOf(o.id))));
+                  }}
+                  className="mt-2 inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-sm font-semibold text-blue-800"
+                >
+                  Adjust payment
+                </button>
+              ) : null}
             </div>
           ))}
           {pageList.length === 0 ? (
@@ -291,6 +471,68 @@ export function ModeratorOrdersPage() {
           />
         ) : null}
       </div>
+
+      {adjustOrder ? (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-slate-900">Adjust purchase payment</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              {adjustOrder.orderNo} · {adjustOrder.contactPerson}
+            </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Purchase total</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  ৳ {Math.round(purchaseAmountOf(adjustOrder.id)).toLocaleString("en-US")}
+                </p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Paid</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  ৳ {Math.round(paidPurchaseOf(adjustOrder.id)).toLocaleString("en-US")}
+                </p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">Pending</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  ৳ {Math.round(purchaseBalanceOf(adjustOrder.id)).toLocaleString("en-US")}
+                </p>
+              </div>
+            </div>
+            <label className="mt-5 block text-sm font-semibold text-slate-600">
+              Set paid amount
+              <input
+                type="number"
+                min={0}
+                max={Math.round(purchaseAmountOf(adjustOrder.id))}
+                value={adjustInput}
+                onChange={(e) => setAdjustInput(e.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg"
+                placeholder="Enter total paid amount"
+              />
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdjustOrderId(null);
+                  setAdjustInput("");
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={savePurchaseAdjustment}
+                className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-semibold text-white"
+              >
+                Save adjustment
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

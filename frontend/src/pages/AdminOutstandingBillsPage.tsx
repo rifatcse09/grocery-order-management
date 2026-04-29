@@ -1,8 +1,9 @@
-import { AlertTriangle, DollarSign, FileStack } from "lucide-react";
+import { AlertTriangle, FileStack } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
+import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 
 type Range = "all" | "7d" | "30d" | "90d";
 const PAYMENTS_KEY = "gom_statement_payments";
@@ -126,7 +127,7 @@ export function AdminOutstandingBillsPage() {
         <StatMetricCard
           title="Total unpaid amount"
           value={`৳ ${Math.round(totalUnpaid).toLocaleString("en-US")}`}
-          icon={DollarSign}
+          icon={BdTakaIcon}
           tone="coral"
           sparkSeed="outstanding-total-unpaid"
         />

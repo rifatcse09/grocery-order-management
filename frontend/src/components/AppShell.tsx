@@ -66,18 +66,25 @@ const navFor: Record<
   ],
   moderator: [
     { to: "/moderator/dashboard", label: "Dashboard", icon: BarChart3 },
-    { to: "/moderator/orders", label: "Orders", icon: ClipboardList },
+    { to: "/moderator/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
+    { to: "/moderator/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
+    { to: "/moderator/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
+    { to: "/moderator/billing-invoices", label: "Billing invoices", icon: FileText },
     { to: "/moderator/catalog/categories", label: "Category list", icon: Package },
     { to: "/moderator/ledger", label: "Ledger", icon: BookText },
   ],
   admin: [
     { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
+    { to: "/admin/orders", label: "Order list", icon: ClipboardList },
+    { to: "/admin/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
+    { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
+    { to: "/admin/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
+    { to: "/admin/billing-invoices", label: "Billing invoices", icon: FileText },
+    { to: "/admin/statements", label: "Billing cycle statements", icon: FileText },
+    { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
+    { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
     { to: "/admin/catalog/categories", label: "Category list", icon: BookText },
     { to: "/admin/catalog/products", label: "Product list", icon: Package },
-    { to: "/admin/statements", label: "Billing cycle statements", icon: FileText },
-    { to: "/admin/outstanding", label: "Outstanding bills", icon: FileText },
-    { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
-    { to: "/admin/orders", label: "Order list", icon: ClipboardList },
     { to: "/admin/users", label: "User list", icon: Users },
     { to: "/admin/moderators", label: "Moderator list", icon: UserCog },
     { to: "/admin/create", label: "Create user/moderator", icon: UserPlus },
@@ -154,7 +161,7 @@ export function AppShell() {
       ? { to: "/user/orders/new", label: "New order", Icon: Plus }
       : user.role === "moderator"
         ? { to: "/moderator/orders", label: "Orders", Icon: ClipboardList }
-        : { to: "/admin/create", label: "Create user", Icon: UserPlus };
+        : { to: "/admin/orders", label: "Orders", Icon: ClipboardList };
   const PrimaryIcon = primaryCta.Icon;
   const initials = user.name
     .split(/\s+/)

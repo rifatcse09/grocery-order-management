@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
 import { useOrders } from "../context/OrdersContext";
+import { useAuth } from "../context/AuthContext";
 
-interface StatementRow {
+interface PurchaseStatementRow {
   key: string;
   customer: string;
   start: Date;
@@ -16,10 +17,11 @@ interface StatementRow {
   invoices: Array<{ orderNo: string; orderDate: string; amount: number }>;
 }
 
-const PAYMENTS_KEY = "gom_statement_payments";
+const PAYMENTS_KEY = "gom_purchase_statement_payments";
 
-export function AdminBillingStatementsPage() {
+export function PurchaseBillingStatementsPage() {
   const { orders } = useOrders();
+  const { user } = useAuth();
   const [customer, setCustomer] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -28,6 +30,7 @@ export function AdminBillingStatementsPage() {
   const [perPage, setPerPage] = useState(10);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [adjustKey, setAdjustKey] = useState<string | null>(null);
+
   const [payments, setPayments] = useState<Record<string, number>>(() => {
     try {
       const raw = localStorage.getItem(PAYMENTS_KEY);
@@ -38,48 +41,54 @@ export function AdminBillingStatementsPage() {
       return {};
     }
   });
+
   const [adjustInput, setAdjustInput] = useState("");
 
   const customers = useMemo(
     () =>
-      [...new Set(orders.map((o) => o.contactPerson?.trim()).filter(Boolean))]
-        .sort((a, b) => String(a).localeCompare(String(b))),
+      [...new Set(orders.map((o) => o.contactPerson?.trim()).filter(Boolean))].sort((a, b) =>
+        String(a).localeCompare(String(b)),
+      ),
     [orders],
   );
+
+  const viewingForGenerator = user?.role === "moderator" ? "moderator" : "admin";
+
+  const purchaseOrders = useMemo(() => {
+    return orders
+      .filter((o) => o.purchaseInvoiceGenerated)
+      .filter((o) => (o.purchaseInvoiceGeneratedBy ?? "admin") === viewingForGenerator)
+      .filter((o) => (customer === "all" ? true : o.contactPerson === customer))
+      .filter((o) => (o.purchaseSubtotal ?? getPurchaseSubtotalFallback(o)) > 0)
+      .sort((a, b) => a.orderDate.localeCompare(b.orderDate));
+  }, [orders, customer, viewingForGenerator]);
 
   const statements = useMemo(() => {
     const cycleDays = 7 as const;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const invoiced = orders
-      .filter((o) => o.status === "invoiced" && (o.grandTotal ?? 0) > 0)
-      .filter((o) => (customer === "all" ? true : o.contactPerson === customer))
-      .sort((a, b) => a.orderDate.localeCompare(b.orderDate));
-
     const bucket = new Map<
       string,
-      { customer: string; start: Date; end: Date; total: number; invoices: StatementRow["invoices"] }
+      { customer: string; start: Date; end: Date; total: number; invoices: PurchaseStatementRow["invoices"] }
     >();
 
-    for (const o of invoiced) {
+    for (const o of purchaseOrders) {
       const d = parseIso(o.orderDate);
       if (!d) continue;
       const start = startOfCycle(d, cycleDays);
       const end = new Date(start);
       end.setDate(end.getDate() + cycleDays - 1);
       const c = o.contactPerson || "Unknown customer";
-      const key = `${formatIso(start)}::${c}`;
+      const key = `${formatIso(start)}::${c}::${viewingForGenerator}`;
       const prev = bucket.get(key);
+      const amount = o.purchaseSubtotal ?? getPurchaseSubtotalFallback(o);
       bucket.set(key, {
         customer: c,
         start,
         end,
-        total: (prev?.total ?? 0) + (o.grandTotal ?? 0),
-        invoices: [
-          ...(prev?.invoices ?? []),
-          { orderNo: o.orderNo, orderDate: o.orderDate, amount: o.grandTotal ?? 0 },
-        ],
+        total: (prev?.total ?? 0) + amount,
+        invoices: [...(prev?.invoices ?? []), { orderNo: o.orderNo, orderDate: o.orderDate, amount }],
       });
     }
 
@@ -95,21 +104,21 @@ export function AdminBillingStatementsPage() {
       }))
       .sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    // Carry-over is cumulative prior dues per customer (common practice).
+    // Carry-over is cumulative prior dues per customer.
     const carryPerCustomer = new Map<string, number>();
-    const rows: StatementRow[] = sorted.map((s) => {
+    const rows: PurchaseStatementRow[] = sorted.map((s) => {
       const previousDue = carryPerCustomer.get(s.customer) ?? 0;
       const totalDue = previousDue + s.invoiceTotal;
       carryPerCustomer.set(s.customer, totalDue);
 
       const dueDate = new Date(s.end);
       dueDate.setDate(dueDate.getDate() + cycleDays);
-      const status: StatementRow["status"] = dueDate.getTime() < today.getTime() ? "Overdue" : "Due";
+      const status: PurchaseStatementRow["status"] = dueDate.getTime() < today.getTime() ? "Overdue" : "Due";
       return { ...s, previousDue, totalDue, dueDate, status };
     });
 
     return rows.sort((a, b) => b.start.getTime() - a.start.getTime());
-  }, [orders, customer]);
+  }, [purchaseOrders]);
 
   useEffect(() => {
     localStorage.setItem(PAYMENTS_KEY, JSON.stringify(payments));
@@ -119,11 +128,11 @@ export function AdminBillingStatementsPage() {
     return Math.max(0, payments[key] ?? 0);
   }
 
-  function balanceOf(row: StatementRow): number {
+  function balanceOf(row: PurchaseStatementRow): number {
     return Math.max(0, row.totalDue - paidOf(row.key));
   }
 
-  function paymentStatusOf(row: StatementRow): "Paid" | "Partial" | "Unpaid" {
+  function paymentStatusOf(row: PurchaseStatementRow): "Paid" | "Partial" | "Unpaid" {
     const paid = paidOf(row.key);
     if (paid <= 0) return "Unpaid";
     if (paid >= row.totalDue) return "Paid";
@@ -161,12 +170,18 @@ export function AdminBillingStatementsPage() {
   );
 
   const listSource = viewMode === "active" ? activeStatements : historyStatements;
+
   const safePage = Math.min(page, Math.max(1, Math.ceil(listSource.length / perPage)));
   const paged = listSource.slice((safePage - 1) * perPage, safePage * perPage);
   const selected = selectedKey ? listSource.find((s) => s.key === selectedKey) ?? null : null;
   const adjusting = adjustKey ? statements.find((s) => s.key === adjustKey) ?? null : null;
 
-  function openAdjustModal(row: StatementRow) {
+  useEffect(() => {
+    setPage(1);
+    setSelectedKey(null);
+  }, [customer, fromDate, toDate, viewMode]);
+
+  function openAdjustModal(row: PurchaseStatementRow) {
     setAdjustKey(row.key);
     setAdjustInput("");
   }
@@ -184,11 +199,8 @@ export function AdminBillingStatementsPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold">Billing cycle statements</h1>
-        <p className="text-sm text-slate-600">
-          Customer-wise weekly bills with invoice totals, previous due carry-over, and due status. Tables scroll when
-          there are many rows or on narrow screens.
-        </p>
+        <h1 className="text-2xl font-bold">Purchase billing cycle statements</h1>
+        <p className="text-sm text-slate-600">Customer-wise weekly purchase invoices with due status and payment adjustment.</p>
       </div>
 
       <div className="rounded-3xl border border-border bg-card p-4 shadow-card">
@@ -201,11 +213,7 @@ export function AdminBillingStatementsPage() {
             Customer
             <select
               value={customer}
-              onChange={(e) => {
-                setCustomer(e.target.value);
-                setPage(1);
-                setSelectedKey(null);
-              }}
+              onChange={(e) => setCustomer(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             >
               <option value="all">All customers</option>
@@ -216,33 +224,28 @@ export function AdminBillingStatementsPage() {
               ))}
             </select>
           </label>
+
           <label className="text-xs text-slate-600">
             From date
             <input
               type="date"
               value={fromDate}
-              onChange={(e) => {
-                setFromDate(e.target.value);
-                setPage(1);
-                setSelectedKey(null);
-              }}
+              onChange={(e) => setFromDate(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             />
           </label>
+
           <label className="text-xs text-slate-600">
             To date
             <input
               type="date"
               value={toDate}
-              onChange={(e) => {
-                setToDate(e.target.value);
-                setPage(1);
-                setSelectedKey(null);
-              }}
+              onChange={(e) => setToDate(e.target.value)}
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             />
           </label>
         </div>
+
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -306,13 +309,9 @@ export function AdminBillingStatementsPage() {
                     <span className="ml-1 text-xs text-slate-500">· Due {formatIso(r.dueDate)}</span>
                   </td>
                   <td className="px-3 py-3.5">{r.invoiceCount}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {Math.round(r.totalDue).toLocaleString("en-US")}
-                  </td>
+                  <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(r.totalDue).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5 text-right">৳ {Math.round(paidOf(r.key)).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {Math.round(balanceOf(r)).toLocaleString("en-US")}
-                  </td>
+                  <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(balanceOf(r)).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -364,9 +363,7 @@ export function AdminBillingStatementsPage() {
               {paged.length === 0 ? (
                 <tr className="border-t border-border bg-card">
                   <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
-                    {viewMode === "active"
-                      ? "No active statements found."
-                      : "No history statements found."}
+                    {viewMode === "active" ? "No active purchase statements found." : "No history purchase statements found."}
                   </td>
                 </tr>
               ) : null}
@@ -390,9 +387,9 @@ export function AdminBillingStatementsPage() {
         <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
           <h2 className="text-sm font-semibold">Statement details</h2>
           <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">
-            {selected.customer} · {formatIso(selected.start)} to {formatIso(selected.end)} · Due{" "}
-            {formatIso(selected.dueDate)}
+            {selected.customer} · {formatIso(selected.start)} to {formatIso(selected.end)} · Due {formatIso(selected.dueDate)}
           </div>
+
           <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <DetailStat label="Invoice total" value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`} />
@@ -430,14 +427,14 @@ export function AdminBillingStatementsPage() {
         </div>
       ) : (
         <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500 shadow-card">
-          Click <strong>View details</strong> in any statement row to open details.
+          Click <strong>View</strong> in any statement row to open details.
         </div>
       )}
 
       {adjusting ? (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
           <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl">
-            <h3 className="text-2xl font-bold text-slate-900">Adjust payment</h3>
+            <h3 className="text-2xl font-bold text-slate-900">Adjust purchase statement payment</h3>
             <p className="mt-2 text-base text-slate-600">
               {adjusting.customer} · {formatIso(adjusting.start)} to {formatIso(adjusting.end)}
             </p>
@@ -467,7 +464,7 @@ export function AdminBillingStatementsPage() {
                 placeholder="Enter total paid amount"
               />
             </label>
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -491,6 +488,10 @@ export function AdminBillingStatementsPage() {
       ) : null}
     </div>
   );
+}
+
+function getPurchaseSubtotalFallback(order: { lines: Array<{ lineTotal?: number }> }) {
+  return order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
 }
 
 function isOlderThanDays(date: Date, days: number): boolean {
@@ -537,3 +538,4 @@ function DetailStat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+

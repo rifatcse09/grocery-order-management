@@ -1,4 +1,5 @@
 import type { Order, OrderLine } from "../types";
+import { formatDeliveryWindow } from "../lib/deliveryWindow";
 
 /** বাংলা ডেলিভারি চালান — শুধু বস্তু ও পরিমাণ, মূল্য ছাড়া। */
 export function DeliveryChallanTemplate({ order }: { order: Order }) {
@@ -33,7 +34,7 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
           </div>
           <div className="rounded-xl border border-slate-100 p-3">
             <p className="text-xs text-slate-500">সময়</p>
-            <p className="font-semibold">{order.deliveryTime ?? "___________"}</p>
+            <p className="font-semibold">{formatDeliveryWindow(order.deliveryTime)}</p>
           </div>
         </div>
 

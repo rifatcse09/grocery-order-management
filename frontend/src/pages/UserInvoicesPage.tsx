@@ -4,6 +4,7 @@ import { Download, MoreHorizontal, Search, SlidersHorizontal } from "lucide-reac
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
+import { hasBillingInvoice } from "../lib/invoiceFlow";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -60,7 +61,7 @@ export function UserInvoicesPage() {
   const rows = useMemo<InvoiceRow[]>(() => {
     const visible = orders
       .filter((o) => (o.ownerId === user?.id || user?.role === "admin"))
-      .filter((o) => o.invoiceGenerated || o.status === "invoiced")
+      .filter((o) => hasBillingInvoice(o))
       .map((o) => {
         const issue = parseIso(o.orderDate) ?? new Date();
         const due = new Date(issue);
@@ -89,7 +90,7 @@ export function UserInvoicesPage() {
           remaining: amount,
           paymentStatus: "pending" as const,
           challanGenerated: Boolean(o.challanGenerated),
-          invoiceAvailable: Boolean(o.invoiceGenerated || o.status === "invoiced"),
+          invoiceAvailable: hasBillingInvoice(o),
         };
       })
       .sort((a, b) => a.issueDate.localeCompare(b.issueDate));

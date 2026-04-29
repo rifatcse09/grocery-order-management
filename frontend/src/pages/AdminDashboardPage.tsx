@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock3,
-  DollarSign,
   FileCheck2,
   FilePenLine,
   Hourglass,
@@ -30,6 +29,7 @@ import {
   YAxis,
 } from "recharts";
 import { StatMetricCard, type MetricCardTone } from "../components/StatMetricCard";
+import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import type { OrderStatus } from "../types";
@@ -39,6 +39,7 @@ const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#0f766e", "#64748B"
 export function AdminDashboardPage() {
   const { orders } = useOrders();
   const { user } = useAuth();
+  const [historyQuery, setHistoryQuery] = useState("");
   const [trendMode, setTrendMode] = useState<"weekly" | "monthly">("weekly");
   const [dateRange, setDateRange] = useState<"all" | "7d" | "30d" | "90d">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | OrderStatus>("all");
@@ -209,6 +210,79 @@ export function AdminDashboardPage() {
   }, [filteredOrders]);
 
   const limited = user?.role === "moderator";
+  const isModeratorView = user?.role === "moderator";
+
+  const paymentSummary = useMemo(() => {
+    const PAYMENTS_KEY = "gom_statement_payments";
+    const customerSet = new Set(filteredOrders.map((o) => o.contactPerson).filter(Boolean));
+    const billedTotal = filteredOrders
+      .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
+      .reduce((s, o) => s + (o.grandTotal ?? 0), 0);
+    let settledTotal = 0;
+    try {
+      const raw = localStorage.getItem(PAYMENTS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Record<string, number>;
+        Object.entries(parsed).forEach(([key, paid]) => {
+          const amount = Number(paid);
+          if (!Number.isFinite(amount) || amount <= 0) return;
+          const customerName = key.split("::")[1] || "";
+          if (!customerSet.has(customerName)) return;
+          settledTotal += amount;
+        });
+      }
+    } catch {
+      // ignore malformed local storage values
+    }
+    const settledBounded = Math.min(billedTotal, settledTotal);
+    return {
+      settledTotal: settledBounded,
+      pendingTotal: Math.max(0, billedTotal - settledBounded),
+    };
+  }, [filteredOrders]);
+
+  const totalPurchase = useMemo(() => {
+    return filteredOrders.reduce((s, o) => {
+      if (o.grandTotal != null) return s + o.grandTotal;
+      const subtotal = o.lines.reduce((lineSum, l) => lineSum + (l.lineTotal ?? 0), 0);
+      return s + subtotal;
+    }, 0);
+  }, [filteredOrders]);
+
+  const purchaseHistoryRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { item: string; category: string; orders: number; qtyScore: number; amount: number }
+    >();
+    const query = historyQuery.trim().toLowerCase();
+
+    filteredOrders.forEach((o) => {
+      o.lines.forEach((l) => {
+        const itemName = l.itemNameEn || l.itemNameBn || "Unknown item";
+        const category = l.categoryId || "uncategorized";
+        const key = `${category}::${itemName}`;
+        const prev = grouped.get(key) ?? { item: itemName, category, orders: 0, qtyScore: 0, amount: 0 };
+        const qtyScore =
+          (parseFloat(l.kg || "0") || 0) +
+          (parseFloat(l.gram || "0") || 0) / 1000 +
+          (parseFloat(l.piece || "0") || 0);
+        grouped.set(key, {
+          item: prev.item,
+          category: prev.category,
+          orders: prev.orders + 1,
+          qtyScore: prev.qtyScore + qtyScore,
+          amount: prev.amount + (l.lineTotal ?? 0),
+        });
+      });
+    });
+
+    return [...grouped.values()]
+      .filter((r) => {
+        if (!query) return true;
+        return r.item.toLowerCase().includes(query) || r.category.toLowerCase().includes(query);
+      })
+      .sort((a, b) => b.amount - a.amount || b.orders - a.orders);
+  }, [filteredOrders, historyQuery]);
   const deliveryMetrics = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -236,9 +310,11 @@ export function AdminDashboardPage() {
             <span className="text-xs font-extrabold tracking-tight text-primary-foreground">HMC</span>
           </div>
           <div>
-            <h1 className="text-2xl font-bold">Admin dashboard</h1>
+            <h1 className="text-2xl font-bold">{isModeratorView ? "Moderator dashboard" : "Admin dashboard"}</h1>
             <p className="text-sm text-brand-muted">
-              Sales, receivables, categories, and order health overview.
+              {isModeratorView
+                ? "Purchase history, category/item trends, and pending bill visibility."
+                : "Sales, receivables, categories, and order health overview."}
             </p>
           </div>
         </div>
@@ -318,9 +394,39 @@ export function AdminDashboardPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatMetricCard title="Today's sales" value="৳ 85,000" icon={DollarSign} tone="coral" sparkSeed="dash-today-sales" />
-        <StatMetricCard title="Weekly sales" value="৳ 420,000" icon={CalendarDays} tone="teal" sparkSeed="dash-weekly-sales" />
-        <StatMetricCard title="Monthly sales" value="৳ 1,800,000" icon={BarChart3} tone="navy" sparkSeed="dash-monthly-sales" />
+        <StatMetricCard
+          title={isModeratorView ? "Total purchase" : "Today's sales"}
+          value={
+            isModeratorView
+              ? `৳ ${Math.round(totalPurchase).toLocaleString("en-US")}`
+              : "৳ 85,000"
+          }
+          icon={BdTakaIcon}
+          tone="coral"
+          sparkSeed="dash-today-sales"
+        />
+        <StatMetricCard
+          title={isModeratorView ? "Pending bills" : "Weekly sales"}
+          value={
+            isModeratorView
+              ? `৳ ${Math.round(paymentSummary.pendingTotal).toLocaleString("en-US")}`
+              : "৳ 420,000"
+          }
+          icon={CalendarDays}
+          tone="teal"
+          sparkSeed="dash-weekly-sales"
+        />
+        <StatMetricCard
+          title={isModeratorView ? "Settled by admin" : "Monthly sales"}
+          value={
+            isModeratorView
+              ? `৳ ${Math.round(paymentSummary.settledTotal).toLocaleString("en-US")}`
+              : "৳ 1,800,000"
+          }
+          icon={BarChart3}
+          tone="navy"
+          sparkSeed="dash-monthly-sales"
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -332,17 +438,26 @@ export function AdminDashboardPage() {
           sparkSeed="dash-total-orders"
           secondaryLine="Filtered scope"
         />
+        {!isModeratorView ? (
+          <StatMetricCard
+            title="Average order value"
+            value={limited ? "—" : `৳ ${Math.round(stats.avg).toLocaleString("en-US")}`}
+            icon={Activity}
+            tone="slate"
+            sparkSeed="dash-aov"
+          />
+        ) : null}
         <StatMetricCard
-          title="Average order value"
-          value={limited ? "—" : `৳ ${Math.round(stats.avg).toLocaleString("en-US")}`}
-          icon={Activity}
-          tone="slate"
-          sparkSeed="dash-aov"
+          title={isModeratorView ? "Invoiced / billed orders" : "Invoiced count"}
+          value={String(stats.invoiced)}
+          icon={FileCheck2}
+          tone="coral"
+          sparkSeed="dash-invoiced"
         />
-        <StatMetricCard title="Invoiced count" value={String(stats.invoiced)} icon={FileCheck2} tone="coral" sparkSeed="dash-invoiced" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      {!isModeratorView ? (
+        <div className="grid gap-4 md:grid-cols-3">
         <StatMetricCard
           title="Order completion rate"
           value={`${stats.completionRate.toFixed(1)}%`}
@@ -358,7 +473,8 @@ export function AdminDashboardPage() {
           sparkSeed="dash-processing"
         />
         <StatMetricCard title="Delayed orders" value={String(stats.delayed)} icon={AlertTriangle} tone="rose" sparkSeed="dash-delayed" />
-      </div>
+        </div>
+      ) : null}
 
       <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
         <h2 className="text-lg font-bold text-foreground">Order delivery status</h2>
@@ -389,7 +505,7 @@ export function AdminDashboardPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-card">
-          <h2 className="text-base font-semibold">Sales by category</h2>
+          <h2 className="text-base font-semibold">{isModeratorView ? "Purchase by category" : "Sales by category"}</h2>
           <div className="h-72 w-full pt-4">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
@@ -478,7 +594,7 @@ export function AdminDashboardPage() {
           <StatMetricCard
             title="Billing cycle comparison"
             value={`${trendAnalytics.cycleDelta >= 0 ? "+" : ""}${trendAnalytics.cycleDelta.toFixed(1)}%`}
-            icon={DollarSign}
+            icon={BdTakaIcon}
             tone="coral"
             sparkSeed="trend-cycle"
             showTrendRow={false}
@@ -532,18 +648,18 @@ export function AdminDashboardPage() {
       </div>
 
       <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
-        <h2 className="text-lg font-bold text-foreground">Product-level insights</h2>
+        <h2 className="text-lg font-bold text-foreground">{isModeratorView ? "Purchase insights" : "Product-level insights"}</h2>
         <div className="mt-3 grid gap-4 lg:grid-cols-3">
           <InsightList
-            title="Top selling products"
+            title={isModeratorView ? "Top purchased products" : "Top selling products"}
             items={productInsights.topSelling}
-            metricLabel="Sales"
+            metricLabel={isModeratorView ? "Purchase" : "Sales"}
             metric={(x) => `৳ ${Math.round(x.sales).toLocaleString("en-US")}`}
           />
           <InsightList
-            title="Least selling products"
+            title={isModeratorView ? "Least purchased products" : "Least selling products"}
             items={productInsights.leastSelling}
-            metricLabel="Sales"
+            metricLabel={isModeratorView ? "Purchase" : "Sales"}
             metric={(x) => `৳ ${Math.round(x.sales).toLocaleString("en-US")}`}
           />
           <InsightList
@@ -554,6 +670,51 @@ export function AdminDashboardPage() {
           />
         </div>
       </div>
+
+      {isModeratorView ? (
+        <div className="rounded-3xl border border-border bg-card p-5 shadow-card">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-bold text-foreground">Purchase history (item/category)</h2>
+            <input
+              value={historyQuery}
+              onChange={(e) => setHistoryQuery(e.target.value)}
+              placeholder="Search item or category"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm sm:w-80"
+            />
+          </div>
+          <div className="table-scroll mt-4 max-h-[420px] rounded-2xl border border-border shadow-inner">
+            <table className="min-w-[780px] w-full text-left text-sm">
+              <thead className="sticky top-0 z-10 border-b border-border bg-muted">
+                <tr>
+                  <th className="px-3 py-2">Item</th>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2 text-right">Order rows</th>
+                  <th className="px-3 py-2 text-right">Qty score</th>
+                  <th className="px-3 py-2 text-right">Total purchase</th>
+                </tr>
+              </thead>
+              <tbody>
+                {purchaseHistoryRows.map((r) => (
+                  <tr key={`${r.category}-${r.item}`} className="border-t border-border bg-card">
+                    <td className="px-3 py-2.5 font-medium text-slate-900">{r.item}</td>
+                    <td className="px-3 py-2.5 text-slate-600">{r.category}</td>
+                    <td className="px-3 py-2.5 text-right">{r.orders}</td>
+                    <td className="px-3 py-2.5 text-right">{r.qtyScore.toFixed(2)}</td>
+                    <td className="px-3 py-2.5 text-right font-semibold">৳ {Math.round(r.amount).toLocaleString("en-US")}</td>
+                  </tr>
+                ))}
+                {purchaseHistoryRows.length === 0 ? (
+                  <tr className="border-t border-border bg-card">
+                    <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                      No purchase history found for current filters.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
 
     </div>
   );

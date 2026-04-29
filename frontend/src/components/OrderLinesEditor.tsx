@@ -8,12 +8,14 @@ export function OrderLinesEditor({
   categories,
   showPricing = false,
   largeText = false,
+  billingMarkupsByCategory,
 }: {
   lines: OrderLine[];
   onChange: (next: OrderLine[]) => void;
   categories: CategoryDef[];
   showPricing?: boolean;
   largeText?: boolean;
+  billingMarkupsByCategory?: Record<string, number>;
 }) {
   const catMap = new Map(categories.map((c) => [c.id, c]));
 
@@ -64,8 +66,14 @@ export function OrderLinesEditor({
             <th className="px-3 py-3 normal-case">Instructions</th>
             {showPricing ? (
               <>
-                <th className="px-3 py-3 text-right normal-case">{COL.unitPrice}</th>
+                <th className="px-3 py-3 text-right normal-case">Cost unit</th>
                 <th className="px-3 py-3 text-right normal-case">{COL.lineTotal}</th>
+                {billingMarkupsByCategory ? (
+                  <>
+                    <th className="px-3 py-3 text-right normal-case">Markup %</th>
+                    <th className="px-3 py-3 text-right normal-case">Billing unit</th>
+                  </>
+                ) : null}
               </>
             ) : null}
             <th className="px-3 py-3" />
@@ -74,6 +82,9 @@ export function OrderLinesEditor({
         <tbody>
           {lines.map((line) => {
             const cat = catMap.get(line.categoryId);
+            const markupPct = Number(billingMarkupsByCategory?.[line.categoryId] ?? 0);
+            const billingUnit =
+              line.unitPrice != null ? line.unitPrice + Math.round(line.unitPrice * (markupPct / 100)) : null;
             return (
               <tr key={line.id} className={`${showPricing ? "border-t border-border bg-card" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
@@ -154,6 +165,14 @@ export function OrderLinesEditor({
                     <td className="px-3 py-2 text-right text-sm font-medium tabular-nums">
                       {line.lineTotal != null ? line.lineTotal.toFixed(0) : "—"}
                     </td>
+                    {billingMarkupsByCategory ? (
+                      <>
+                        <td className="px-3 py-2 text-right text-sm font-semibold text-amber-700">{markupPct}%</td>
+                        <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
+                          {billingUnit != null ? billingUnit.toFixed(0) : "—"}
+                        </td>
+                      </>
+                    ) : null}
                   </>
                 ) : null}
                 <td className="px-3 py-2">

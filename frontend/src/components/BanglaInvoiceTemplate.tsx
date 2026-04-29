@@ -44,12 +44,7 @@ export function BanglaInvoiceTemplate({
   hotline?: string;
 }) {
   const sub = order.subtotal ?? 0;
-  const pct = order.markupPercent ?? (sub <= 125_000 ? 20 : 15);
-  const markup =
-    order.subtotal != null && order.grandTotal != null
-      ? order.grandTotal - order.subtotal
-      : Math.round(sub * (pct / 100));
-  const grand = order.grandTotal ?? sub + markup;
+  const categoryMarkups = order.billingCategoryMarkups ?? {};
   const dueDate = order.deliveryDate;
 
   const rows: OrderLine[] =
@@ -71,16 +66,22 @@ export function BanglaInvoiceTemplate({
           },
         ];
 
-  const adjustedLineTotals = (() => {
-    if (rows.length === 0) return [] as number[];
-    const baseTotals = rows.map((r) => r.lineTotal ?? 0);
-    if (markup <= 0) return baseTotals;
-
-    const each = Math.floor(markup / rows.length);
-    const remainder = markup - each * rows.length;
-
-    return baseTotals.map((v, idx) => v + each + (idx < remainder ? 1 : 0));
-  })();
+  const billedRows = rows.map((r) => {
+    const purchaseUnit = Number(r.unitPrice ?? 0);
+    const pct = Number(categoryMarkups[r.categoryId] ?? 0);
+    const billedUnit = purchaseUnit + Math.round(purchaseUnit * (pct / 100));
+    const billedLine = Number(r.lineTotal ?? 0) + Math.round(Number(r.lineTotal ?? 0) * (pct / 100));
+    return {
+      line: r,
+      billedUnit,
+      billedLine,
+      pct,
+    };
+  });
+  const grand =
+    order.grandTotal ??
+    billedRows.reduce((sum, r) => sum + r.billedLine, 0) ??
+    sub;
 
   return (
     <div className="font-bn overflow-hidden rounded-3xl bg-slate-50 p-3 shadow-card print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none sm:p-5">
@@ -130,7 +131,7 @@ export function BanglaInvoiceTemplate({
 
         <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
           <div className="divide-y divide-slate-100 print:hidden md:hidden">
-            {rows.map((r, idx) => (
+            {billedRows.map(({ line: r, billedLine, billedUnit, pct }) => (
               <div key={r.id} className="space-y-2 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -138,7 +139,7 @@ export function BanglaInvoiceTemplate({
                     <p className="font-semibold">{r.itemNameBn}</p>
                     <p className="text-xs text-slate-500">{r.itemNameEn}</p>
                   </div>
-                  <p className="text-right text-sm font-semibold">৳ {moneyBn(adjustedLineTotals[idx] ?? 0)}</p>
+                  <p className="text-right text-sm font-semibold">৳ {moneyBn(billedLine)}</p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="rounded-lg bg-slate-50 px-2 py-1">
@@ -147,7 +148,8 @@ export function BanglaInvoiceTemplate({
                   </div>
                   <div className="rounded-lg bg-slate-50 px-2 py-1 text-right">
                     <p className="text-slate-500">ইউনিট মূল্য</p>
-                    <p className="font-medium">৳ {moneyBn(r.unitPrice ?? 0)}</p>
+                    <p className="font-medium">৳ {moneyBn(billedUnit)}</p>
+                    <p className="text-[10px] text-slate-500">+{toBanglaNum(String(pct))}%</p>
                   </div>
                 </div>
               </div>
@@ -165,7 +167,7 @@ export function BanglaInvoiceTemplate({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, idx) => (
+              {billedRows.map(({ line: r, billedUnit, billedLine, pct }) => (
                 <tr key={r.id} className="border-t border-slate-100">
                   <td className="px-3 py-2 font-medium">{toBanglaNum(String(r.serial))}</td>
                   <td className="px-3 py-2">
@@ -173,9 +175,12 @@ export function BanglaInvoiceTemplate({
                     <p className="text-xs text-slate-500">{r.itemNameEn}</p>
                   </td>
                   <td className="px-3 py-2">{formatQtyLine(r.kg, r.gram, r.piece)}</td>
-                  <td className="px-3 py-2 text-right">৳ {moneyBn(r.unitPrice ?? 0)}</td>
+                  <td className="px-3 py-2 text-right">
+                    ৳ {moneyBn(billedUnit)}
+                    <span className="ml-1 text-[10px] text-slate-500">(+{toBanglaNum(String(pct))}%)</span>
+                  </td>
                   <td className="px-3 py-2 text-right font-semibold">
-                    ৳ {moneyBn(adjustedLineTotals[idx] ?? 0)}
+                    ৳ {moneyBn(billedLine)}
                   </td>
                 </tr>
               ))}

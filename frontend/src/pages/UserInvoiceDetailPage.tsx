@@ -4,6 +4,7 @@ import { ArrowLeft, Receipt, User } from "lucide-react";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { StatusBadge } from "../components/StatusBadge";
 import { useOrders } from "../context/OrdersContext";
+import { hasBillingInvoice } from "../lib/invoiceFlow";
 
 export function UserInvoiceDetailPage() {
   const { id } = useParams();
@@ -29,7 +30,7 @@ export function UserInvoiceDetailPage() {
   const printDoc = () => window.print();
   const saveAsPdf = () => window.print();
 
-  const hasInvoice = order && (order.invoiceGenerated || order.status === "invoiced");
+  const hasInvoice = order && hasBillingInvoice(order);
 
   if (!order) {
     return (

@@ -21,6 +21,7 @@ import { AdminFinancialLedgerPage } from "./pages/AdminFinancialLedgerPage";
 import { AdminOrdersPage } from "./pages/AdminOrdersPage";
 import { AdminOrderDetailPage } from "./pages/AdminOrderDetailPage";
 import { AdminCatalogPage } from "./pages/AdminCatalogPage";
+import { PurchaseBillingStatementsPage } from "./pages/PurchaseBillingStatementsPage";
 
 function RequireAuth() {
   const { user } = useAuth();
@@ -56,6 +57,10 @@ export default function App() {
           </Route>
           <Route element={<RequireRole allow={["moderator", "admin"]} />}>
             <Route path="/moderator/orders" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/purchase-invoices" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/purchase-pending-bills" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/billing-invoices" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/purchase-statements" element={<PurchaseBillingStatementsPage />} />
             <Route path="/moderator/orders/:id" element={<ModeratorOrderDetailPage />} />
             <Route path="/moderator/dashboard" element={<AdminDashboardPage />} />
             <Route path="/moderator/catalog" element={<Navigate to="/moderator/catalog/categories" replace />} />
@@ -69,6 +74,10 @@ export default function App() {
             <Route path="/admin/catalog/products" element={<AdminCatalogPage view="products" />} />
             <Route path="/admin/orders/new" element={<AdminOrderDetailPage />} />
             <Route path="/admin/orders" element={<AdminOrdersPage />} />
+            <Route path="/admin/purchase-invoices" element={<AdminOrdersPage />} />
+            <Route path="/admin/purchase-pending-bills" element={<AdminOrdersPage />} />
+            <Route path="/admin/purchase-statements" element={<PurchaseBillingStatementsPage />} />
+            <Route path="/admin/billing-invoices" element={<AdminOrdersPage />} />
             <Route path="/admin/orders/:id" element={<AdminOrderDetailPage />} />
             <Route path="/admin/statements" element={<AdminBillingStatementsPage />} />
             <Route path="/admin/outstanding" element={<AdminOutstandingBillsPage />} />

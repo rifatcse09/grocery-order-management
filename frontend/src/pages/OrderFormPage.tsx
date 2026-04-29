@@ -10,6 +10,7 @@ import { useOrders } from "../context/OrdersContext";
 import type { Order, OrderLine } from "../types";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
+import { buildDeliveryWindow, parseDeliveryWindow } from "../lib/deliveryWindow";
 
 function newLine(categories: { id: string }[]): OrderLine {
   const cid = categories[0]?.id ?? "fresh";
@@ -24,6 +25,13 @@ function newLine(categories: { id: string }[]): OrderLine {
     gram: "",
     piece: "",
   };
+}
+
+function toDateTimeLocalValue(value: string): string {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00`;
+  return "";
 }
 
 export function OrderFormPage() {
@@ -98,6 +106,9 @@ export function OrderFormPage() {
   const linesOk =
     order.lines.length > 0 &&
     order.lines.every((l) => validateLineQuantity(l.kg, l.gram, l.piece) == null);
+  const deliveryWindowRange = parseDeliveryWindow(order.deliveryTime);
+  const startDateTime = toDateTimeLocalValue(deliveryWindowRange.startDate);
+  const endDateTime = toDateTimeLocalValue(deliveryWindowRange.endDate);
 
   const save = () => {
     upsertOrder(order);
@@ -196,14 +207,35 @@ export function OrderFormPage() {
             />
           </div>
           <div>
-            <label className="text-sm font-semibold text-slate-700">Time window (text)</label>
-            <input
-              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-              value={order.deliveryTime ?? ""}
-              onChange={(e) => setOrder({ ...order, deliveryTime: e.target.value })}
-              placeholder="e.g. 10:00 — 12:00"
-              disabled={!editWindowOk}
-            />
+            <label className="text-sm font-semibold text-slate-700">Time window (date & time range)</label>
+            <div className="mt-1 grid gap-2 sm:grid-cols-2">
+              <input
+                type="datetime-local"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+                value={startDateTime}
+                onChange={(e) =>
+                  setOrder({
+                    ...order,
+                    deliveryTime: buildDeliveryWindow(e.target.value, endDateTime),
+                  })
+                }
+                placeholder="Start date & time"
+                disabled={!editWindowOk}
+              />
+              <input
+                type="datetime-local"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+                value={endDateTime}
+                onChange={(e) =>
+                  setOrder({
+                    ...order,
+                    deliveryTime: buildDeliveryWindow(startDateTime, e.target.value),
+                  })
+                }
+                placeholder="End date & time"
+                disabled={!editWindowOk}
+              />
+            </div>
           </div>
           <div>
             <label className="text-sm font-semibold text-slate-700">Contact person</label>

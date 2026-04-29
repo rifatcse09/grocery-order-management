@@ -5,6 +5,12 @@ import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
+import {
+  appendCategoryMarkupHistory,
+  loadCategoryMarkupHistory,
+  loadCategoryMarkupSettings,
+  saveCategoryMarkupSettings,
+} from "../lib/categoryMarkupSettings";
 
 type CatalogView = "all" | "categories" | "products";
 
@@ -31,6 +37,8 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const [pendingDelete, setPendingDelete] = useState<
     { type: "category"; id: string; name: string } | { type: "item"; id: string; name: string } | null
   >(null);
+  const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>(loadCategoryMarkupSettings);
+  const [markupHistory, setMarkupHistory] = useState(loadCategoryMarkupHistory);
 
   const sorted = useMemo(
     () => [...categories].sort((a, b) => `${a.nameEn}${a.nameBn}`.localeCompare(`${b.nameEn}${b.nameBn}`)),
@@ -172,6 +180,23 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     setPendingDelete({ type: "item", id, name: item?.nameEn ?? "this item" });
   };
 
+  const setCategoryMarkup = (categoryId: string, value: string) => {
+    const pct = Number(value);
+    const safe = Number.isFinite(pct) && pct >= 0 ? pct : 0;
+    const prevPct = Number(categoryMarkups[categoryId] ?? 0);
+    if (prevPct === safe) return;
+    const next = { ...categoryMarkups, [categoryId]: safe };
+    setCategoryMarkups(next);
+    saveCategoryMarkupSettings(next);
+    setMarkupHistory(
+      appendCategoryMarkupHistory({
+        categoryId,
+        previousPercent: prevPct,
+        nextPercent: safe,
+      }),
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -255,6 +280,81 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
 
       {message ? (
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">{message}</div>
+      ) : null}
+
+      {role === "admin" ? (
+        <section className="rounded-3xl border border-border bg-card p-5 shadow-card">
+          <h2 className="text-base font-semibold text-slate-900">Billing markup settings (category-wise)</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            This markup % is added to purchase line prices when admin generates customer billing invoice.
+          </p>
+          <div className="table-scroll mt-3 rounded-2xl border border-border">
+            <table className="min-w-[640px] w-full text-left text-sm">
+              <thead className="bg-muted text-xs uppercase tracking-wide text-foreground">
+                <tr>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2">Category (Bangla)</th>
+                  <th className="px-3 py-2 text-right">Markup %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((c) => (
+                  <tr key={`markup-${c.id}`} className="border-t border-border bg-card">
+                    <td className="px-3 py-2.5 font-semibold text-slate-900">{c.nameEn}</td>
+                    <td className="px-3 py-2.5 font-bn text-slate-700">{c.nameBn}</td>
+                    <td className="px-3 py-2.5 text-right">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.5"
+                        value={categoryMarkups[c.id] ?? 0}
+                        onChange={(e) => setCategoryMarkup(c.id, e.target.value)}
+                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3 className="mt-5 text-sm font-semibold text-slate-900">Markup rate history</h3>
+          <div className="table-scroll mt-2 rounded-2xl border border-border">
+            <table className="min-w-[640px] w-full text-left text-sm">
+              <thead className="bg-muted text-xs uppercase tracking-wide text-foreground">
+                <tr>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2 text-right">Previous %</th>
+                  <th className="px-3 py-2 text-right">New %</th>
+                  <th className="px-3 py-2">Changed at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {markupHistory.slice(0, 30).map((h) => {
+                  const cat = sorted.find((c) => c.id === h.categoryId);
+                  return (
+                    <tr key={h.id} className="border-t border-border bg-card">
+                      <td className="px-3 py-2.5 font-medium text-slate-800">
+                        {cat ? `${cat.nameEn} (${cat.nameBn})` : h.categoryId}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-slate-600">{h.previousPercent}%</td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-slate-900">{h.nextPercent}%</td>
+                      <td className="px-3 py-2.5 text-slate-600">
+                        {new Date(h.changedAtIso).toLocaleString()}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {markupHistory.length === 0 ? (
+                  <tr className="border-t border-border bg-card">
+                    <td colSpan={4} className="px-3 py-8 text-center text-sm text-slate-500">
+                      No markup history yet.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
       ) : null}
 
       {showCategories ? (
