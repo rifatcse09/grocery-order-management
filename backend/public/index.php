@@ -25,12 +25,21 @@ set_error_handler(static function (int $severity, string $message, string $file,
 
 set_exception_handler(static function (Throwable $e): void {
     $payload = ['message' => 'Internal server error.'];
-    if (app_debug()) {
-        $payload['error'] = $e->getMessage();
-        $payload['file'] = $e->getFile();
-        $payload['line'] = $e->getLine();
+    try {
+        if (app_debug()) {
+            $payload['error'] = $e->getMessage();
+            $payload['file'] = $e->getFile();
+            $payload['line'] = $e->getLine();
+        }
+        json_response(500, $payload);
+    } catch (Throwable) {
+        if (! headers_sent()) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode($payload, JSON_UNESCAPED_UNICODE);
+        exit;
     }
-    json_response(500, $payload);
 });
 
 $method = $_SERVER['REQUEST_METHOD'];

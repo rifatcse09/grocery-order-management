@@ -20,7 +20,11 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
             <p className="text-xs text-slate-700 sm:text-sm">হটলাইন: +৮৮০১৫৭১ ২২৭৫৮৮</p>
           </div>
           <div className="ml-auto -mt-1 self-start text-right sm:-mt-2">
-            <img src="/hmc-logo.png" alt="হোসেন মিট অ্যান্ড কো. লোগো" className="ml-auto h-24 w-auto object-contain sm:h-28" />
+            <img
+              src={`${import.meta.env.BASE_URL}hmc-logo.png`}
+              alt="হোসেন মিট অ্যান্ড কো. লোগো"
+              className="ml-auto h-24 w-auto object-contain sm:h-28"
+            />
             <h3 className="mt-1 text-xl font-extrabold text-slate-900 sm:text-2xl">ডেলিভারি চালান</h3>
             <p className="mt-0.5 font-mono text-base font-bold text-blue-700 sm:text-lg">#{order.orderNo}</p>
           </div>

@@ -45,16 +45,20 @@ final class LegacyPdo
             \App\Support\LegacyEnv::get('DB_PORT', '3306'),
             \App\Support\LegacyEnv::get('DB_DATABASE', 'gom'),
         );
-        self::$pdo = new PDO(
-            $dsn,
-            \App\Support\LegacyEnv::get('DB_USERNAME', 'gom'),
-            \App\Support\LegacyEnv::get('DB_PASSWORD', ''),
-            [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        $user = \App\Support\LegacyEnv::get('DB_USERNAME', 'gom');
+        $pass = \App\Support\LegacyEnv::get('DB_PASSWORD', '');
+        $baseOpts = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ];
+        try {
+            self::$pdo = new PDO($dsn, $user, $pass, $baseOpts + [
                 PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci',
-            ],
-        );
+            ]);
+        } catch (\PDOException) {
+            // Some shared hosts reject init command or collation; connect without it.
+            self::$pdo = new PDO($dsn, $user, $pass, $baseOpts);
+        }
 
         return self::$pdo;
     }

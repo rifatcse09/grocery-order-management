@@ -131,7 +131,11 @@ export function BanglaInvoiceTemplate({
             <p className="text-xs text-slate-700 sm:text-sm">হটলাইন: {hotline}</p>
           </div>
           <div className="ml-auto -mt-1 self-start text-right sm:-mt-2">
-            <img src="/hmc-logo.png" alt={companyName} className="ml-auto h-24 w-auto object-contain sm:h-28" />
+            <img
+              src={`${import.meta.env.BASE_URL}hmc-logo.png`}
+              alt={companyName}
+              className="ml-auto h-24 w-auto object-contain sm:h-28"
+            />
             <h2 className="mt-1 whitespace-nowrap text-lg font-extrabold tracking-[0.01em] text-slate-900 sm:text-xl">
               {invoiceHeading}
             </h2>
