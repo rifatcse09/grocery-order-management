@@ -4,9 +4,9 @@ import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
 import { BdTakaIcon } from "../components/icons/BdTakaIcon";
+import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
 
 type Range = "all" | "7d" | "30d" | "90d";
-const PAYMENTS_KEY = "gom_statement_payments";
 
 export function AdminOutstandingBillsPage() {
   const { orders } = useOrders();
@@ -14,6 +14,16 @@ export function AdminOutstandingBillsPage() {
   const [customer, setCustomer] = useState("all");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
+  const [transactions, setTransactions] = useState<{ payments: PaymentTxn[]; adjustments: AdjustmentTxn[] }>({
+    payments: [],
+    adjustments: [],
+  });
+
+  useEffect(() => {
+    void Promise.all([apiListPayments(), apiListAdjustments()])
+      .then(([payments, adjustments]) => setTransactions({ payments, adjustments }))
+      .catch(() => setTransactions({ payments: [], adjustments: [] }));
+  }, []);
 
   const invoiced = useMemo(
     () => orders.filter((o) => o.status === "invoiced" || o.invoiceGenerated),
@@ -62,22 +72,23 @@ export function AdminOutstandingBillsPage() {
       })
       .sort((a, b) => a.issue.getTime() - b.issue.getTime());
 
-    // FIFO allocation: apply weekly statement payments to oldest invoices first per customer.
     const paymentsByCustomer = new Map<string, number>();
-    try {
-      const raw = localStorage.getItem(PAYMENTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        Object.entries(parsed).forEach(([key, paid]) => {
-          const amount = Number(paid);
-          if (!Number.isFinite(amount) || amount <= 0) return;
-          const customerName = key.split("::")[1] || "Unknown";
-          paymentsByCustomer.set(customerName, (paymentsByCustomer.get(customerName) ?? 0) + amount);
-        });
-      }
-    } catch {
-      /* ignore parse errors */
-    }
+    transactions.payments
+      .filter((txn) => (txn.invoice_type ?? "billing") === "billing")
+      .forEach((txn) => {
+        const customerName = txn.contact_person?.trim() || "Unknown";
+        const amount = Number(txn.amount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        paymentsByCustomer.set(customerName, (paymentsByCustomer.get(customerName) ?? 0) + amount);
+      });
+    transactions.adjustments
+      .filter((txn) => txn.type === "billing")
+      .forEach((txn) => {
+        const customerName = txn.contact_person?.trim() || "Unknown";
+        const amount = Number(txn.amount || 0);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        paymentsByCustomer.set(customerName, Math.max(0, (paymentsByCustomer.get(customerName) ?? 0) - amount));
+      });
 
     const byCustomer = new Map<string, typeof invoiceRows>();
     invoiceRows.forEach((r) => {
@@ -100,7 +111,7 @@ export function AdminOutstandingBillsPage() {
     return invoiceRows
       .filter((r) => r.remaining > 0)
       .sort((a, b) => b.issue.getTime() - a.issue.getTime());
-  }, [invoiced, range, customer]);
+  }, [invoiced, range, customer, transactions]);
 
   const totalUnpaid = rows.reduce((s, r) => s + r.remaining, 0);
   const pendingCount = rows.length;

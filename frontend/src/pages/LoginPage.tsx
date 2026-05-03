@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { BrandLogo } from "../components/BrandLogo";
 import { useAuth } from "../context/AuthContext";
 import type { Role } from "../types";
@@ -45,9 +46,10 @@ export function LoginPage() {
   const [billingAddress, setBillingAddress] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
-  const go = () => {
-    const res = login(email, password, role);
+  const go = async () => {
+    const res = await login(email, password, role);
     if (!res.ok) {
       setError(res.message ?? "Sign in failed.");
       return;
@@ -57,8 +59,8 @@ export function LoginPage() {
     else navigate("/admin", { replace: true });
   };
 
-  const goSignup = () => {
-    const res = register({
+  const goSignup = async () => {
+    const res = await register({
       name,
       phone,
       email,
@@ -186,13 +188,24 @@ export function LoginPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="auth-password">Password</Label>
-                <Input
-                  id="auth-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                />
+                <div className="relative">
+                  <Input
+                    id="auth-password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               {mode === "signup" ? (
                 <>

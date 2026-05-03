@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -33,6 +33,7 @@ import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import type { OrderStatus } from "../types";
+import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
 
 const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#0f766e", "#64748B"];
 
@@ -46,6 +47,16 @@ export function AdminDashboardPage() {
   const [customerFilter, setCustomerFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
+  const [transactions, setTransactions] = useState<{ payments: PaymentTxn[]; adjustments: AdjustmentTxn[] }>({
+    payments: [],
+    adjustments: [],
+  });
+
+  useEffect(() => {
+    void Promise.all([apiListPayments(), apiListAdjustments()])
+      .then(([payments, adjustments]) => setTransactions({ payments, adjustments }))
+      .catch(() => setTransactions({ payments: [], adjustments: [] }));
+  }, []);
 
   const filterMeta = useMemo(() => {
     const customers = [...new Set(orders.map((o) => o.contactPerson).filter(Boolean))].sort();
@@ -113,14 +124,19 @@ export function AdminDashboardPage() {
     return { byStatus, totalSales, invoiced, avg, completionRate, avgProcessing, delayed };
   }, [filteredOrders]);
 
-  const categorySales = [
-    { name: "Fresh produce", amount: 185000 },
-    { name: "Dry store", amount: 240000 },
-    { name: "Egg / meat / fish", amount: 310000 },
-    { name: "Pantry", amount: 420000 },
-    { name: "Spices", amount: 98000 },
-    { name: "Household", amount: 54000 },
-  ];
+  const categorySales = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredOrders.forEach((order) => {
+      order.lines.forEach((line) => {
+        const name = line.categoryId || "Uncategorized";
+        map.set(name, (map.get(name) ?? 0) + Number(line.lineTotal ?? 0));
+      });
+    });
+    return [...map.entries()]
+      .map(([name, amount]) => ({ name, amount: Math.round(amount) }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 8);
+  }, [filteredOrders]);
 
   const pieData = categorySales.map((c) => ({ name: c.name, value: c.amount }));
   const totalCat = pieData.reduce((s, p) => s + p.value, 0);
@@ -213,32 +229,48 @@ export function AdminDashboardPage() {
   const isModeratorView = user?.role === "moderator";
 
   const paymentSummary = useMemo(() => {
-    const PAYMENTS_KEY = "gom_statement_payments";
-    const customerSet = new Set(filteredOrders.map((o) => o.contactPerson).filter(Boolean));
-    const billedTotal = filteredOrders
-      .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
-      .reduce((s, o) => s + (o.grandTotal ?? 0), 0);
-    let settledTotal = 0;
-    try {
-      const raw = localStorage.getItem(PAYMENTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        Object.entries(parsed).forEach(([key, paid]) => {
-          const amount = Number(paid);
-          if (!Number.isFinite(amount) || amount <= 0) return;
-          const customerName = key.split("::")[1] || "";
-          if (!customerSet.has(customerName)) return;
-          settledTotal += amount;
-        });
-      }
-    } catch {
-      // ignore malformed local storage values
-    }
-    const settledBounded = Math.min(billedTotal, settledTotal);
+    const isModerator = user?.role === "moderator";
+    const billedTotal = isModerator
+      ? filteredOrders
+          .filter((o) => o.purchaseInvoiceGenerated && (o.purchaseInvoiceGeneratedBy ?? "admin") === "moderator")
+          .reduce((s, o) => s + Number(o.purchaseSubtotal ?? 0), 0)
+      : filteredOrders
+          .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
+          .reduce((s, o) => s + Number(o.grandTotal ?? 0), 0);
+    const paid = transactions.payments
+      .filter((txn) => ((txn.invoice_type ?? "billing") === "purchase") === isModerator)
+      .reduce((s, txn) => s + Number(txn.amount || 0), 0);
+    const adjusted = transactions.adjustments
+      .filter((txn) => (txn.type === "purchase") === isModerator)
+      .reduce((s, txn) => s + Number(txn.amount || 0), 0);
+    const settledTotal = Math.max(0, paid - adjusted);
     return {
-      settledTotal: settledBounded,
-      pendingTotal: Math.max(0, billedTotal - settledBounded),
+      settledTotal: Math.min(billedTotal, settledTotal),
+      pendingTotal: Math.max(0, billedTotal - settledTotal),
     };
+  }, [filteredOrders, transactions, user?.role]);
+
+  const rollingSales = useMemo(() => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - 6);
+    const monthStart = new Date(now);
+    monthStart.setDate(now.getDate() - 29);
+    let today = 0;
+    let weekly = 0;
+    let monthly = 0;
+    filteredOrders
+      .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
+      .forEach((o) => {
+        const d = parseIso(o.orderDate);
+        if (!d) return;
+        const amount = Number(o.grandTotal ?? 0);
+        if (formatIso(d) === formatIso(now)) today += amount;
+        if (d.getTime() >= weekStart.getTime()) weekly += amount;
+        if (d.getTime() >= monthStart.getTime()) monthly += amount;
+      });
+    return { today, weekly, monthly };
   }, [filteredOrders]);
 
   const totalPurchase = useMemo(() => {
@@ -399,7 +431,7 @@ export function AdminDashboardPage() {
           value={
             isModeratorView
               ? `৳ ${Math.round(totalPurchase).toLocaleString("en-US")}`
-              : "৳ 85,000"
+              : `৳ ${Math.round(rollingSales.today).toLocaleString("en-US")}`
           }
           icon={BdTakaIcon}
           tone="coral"
@@ -410,7 +442,7 @@ export function AdminDashboardPage() {
           value={
             isModeratorView
               ? `৳ ${Math.round(paymentSummary.pendingTotal).toLocaleString("en-US")}`
-              : "৳ 420,000"
+              : `৳ ${Math.round(rollingSales.weekly).toLocaleString("en-US")}`
           }
           icon={CalendarDays}
           tone="teal"
@@ -421,7 +453,7 @@ export function AdminDashboardPage() {
           value={
             isModeratorView
               ? `৳ ${Math.round(paymentSummary.settledTotal).toLocaleString("en-US")}`
-              : "৳ 1,800,000"
+              : `৳ ${Math.round(rollingSales.monthly).toLocaleString("en-US")}`
           }
           icon={BarChart3}
           tone="navy"
@@ -764,6 +796,13 @@ function InsightList({
 function parseIso(iso: string): Date | null {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function startOfWeek(date: Date): Date {

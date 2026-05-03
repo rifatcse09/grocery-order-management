@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
+import { apiEnabled, apiListCatalogCategories, apiListCatalogItems } from "../lib/api";
 import {
   appendCategoryMarkupHistory,
   loadCategoryMarkupHistory,
@@ -17,7 +18,7 @@ type CatalogView = "all" | "categories" | "products";
 export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const { user } = useAuth();
   const { orders } = useOrders();
-  const { categories, addCategory, addCustomItem, updateCategory, deleteCategory, updateItem, deleteItem } = useCatalog();
+  const { categories, loadCatalog, addCategory, addCustomItem, updateCategory, deleteCategory, updateItem, deleteItem } = useCatalog();
   const [newCatBn, setNewCatBn] = useState("");
   const [newCatEn, setNewCatEn] = useState("");
   const [itemCat, setItemCat] = useState("");
@@ -31,14 +32,38 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const [catQuery, setCatQuery] = useState("");
   const [catPage, setCatPage] = useState(1);
   const [catPerPage, setCatPerPage] = useState(10);
+  const [apiCategories, setApiCategories] = useState<
+    Array<{
+      id: string;
+      nameBn: string;
+      nameEn: string;
+      itemsCount: number;
+    }>
+  >([]);
+  const [apiCategoriesTotal, setApiCategoriesTotal] = useState(0);
   const [itemQuery, setItemQuery] = useState("");
   const [itemPage, setItemPage] = useState(1);
   const [itemPerPage, setItemPerPage] = useState(10);
+  const [apiItems, setApiItems] = useState<
+    Array<{
+      id: string;
+      categoryId: string;
+      nameBn: string;
+      nameEn: string;
+      categoryNameBn: string;
+      categoryNameEn: string;
+    }>
+  >([]);
+  const [apiItemsTotal, setApiItemsTotal] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<
     { type: "category"; id: string; name: string } | { type: "item"; id: string; name: string } | null
   >(null);
   const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>(loadCategoryMarkupSettings);
   const [markupHistory, setMarkupHistory] = useState(loadCategoryMarkupHistory);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   const sorted = useMemo(
     () => [...categories].sort((a, b) => `${a.nameEn}${a.nameBn}`.localeCompare(`${b.nameEn}${b.nameBn}`)),
@@ -46,8 +71,13 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   );
   const role = user?.role ?? "user";
   const canAddCategory = role === "admin" || role === "moderator";
-  const canAddItem = role === "admin";
-  const canEditDelete = role === "admin";
+  const canAddItem = role === "admin" || role === "moderator";
+  const canEditCategory = role === "admin";
+  const canDeleteCategory = role === "admin";
+  const canEditItem = role === "admin" || role === "moderator";
+  const canDeleteItem = role === "admin";
+  const canManageCategoryActions = canEditCategory || canDeleteCategory;
+  const canManageItemActions = canEditItem || canDeleteItem;
   const canViewProducts = canAddItem || role === "user";
   const showCategories = view === "all" || view === "categories";
   const showProducts = (view === "all" || view === "products") && canViewProducts;
@@ -94,6 +124,8 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
 
   const safeCatPage = Math.min(catPage, Math.max(1, Math.ceil(filteredCategories.length / catPerPage)));
   const pagedCategories = filteredCategories.slice((safeCatPage - 1) * catPerPage, safeCatPage * catPerPage);
+  const useServerCategories = apiEnabled();
+  const safeServerCatPage = Math.min(catPage, Math.max(1, Math.ceil(apiCategoriesTotal / catPerPage)));
 
   const filteredItems = useMemo(() => {
     const q = itemQuery.trim().toLowerCase();
@@ -110,9 +142,45 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
 
   const safeItemPage = Math.min(itemPage, Math.max(1, Math.ceil(filteredItems.length / itemPerPage)));
   const pagedItems = filteredItems.slice((safeItemPage - 1) * itemPerPage, safeItemPage * itemPerPage);
+  const useServerItems = apiEnabled();
+  const safeServerItemPage = Math.min(itemPage, Math.max(1, Math.ceil(apiItemsTotal / itemPerPage)));
 
-  const saveCategory = () => {
-    const created = addCategory(newCatBn, newCatEn);
+  useEffect(() => {
+    if (!showCategories || !useServerCategories) return;
+    void apiListCatalogCategories({
+      query: catQuery,
+      page: catPage,
+      perPage: catPerPage,
+    })
+      .then((res) => {
+        setApiCategories(res.data);
+        setApiCategoriesTotal(res.meta.total);
+      })
+      .catch(() => {
+        setApiCategories([]);
+        setApiCategoriesTotal(0);
+      });
+  }, [showCategories, useServerCategories, catQuery, catPage, catPerPage, categories]);
+
+  useEffect(() => {
+    if (!showProducts || !useServerItems) return;
+    void apiListCatalogItems({
+      query: itemQuery,
+      page: itemPage,
+      perPage: itemPerPage,
+    })
+      .then((res) => {
+        setApiItems(res.data);
+        setApiItemsTotal(res.meta.total);
+      })
+      .catch(() => {
+        setApiItems([]);
+        setApiItemsTotal(0);
+      });
+  }, [showProducts, useServerItems, itemQuery, itemPage, itemPerPage, categories]);
+
+  const saveCategory = async () => {
+    const created = await addCategory(newCatBn, newCatEn);
     if (!created) {
       setMessage("Enter both Bangla and English names for category.");
       return;
@@ -123,9 +191,9 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     setMessage(`Category added: ${created.nameEn}`);
   };
 
-  const saveItem = () => {
+  const saveItem = async () => {
     const target = itemCat || sorted[0]?.id || "";
-    const created = addCustomItem(target, itemBn, itemEn);
+    const created = await addCustomItem(target, itemBn, itemEn);
     if (!created) {
       setMessage("Select category and enter both Bangla and English names for item.");
       return;
@@ -145,15 +213,15 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     setEditBn(bn);
     setEditEn(en);
   };
-  const saveEditCategory = (id: string) => {
-    const ok = updateCategory(id, editBn, editEn);
+  const saveEditCategory = async (id: string) => {
+    const ok = await updateCategory(id, editBn, editEn);
     setMessage(ok ? "Category updated." : "Category update failed.");
     setEditingCatId(null);
     setEditBn("");
     setEditEn("");
   };
-  const saveEditItem = (id: string) => {
-    const ok = updateItem(id, editBn, editEn);
+  const saveEditItem = async (id: string) => {
+    const ok = await updateItem(id, editBn, editEn);
     setMessage(ok ? "Item updated." : "Item update failed.");
     setEditingItemId(null);
     setEditBn("");
@@ -231,7 +299,9 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
           </div>
           <button
             type="button"
-            onClick={saveCategory}
+            onClick={() => {
+              void saveCategory();
+            }}
             className="mt-3 rounded-xl bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600"
           >
             Save category
@@ -270,7 +340,9 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
           </div>
           <button
             type="button"
-            onClick={saveItem}
+            onClick={() => {
+              void saveItem();
+            }}
             className="mt-3 rounded-xl bg-slate-700 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-600"
           >
             Save product
@@ -371,7 +443,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
           />
           <div className="text-xs text-slate-500 flex items-center">
-            Showing {filteredCategories.length} categories
+            Showing {useServerCategories ? apiCategoriesTotal : filteredCategories.length} categories
           </div>
         </div>
         <div className="table-scroll mt-3 rounded-2xl border border-border">
@@ -382,11 +454,11 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                 <th className="px-3 py-2">Category (Bangla)</th>
                 <th className="px-3 py-2">Items count</th>
                 <th className="px-3 py-2">Used in orders</th>
-                {canEditDelete ? <th className="px-3 py-2 text-right">Actions</th> : null}
+                {canManageCategoryActions ? <th className="px-3 py-2 text-right">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
-              {pagedCategories.map((c) => (
+              {(useServerCategories ? apiCategories : pagedCategories).map((c) => (
                 <tr key={c.id} className="border-t border-border bg-card">
                   <td className="px-3 py-2.5 font-semibold text-slate-900">
                     {editingCatId === c.id ? (
@@ -410,16 +482,18 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                       c.nameBn
                     )}
                   </td>
-                  <td className="px-3 py-2.5">{c.items.length}</td>
+                  <td className="px-3 py-2.5">{useServerCategories ? c.itemsCount : c.items.length}</td>
                   <td className="px-3 py-2.5">{usedCategoryIds.has(c.id) ? "Yes" : "No"}</td>
-                  {canEditDelete ? (
+                  {canManageCategoryActions ? (
                     <td className="px-3 py-2.5 text-right">
                       <div className="inline-flex gap-1">
-                        {editingCatId === c.id ? (
+                        {editingCatId === c.id && canEditCategory ? (
                           <>
                             <button
                               type="button"
-                              onClick={() => saveEditCategory(c.id)}
+                              onClick={() => {
+                                void saveEditCategory(c.id);
+                              }}
                               className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                             >
                               Save
@@ -434,22 +508,28 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                           </>
                         ) : (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => startEditCategory(c.id, c.nameBn, c.nameEn)}
-                              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
-                              title="Edit category"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeCategory(c.id, c.items.length)}
-                              className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
-                              title="Delete category"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            {canEditCategory ? (
+                              <button
+                                type="button"
+                                onClick={() => startEditCategory(c.id, c.nameBn, c.nameEn)}
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
+                                title="Edit category"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
+                            {canDeleteCategory ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeCategory(c.id, useServerCategories ? c.itemsCount : c.items.length)
+                                }
+                                className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+                                title="Delete category"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            ) : null}
                           </>
                         )}
                       </div>
@@ -457,10 +537,10 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                   ) : null}
                 </tr>
               ))}
-              {pagedCategories.length === 0 ? (
+              {(useServerCategories ? apiCategories.length : pagedCategories.length) === 0 ? (
                 <tr className="border-t border-border bg-card">
                   <td
-                    colSpan={canEditDelete ? 5 : 4}
+                    colSpan={canManageCategoryActions ? 5 : 4}
                     className="px-3 py-8 text-center text-sm text-slate-500"
                   >
                     No categories match your filters.
@@ -470,10 +550,10 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
             </tbody>
           </table>
         </div>
-        {filteredCategories.length > 0 ? (
+        {(useServerCategories ? apiCategoriesTotal : filteredCategories.length) > 0 ? (
           <PaginationControls
-            totalItems={filteredCategories.length}
-            page={safeCatPage}
+            totalItems={useServerCategories ? apiCategoriesTotal : filteredCategories.length}
+            page={useServerCategories ? safeServerCatPage : safeCatPage}
             perPage={catPerPage}
             onPageChange={setCatPage}
             onPerPageChange={(size) => {
@@ -499,7 +579,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
               className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
             />
             <div className="text-xs text-slate-500 flex items-center">
-              Showing {filteredItems.length} products
+              Showing {useServerItems ? apiItemsTotal : filteredItems.length} products
             </div>
           </div>
           <div className="table-scroll mt-3 rounded-2xl border border-border">
@@ -510,11 +590,11 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                   <th className="px-3 py-2">Product (Bangla)</th>
                   <th className="px-3 py-2">Category</th>
                   <th className="px-3 py-2">Used in orders</th>
-                  {canEditDelete ? <th className="px-3 py-2 text-right">Actions</th> : null}
+                  {canManageItemActions ? <th className="px-3 py-2 text-right">Actions</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {pagedItems.map((i) => (
+                {(useServerItems ? apiItems : pagedItems).map((i) => (
                   <tr key={i.id} className="border-t border-border bg-card">
                     <td className="px-3 py-2.5 font-medium text-slate-900">
                       {editingItemId === i.id ? (
@@ -542,14 +622,16 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                       {i.categoryNameEn} ({i.categoryNameBn})
                     </td>
                     <td className="px-3 py-2.5">{usedItemIds.has(i.id) ? "Yes" : "No"}</td>
-                    {canEditDelete ? (
+                    {canManageItemActions ? (
                       <td className="px-3 py-2.5 text-right">
                         <div className="inline-flex gap-1">
-                          {editingItemId === i.id ? (
+                          {editingItemId === i.id && canEditItem ? (
                             <>
                               <button
                                 type="button"
-                                onClick={() => saveEditItem(i.id)}
+                                onClick={() => {
+                                  void saveEditItem(i.id);
+                                }}
                                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                               >
                                 Save
@@ -564,22 +646,26 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                             </>
                           ) : (
                             <>
-                              <button
-                                type="button"
-                                onClick={() => startEditItem(i.id, i.nameBn, i.nameEn)}
-                                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
-                                title="Edit item"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeItem(i.id)}
-                                className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
-                                title="Delete item"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              {canEditItem ? (
+                                <button
+                                  type="button"
+                                  onClick={() => startEditItem(i.id, i.nameBn, i.nameEn)}
+                                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
+                                  title="Edit item"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                              {canDeleteItem ? (
+                                <button
+                                  type="button"
+                                  onClick={() => removeItem(i.id)}
+                                  className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+                                  title="Delete item"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
                             </>
                           )}
                         </div>
@@ -587,10 +673,10 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                     ) : null}
                   </tr>
                 ))}
-                {pagedItems.length === 0 ? (
+                {(useServerItems ? apiItems.length : pagedItems.length) === 0 ? (
                   <tr className="border-t border-border bg-card">
                     <td
-                      colSpan={canEditDelete ? 5 : 4}
+                      colSpan={canManageItemActions ? 5 : 4}
                       className="px-3 py-8 text-center text-sm text-slate-500"
                     >
                       No products match your filters.
@@ -600,10 +686,10 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
               </tbody>
             </table>
           </div>
-          {filteredItems.length > 0 ? (
+          {(useServerItems ? apiItemsTotal : filteredItems.length) > 0 ? (
             <PaginationControls
-              totalItems={filteredItems.length}
-              page={safeItemPage}
+              totalItems={useServerItems ? apiItemsTotal : filteredItems.length}
+              page={useServerItems ? safeServerItemPage : safeItemPage}
               perPage={itemPerPage}
               onPageChange={setItemPage}
               onPerPageChange={(size) => {
@@ -624,12 +710,12 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
             : ""
         }
         onCancel={() => setPendingDelete(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!pendingDelete) return;
           const ok =
             pendingDelete.type === "category"
-              ? deleteCategory(pendingDelete.id)
-              : deleteItem(pendingDelete.id);
+              ? await deleteCategory(pendingDelete.id)
+              : await deleteItem(pendingDelete.id);
           setMessage(
             ok
               ? pendingDelete.type === "category"

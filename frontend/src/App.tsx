@@ -16,12 +16,14 @@ import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AdminModeratorsPage } from "./pages/AdminModeratorsPage";
 import { AdminCreateAccountPage } from "./pages/AdminCreateAccountPage";
 import { AdminOutstandingBillsPage } from "./pages/AdminOutstandingBillsPage";
+import { AdminPurchasePendingBillsPage } from "./pages/AdminPurchasePendingBillsPage";
 import { AdminBillingStatementsPage } from "./pages/AdminBillingStatementsPage";
 import { AdminFinancialLedgerPage } from "./pages/AdminFinancialLedgerPage";
 import { AdminOrdersPage } from "./pages/AdminOrdersPage";
 import { AdminOrderDetailPage } from "./pages/AdminOrderDetailPage";
 import { AdminCatalogPage } from "./pages/AdminCatalogPage";
 import { PurchaseBillingStatementsPage } from "./pages/PurchaseBillingStatementsPage";
+import { PurchaseInvoiceDetailPage } from "./pages/PurchaseInvoiceDetailPage";
 
 function RequireAuth() {
   const { user } = useAuth();
@@ -57,15 +59,15 @@ export default function App() {
           </Route>
           <Route element={<RequireRole allow={["moderator", "admin"]} />}>
             <Route path="/moderator/orders" element={<ModeratorOrdersPage />} />
-            <Route path="/moderator/purchase-invoices" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/purchase-invoices/:id" element={<PurchaseInvoiceDetailPage />} />
+            <Route path="/moderator/challans/:id" element={<UserChallanDetailPage />} />
             <Route path="/moderator/purchase-pending-bills" element={<ModeratorOrdersPage />} />
-            <Route path="/moderator/billing-invoices" element={<ModeratorOrdersPage />} />
             <Route path="/moderator/purchase-statements" element={<PurchaseBillingStatementsPage />} />
             <Route path="/moderator/orders/:id" element={<ModeratorOrderDetailPage />} />
             <Route path="/moderator/dashboard" element={<AdminDashboardPage />} />
             <Route path="/moderator/catalog" element={<Navigate to="/moderator/catalog/categories" replace />} />
             <Route path="/moderator/catalog/categories" element={<AdminCatalogPage view="categories" />} />
-            <Route path="/moderator/ledger" element={<AdminFinancialLedgerPage />} />
+            <Route path="/moderator/catalog/products" element={<AdminCatalogPage view="products" />} />
           </Route>
           <Route element={<RequireRole allow={["admin"]} />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
@@ -75,9 +77,12 @@ export default function App() {
             <Route path="/admin/orders/new" element={<AdminOrderDetailPage />} />
             <Route path="/admin/orders" element={<AdminOrdersPage />} />
             <Route path="/admin/purchase-invoices" element={<AdminOrdersPage />} />
-            <Route path="/admin/purchase-pending-bills" element={<AdminOrdersPage />} />
+            <Route path="/admin/purchase-invoices/:id" element={<PurchaseInvoiceDetailPage />} />
+            <Route path="/admin/challans/:id" element={<UserChallanDetailPage />} />
+            <Route path="/admin/purchase-pending-bills" element={<AdminPurchasePendingBillsPage />} />
             <Route path="/admin/purchase-statements" element={<PurchaseBillingStatementsPage />} />
             <Route path="/admin/billing-invoices" element={<AdminOrdersPage />} />
+            <Route path="/admin/billing-invoices/:id" element={<UserInvoiceDetailPage />} />
             <Route path="/admin/orders/:id" element={<AdminOrderDetailPage />} />
             <Route path="/admin/statements" element={<AdminBillingStatementsPage />} />
             <Route path="/admin/outstanding" element={<AdminOutstandingBillsPage />} />

@@ -8,14 +8,27 @@ import {
   type ReactNode,
 } from "react";
 import type { Role, SessionUser } from "../types";
+import {
+  apiCreateUser,
+  apiEnabled,
+  apiListUsers,
+  apiLogin,
+  apiRegister,
+  apiUpdateProfile,
+} from "../lib/api";
 
 interface AuthState {
   user: SessionUser | null;
-  login: (email: string, password: string, role: Role) => { ok: boolean; message?: string };
-  register: (payload: RegisterPayload) => { ok: boolean; message?: string };
-  createAccountByAdmin: (payload: AdminCreatePayload) => { ok: boolean; message?: string };
+  login: (email: string, password: string, role: Role) => Promise<{ ok: boolean; message?: string }>;
+  register: (payload: RegisterPayload) => Promise<{ ok: boolean; message?: string }>;
+  createAccountByAdmin: (payload: AdminCreatePayload) => Promise<{ ok: boolean; message?: string }>;
   listAccounts: () => SessionUser[];
-  updateProfile: (patch: { name: string; phone: string }) => { ok: boolean; message?: string };
+  updateProfile: (patch: {
+    name: string;
+    phone: string;
+    billingAddress: string;
+    deliveryAddress: string;
+  }) => Promise<{ ok: boolean; message?: string }>;
   updatePassword: (currentPassword: string, nextPassword: string) => { ok: boolean; message?: string };
   logout: () => void;
 }
@@ -23,6 +36,7 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 const SESSION_KEY = "gom_session";
 const ACCOUNTS_KEY = "gom_accounts";
+const TOKEN_KEY = "gom_token";
 
 interface Account extends SessionUser {
   password: string;
@@ -140,8 +154,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
   }, [accounts]);
 
+  useEffect(() => {
+    if (!apiEnabled() || !user || user.role !== "admin") return;
+    void apiListUsers()
+      .then((rows) => {
+        setAccounts(
+          rows.map((a) => ({
+            ...a,
+            password: "",
+          })),
+        );
+      })
+      .catch(() => {
+        // Keep local snapshot if API listing fails.
+      });
+  }, [user]);
+
   const login = useCallback(
-    (email: string, password: string, role: Role) => {
+    async (email: string, password: string, role: Role) => {
+      if (apiEnabled()) {
+        try {
+          const res = await apiLogin({ email, password, role });
+          setUser(res.user);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
+          localStorage.setItem(TOKEN_KEY, res.token);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "Sign in failed." };
+        }
+      }
       const emailNorm = email.trim().toLowerCase();
       const fallbackEmail = demoProfiles[role].email.toLowerCase();
       const targetEmail = emailNorm || fallbackEmail;
@@ -172,7 +213,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    (payload: RegisterPayload) => {
+    async (payload: RegisterPayload) => {
+      if (apiEnabled()) {
+        try {
+          const res = await apiRegister(payload);
+          setUser(res.user);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
+          localStorage.setItem(TOKEN_KEY, res.token);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "Sign up failed." };
+        }
+      }
       const emailNorm = payload.email.trim().toLowerCase();
       if (!emailNorm || !payload.password.trim()) {
         return { ok: false, message: "Email and password are required." };
@@ -200,7 +252,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const createAccountByAdmin = useCallback(
-    (payload: AdminCreatePayload) => {
+    async (payload: AdminCreatePayload) => {
+      if (apiEnabled()) {
+        try {
+          const created = await apiCreateUser(payload);
+          setAccounts((prev) => [{ ...created, password: "" }, ...prev.filter((p) => p.id !== created.id)]);
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof Error ? error.message : "Failed to create account.",
+          };
+        }
+      }
       if (!user || user.role !== "admin") {
         return { ok: false, message: "Only admin can create accounts." };
       }
@@ -230,15 +294,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const listAccounts = useCallback(() => accounts.map((a) => toSession(a)), [accounts]);
 
   const updateProfile = useCallback(
-    (patch: { name: string; phone: string }) => {
+    async (patch: {
+      name: string;
+      phone: string;
+      billingAddress: string;
+      deliveryAddress: string;
+    }) => {
       if (!user) return { ok: false, message: "No active session." };
       const name = patch.name.trim();
       const phone = patch.phone.trim();
+      const billingAddress = patch.billingAddress.trim();
+      const deliveryAddress = patch.deliveryAddress.trim();
       if (!name) return { ok: false, message: "Name is required." };
+
+      if (apiEnabled()) {
+        try {
+          const updated = await apiUpdateProfile({
+            name,
+            phone,
+            billingAddress,
+            deliveryAddress,
+          });
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === user.id ? { ...a, ...updated } : a)),
+          );
+          setUser(updated);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof Error ? error.message : "Profile update failed.",
+          };
+        }
+      }
+
       setAccounts((prev) =>
-        prev.map((a) => (a.id === user.id ? { ...a, name, phone } : a)),
+        prev.map((a) =>
+          a.id === user.id
+            ? { ...a, name, phone, billingAddress, deliveryAddress }
+            : a,
+        ),
       );
-      const next = { ...user, name, phone };
+      const next = { ...user, name, phone, billingAddress, deliveryAddress };
       setUser(next);
       localStorage.setItem(SESSION_KEY, JSON.stringify(next));
       return { ok: true };
@@ -270,6 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setUser(null);
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   }, []);
 
   const value = useMemo(

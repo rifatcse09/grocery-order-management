@@ -1,14 +1,19 @@
-import { Link, useParams } from "react-router-dom";
-import { useEffect, useMemo } from "react";
-import { ArrowLeft, FileText, User } from "lucide-react";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { useEffect } from "react";
+import { ArrowLeft, FileText } from "lucide-react";
 import { DeliveryChallanTemplate } from "../components/DeliveryChallanTemplate";
-import { StatusBadge } from "../components/StatusBadge";
 import { useOrders } from "../context/OrdersContext";
 
 export function UserChallanDetailPage() {
   const { id } = useParams();
+  const location = useLocation();
   const { getById } = useOrders();
   const order = id ? getById(id) : undefined;
+  const backTo = location.pathname.startsWith("/admin/")
+    ? "/admin/orders"
+    : location.pathname.startsWith("/moderator/")
+      ? "/moderator/orders"
+      : "/user/orders";
 
   useEffect(() => {
     if (!order) return;
@@ -21,79 +26,30 @@ export function UserChallanDetailPage() {
     };
   }, [order]);
 
-  const lineCount = order?.lines.length ?? 0;
-  const subtotal = useMemo(
-    () => (order ? order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0) : 0),
-    [order],
-  );
-  const printDoc = () => window.print();
-  const saveAsPdf = () => window.print();
-
   if (!order || !order.challanGenerated) {
     return (
       <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Challan is not available for this order yet.</p>
         <Link
-          to="/user/invoices"
+          to={backTo}
           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
-          Billing documents
+          Back
         </Link>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 print:space-y-0">
+    <div className="space-y-4 print:space-y-0">
       <Link
-        to="/user/invoices"
+        to={backTo}
         className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-foreground print:hidden"
       >
         <ArrowLeft className="h-4 w-4" />
-        Billing documents
+        Back
       </Link>
-
-      <div className="rounded-3xl border border-border bg-primary p-6 text-primary-foreground shadow-xl sm:p-8 print:hidden">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground">Delivery challan</p>
-            <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight sm:text-3xl">{order.orderNo}</h1>
-            <p className="mt-2 flex items-center gap-2 text-primary-foreground">
-              <User className="h-4 w-4 shrink-0" />
-              <span className="font-medium text-primary-foreground">{order.contactPerson}</span>
-            </p>
-          </div>
-          <div className="flex flex-col items-end gap-2">
-            <StatusBadge status={order.status} />
-            <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-primary-foreground">
-              <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-900">
-                {lineCount} line{lineCount !== 1 ? "s" : ""}
-              </span>
-              <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3 print:hidden">
-        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Lines</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
-        </div>
-        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {order.grandTotal != null ? `৳ ${Math.round(order.grandTotal).toLocaleString("en-US")}` : "—"}
-          </p>
-        </div>
-      </div>
 
       <section className="space-y-3 print:space-y-0">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-muted px-4 py-3 print:hidden">
@@ -109,14 +65,14 @@ export function UserChallanDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={printDoc}
+              onClick={() => window.print()}
               className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100"
             >
               Print
             </button>
             <button
               type="button"
-              onClick={saveAsPdf}
+              onClick={() => window.print()}
               className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-600"
             >
               Save as PDF

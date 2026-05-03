@@ -1,5 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { CategoryDef, OrderLine } from "../types";
+import { billedAmountsForLine } from "../lib/billingLineAmounts";
+import { computePurchaseLineTotal } from "../lib/invoiceFlow";
 import { COL } from "../lib/uiLabels";
 
 export function OrderLinesEditor({
@@ -9,6 +11,13 @@ export function OrderLinesEditor({
   showPricing = false,
   largeText = false,
   billingMarkupsByCategory,
+  globalBillingMarkupPercent = 0,
+  /** When true, entire editor is read-only (legacy). */
+  linesLocked = false,
+  /** When true, kg / g / pcs cannot change (defaults to same as `linesLocked` if omitted). */
+  quantityLocked: quantityLockedProp,
+  /** When true, cost unit, billing markup columns, delete row locked (defaults to same as `linesLocked` if omitted). */
+  pricingLocked: pricingLockedProp,
 }: {
   lines: OrderLine[];
   onChange: (next: OrderLine[]) => void;
@@ -16,16 +25,36 @@ export function OrderLinesEditor({
   showPricing?: boolean;
   largeText?: boolean;
   billingMarkupsByCategory?: Record<string, number>;
+  /** Used with category map when computing billing columns (matches invoice). */
+  globalBillingMarkupPercent?: number;
+  linesLocked?: boolean;
+  quantityLocked?: boolean;
+  pricingLocked?: boolean;
 }) {
   const catMap = new Map(categories.map((c) => [c.id, c]));
+  const lockAll = Boolean(linesLocked);
+  const quantityLocked = lockAll || Boolean(quantityLockedProp);
+  const pricingLocked = lockAll || Boolean(pricingLockedProp);
 
   const update = (id: string, patch: Partial<OrderLine>) => {
+    if (lockAll) return;
+    if (
+      quantityLocked &&
+      ("kg" in patch || "gram" in patch || "piece" in patch || "instructions" in patch)
+    ) {
+      return;
+    }
+    if (pricingLocked && ("unitPrice" in patch || "lineTotal" in patch)) return;
     onChange(
       lines.map((l) => {
         if (l.id !== id) return l;
         const merged = { ...l, ...patch };
-        if (showPricing && merged.unitPrice != null && merged.unitPrice > 0) {
-          merged.lineTotal = computeLineTotal(merged, merged.unitPrice);
+        if (showPricing) {
+          if (merged.unitPrice != null && merged.unitPrice > 0) {
+            merged.lineTotal = computePurchaseLineTotal(merged, merged.unitPrice);
+          } else {
+            merged.lineTotal = undefined;
+          }
         }
         return merged;
       }),
@@ -33,6 +62,7 @@ export function OrderLinesEditor({
   };
 
   const remove = (id: string) => {
+    if (pricingLocked) return;
     onChange(lines.filter((l) => l.id !== id).map((l, i) => ({ ...l, serial: i + 1 })));
   };
 
@@ -66,12 +96,13 @@ export function OrderLinesEditor({
             <th className="px-3 py-3 normal-case">Instructions</th>
             {showPricing ? (
               <>
-                <th className="px-3 py-3 text-right normal-case">Cost unit</th>
+                <th className="px-3 py-3 text-right normal-case">Cost unit (required)</th>
                 <th className="px-3 py-3 text-right normal-case">{COL.lineTotal}</th>
                 {billingMarkupsByCategory ? (
                   <>
                     <th className="px-3 py-3 text-right normal-case">Markup %</th>
-                    <th className="px-3 py-3 text-right normal-case">Billing unit</th>
+                    <th className="px-3 py-3 text-right normal-case">After markup unit</th>
+                    <th className="px-3 py-3 text-right normal-case">After markup total</th>
                   </>
                 ) : null}
               </>
@@ -82,9 +113,15 @@ export function OrderLinesEditor({
         <tbody>
           {lines.map((line) => {
             const cat = catMap.get(line.categoryId);
-            const markupPct = Number(billingMarkupsByCategory?.[line.categoryId] ?? 0);
-            const billingUnit =
-              line.unitPrice != null ? line.unitPrice + Math.round(line.unitPrice * (markupPct / 100)) : null;
+            const markupPctFromCat = Number(billingMarkupsByCategory?.[line.categoryId] ?? globalBillingMarkupPercent);
+            const { billedUnit: billingUnit, billedLine: billingLineTotal, pct: computedPct } =
+              billingMarkupsByCategory != null
+                ? billedAmountsForLine(line, billingMarkupsByCategory, globalBillingMarkupPercent)
+                : { billedUnit: null as number | null, billedLine: null as number | null, pct: 0 };
+            const markupPct =
+              line.markupPercent != null && Number.isFinite(Number(line.markupPercent))
+                ? Number(line.markupPercent)
+                : markupPctFromCat || computedPct;
             return (
               <tr key={line.id} className={`${showPricing ? "border-t border-border bg-card" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
@@ -108,7 +145,9 @@ export function OrderLinesEditor({
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
+                    readOnly={quantityLocked}
+                    disabled={quantityLocked}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 disabled:cursor-not-allowed disabled:bg-slate-100 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.kg}
                     onChange={(e) => {
                       const kg = e.target.value;
@@ -119,7 +158,9 @@ export function OrderLinesEditor({
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
+                    readOnly={quantityLocked}
+                    disabled={quantityLocked}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 disabled:cursor-not-allowed disabled:bg-slate-100 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.gram}
                     onChange={(e) => {
                       const gram = e.target.value;
@@ -130,7 +171,9 @@ export function OrderLinesEditor({
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
+                    readOnly={quantityLocked}
+                    disabled={quantityLocked}
+                    className={`w-20 rounded-lg border border-slate-200 bg-white px-2 py-1.5 disabled:cursor-not-allowed disabled:bg-slate-100 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.piece}
                     onChange={(e) => {
                       const piece = e.target.value;
@@ -141,7 +184,9 @@ export function OrderLinesEditor({
                 </td>
                 <td className="px-3 py-2">
                   <input
-                    className={`w-52 rounded-lg border border-slate-200 bg-white px-2 py-1.5 ${largeText ? "text-base" : "text-sm"}`}
+                    readOnly={quantityLocked}
+                    disabled={quantityLocked}
+                    className={`w-52 rounded-lg border border-slate-200 bg-white px-2 py-1.5 disabled:cursor-not-allowed disabled:bg-slate-100 ${largeText ? "text-base" : "text-sm"}`}
                     value={line.instructions ?? ""}
                     onChange={(e) => update(line.id, { instructions: e.target.value })}
                     placeholder="Particulars / instructions"
@@ -151,13 +196,23 @@ export function OrderLinesEditor({
                   <>
                     <td className="px-3 py-2 text-right">
                       <input
-                        type="number"
-                        min={0}
-                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm"
-                        value={line.unitPrice ?? ""}
+                        type="text"
+                        inputMode="decimal"
+                        readOnly={pricingLocked}
+                        disabled={pricingLocked}
+                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-700"
+                        value={line.unitPrice == null ? "" : String(line.unitPrice)}
+                        placeholder="0"
                         onChange={(e) => {
-                          const unit = parseFloat(e.target.value) || 0;
-                          const total = computeLineTotal(line, unit);
+                          if (pricingLocked) return;
+                          const raw = e.target.value.trim().replace(",", ".");
+                          if (raw === "" || raw === ".") {
+                            update(line.id, { unitPrice: undefined, lineTotal: undefined });
+                            return;
+                          }
+                          const unit = parseFloat(raw);
+                          if (!Number.isFinite(unit) || unit < 0) return;
+                          const total = computePurchaseLineTotal(line, unit);
                           update(line.id, { unitPrice: unit, lineTotal: total });
                         }}
                       />
@@ -171,6 +226,9 @@ export function OrderLinesEditor({
                         <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
                           {billingUnit != null ? billingUnit.toFixed(0) : "—"}
                         </td>
+                        <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
+                          {billingLineTotal != null ? billingLineTotal.toFixed(0) : "—"}
+                        </td>
                       </>
                     ) : null}
                   </>
@@ -179,7 +237,8 @@ export function OrderLinesEditor({
                   <button
                     type="button"
                     onClick={() => remove(line.id)}
-                    className="rounded-lg p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    disabled={pricingLocked}
+                    className="rounded-lg p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                     title="Remove row"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -194,10 +253,3 @@ export function OrderLinesEditor({
   );
 }
 
-function computeLineTotal(line: OrderLine, unit: number): number {
-  const kg = parseFloat(line.kg) || 0;
-  const g = (parseFloat(line.gram) || 0) / 1000;
-  const pc = parseFloat(line.piece) || 0;
-  if (pc > 0) return Math.round(unit * pc * 100) / 100;
-  return Math.round(unit * (kg + g) * 100) / 100;
-}

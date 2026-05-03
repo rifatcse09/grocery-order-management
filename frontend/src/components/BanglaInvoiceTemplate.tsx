@@ -1,8 +1,12 @@
 import type { Order, OrderLine } from "../types";
+import { billedAmountsForLine } from "../lib/billingLineAmounts";
 import { formatQtyLine } from "../lib/uiLabels";
 
 function money(n: number) {
-  return n.toLocaleString("en-US");
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function toBanglaNum(input: string): string {
@@ -28,6 +32,7 @@ function moneyBn(n: number) {
 /** বাংলা ইনভয়েস — modern card layout inspired by sample UI. */
 export function BanglaInvoiceTemplate({
   order,
+  invoiceType = "billing",
   companyName = "হোসেন মিট অ্যান্ড কো.",
   companyNameBn = "হোসেন মিট অ্যান্ড কো.",
   companyTagline = "সকল প্রকার মুদি মালামাল সুলভ মূল্যে খুচরা ও পাইকারী বিক্রয় করা হয়।",
@@ -36,6 +41,7 @@ export function BanglaInvoiceTemplate({
   hotline = "+৮৮০১৫৭১ ২২৭৫৮৮",
 }: {
   order: Order;
+  invoiceType?: "billing" | "purchase";
   companyName?: string;
   companyNameBn?: string;
   companyTagline?: string;
@@ -43,8 +49,8 @@ export function BanglaInvoiceTemplate({
   companyAddress?: string;
   hotline?: string;
 }) {
-  const sub = order.subtotal ?? 0;
   const categoryMarkups = order.billingCategoryMarkups ?? {};
+  const globalMarkupPercent = Number(order.markupPercent ?? 0);
   const dueDate = order.deliveryDate;
 
   const rows: OrderLine[] =
@@ -66,144 +72,191 @@ export function BanglaInvoiceTemplate({
           },
         ];
 
+  const purchaseBaseSum = rows.reduce((s, r) => s + Number(r.lineTotal ?? 0), 0);
+  const sub =
+    invoiceType === "purchase"
+      ? (order.purchaseSubtotal ?? purchaseBaseSum)
+      : purchaseBaseSum || (order.subtotal ?? 0);
+
   const billedRows = rows.map((r) => {
-    const purchaseUnit = Number(r.unitPrice ?? 0);
-    const pct = Number(categoryMarkups[r.categoryId] ?? 0);
-    const billedUnit = purchaseUnit + Math.round(purchaseUnit * (pct / 100));
-    const billedLine = Number(r.lineTotal ?? 0) + Math.round(Number(r.lineTotal ?? 0) * (pct / 100));
-    return {
-      line: r,
-      billedUnit,
-      billedLine,
-      pct,
-    };
+    if (invoiceType === "purchase") {
+      const purchaseUnit = Number(r.unitPrice ?? 0);
+      const billedLine = Number(r.lineTotal ?? 0);
+      return { line: r, billedUnit: purchaseUnit, billedLine, pct: 0 };
+    }
+    const { billedUnit, billedLine, pct } = billedAmountsForLine(r, categoryMarkups, globalMarkupPercent);
+    return { line: r, billedUnit, billedLine, pct };
   });
+  const computedGrand = billedRows.reduce((sum, r) => sum + r.billedLine, 0);
+  const headerBillingGrand =
+    invoiceType === "billing"
+      ? (() => {
+          const a = order.billingSubtotal;
+          const b = order.grandTotal;
+          if (Number.isFinite(Number(a)) && Number(a) > 0) return Number(a);
+          if (Number.isFinite(Number(b)) && Number(b) > 0) return Number(b);
+          return undefined;
+        })()
+      : undefined;
   const grand =
-    order.grandTotal ??
-    billedRows.reduce((sum, r) => sum + r.billedLine, 0) ??
-    sub;
+    invoiceType === "purchase"
+      ? Number(order.purchaseSubtotal) > 0
+        ? Number(order.purchaseSubtotal)
+        : computedGrand > 0
+          ? computedGrand
+          : sub
+      : headerBillingGrand != null
+        ? headerBillingGrand
+        : computedGrand > 0
+          ? computedGrand
+          : sub;
+
+  const invoiceHeading =
+    invoiceType === "purchase" ? "PURCHASE INVOICE / ক্রয় চালান" : "BILLING INVOICE / গ্রাহক বিল";
 
   return (
     <div className="font-bn overflow-hidden rounded-3xl bg-slate-50 p-3 shadow-card print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none sm:p-5">
       <div className="rounded-3xl bg-white p-4 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-          <div>
-            <h2 className="text-2xl font-bold uppercase tracking-[0.05em] text-slate-900 sm:text-3xl">
-              Invoice
+        <div className="print-invoice-header flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-4">
+          <div className="max-w-xl">
+            <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">হোসেন মিট এন্ড কো.</h2>
+            <p className="mt-2 text-sm font-bold text-slate-900 sm:text-base">
+              মাংসসহ গৃহের সব ধরনের মুদি সামগ্রী, প্রসসড ও বাজার উপযোগী পণ্য
+            </p>
+            <p className="text-sm font-bold text-slate-900 sm:text-base">সরবরাহ করা হয়—খুচরা / পাইকারী -</p>
+            <p className="text-sm font-bold text-slate-900 sm:text-base">আপনার দোরগোড়ায় ডেলিভারি করা হয়।</p>
+            <p className="mt-4 text-xs text-slate-700 sm:text-sm">{companyAddress}</p>
+            <p className="text-xs text-slate-700 sm:text-sm">হটলাইন: {hotline}</p>
+          </div>
+          <div className="ml-auto -mt-1 self-start text-right sm:-mt-2">
+            <img src="/hmc-logo.png" alt="HMC logo" className="ml-auto h-24 w-auto object-contain sm:h-28" />
+            <h2 className="mt-1 whitespace-nowrap text-lg font-extrabold tracking-[0.01em] text-slate-900 sm:text-xl">
+              {invoiceHeading}
             </h2>
-            <p className="mt-1 font-mono text-base font-semibold text-blue-700 sm:text-lg">#{order.orderNo}</p>
-            <p className="mt-1 text-sm text-slate-600">{companyName}</p>
-            <p className="text-xs text-slate-500">{companyTagline}</p>
-            <p className="text-xs text-slate-500">{companyTaglineBn}</p>
-          </div>
-          <img src="/hmc-logo.png" alt="HMC logo" className="ml-auto h-20 w-auto object-contain sm:h-24" />
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">বিল প্রদানকারী</p>
-            <p className="text-base font-semibold">{companyNameBn}</p>
-            <p className="mt-0.5 text-sm text-slate-700">{companyAddress}</p>
-            <p className="mt-1 text-sm text-slate-700">হটলাইন: {hotline}</p>
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-            <p className="text-xs text-slate-500">বিল গ্রহীতা</p>
-            <p className="text-base font-semibold">{order.contactPerson}</p>
-            <p className="mt-0.5 text-sm text-slate-700">{order.phone}</p>
-            <p className="mt-1 text-sm text-slate-700">{order.billingAddress}</p>
+            <p className="mt-1 text-[11px] font-semibold leading-snug text-slate-600 sm:text-xs">
+              {invoiceType === "purchase"
+                ? "Supplier cost for this order (separate from customer billing)."
+                : "Customer charges for this order (separate from purchase cost)."}
+            </p>
+            <p className="mt-2 text-[11px] uppercase tracking-wide text-slate-500">Order</p>
+            <p className="font-mono text-sm font-bold text-blue-700 sm:text-base">#{order.orderNo}</p>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-100 p-3">
-            <p className="text-xs text-slate-500">ইস্যুর তারিখ</p>
-            <p className="font-semibold">{toBanglaNum(order.orderDate)}</p>
-          </div>
-          <div className="rounded-xl border border-slate-100 p-3">
-            <p className="text-xs text-slate-500">পরিশোধের শেষ তারিখ</p>
-            <p className="font-semibold">{toBanglaNum(dueDate)}</p>
-          </div>
-          <div className="rounded-xl border border-slate-100 p-3">
-            <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
-            <p className="text-sm font-medium">{order.deliveryAddress}</p>
-          </div>
-        </div>
-
-        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
-          <div className="divide-y divide-slate-100 print:hidden md:hidden">
-            {billedRows.map(({ line: r, billedLine, billedUnit, pct }) => (
-              <div key={r.id} className="space-y-2 p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs text-slate-500">ক্রমিক: {toBanglaNum(String(r.serial))}</p>
-                    <p className="font-semibold">{r.itemNameBn}</p>
-                    <p className="text-xs text-slate-500">{r.itemNameEn}</p>
-                  </div>
-                  <p className="text-right text-sm font-semibold">৳ {moneyBn(billedLine)}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-lg bg-slate-50 px-2 py-1">
-                    <p className="text-slate-500">পরিমাণ</p>
-                    <p className="font-medium">{formatQtyLine(r.kg, r.gram, r.piece)}</p>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 px-2 py-1 text-right">
-                    <p className="text-slate-500">ইউনিট মূল্য</p>
-                    <p className="font-medium">৳ {moneyBn(billedUnit)}</p>
-                    <p className="text-[10px] text-slate-500">+{toBanglaNum(String(pct))}%</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <table className="hidden w-full text-left text-sm print:table md:table">
-            <thead className="bg-slate-100 text-xs font-semibold text-slate-600">
-              <tr>
-                <th className="px-3 py-2">ক্রমিক</th>
-                <th className="px-3 py-2">আইটেম</th>
-                <th className="px-3 py-2">পরিমাণ</th>
-                <th className="px-3 py-2 text-right">ইউনিট মূল্য</th>
-                <th className="px-3 py-2 text-right">মোট মূল্য</th>
-              </tr>
-            </thead>
-            <tbody>
-              {billedRows.map(({ line: r, billedUnit, billedLine, pct }) => (
-                <tr key={r.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2 font-medium">{toBanglaNum(String(r.serial))}</td>
-                  <td className="px-3 py-2">
-                    <p className="font-semibold">{r.itemNameBn}</p>
-                    <p className="text-xs text-slate-500">{r.itemNameEn}</p>
-                  </td>
-                  <td className="px-3 py-2">{formatQtyLine(r.kg, r.gram, r.piece)}</td>
-                  <td className="px-3 py-2 text-right">
-                    ৳ {moneyBn(billedUnit)}
-                    <span className="ml-1 text-[10px] text-slate-500">(+{toBanglaNum(String(pct))}%)</span>
-                  </td>
-                  <td className="px-3 py-2 text-right font-semibold">
-                    ৳ {moneyBn(billedLine)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_300px]">
-          <div />
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <div className="flex items-center justify-between text-base font-bold">
-              <span>সর্বমোট</span>
-              <span className="text-slate-900">৳ {moneyBn(grand)}</span>
+        <div className="print-invoice-body">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">বিল প্রদানকারী</p>
+              <p className="text-base font-semibold">{companyNameBn}</p>
+              <p className="mt-0.5 text-sm text-slate-700">{companyAddress}</p>
+              <p className="mt-1 text-sm text-slate-700">হটলাইন: {hotline}</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <p className="text-xs text-slate-500">বিল গ্রহীতা</p>
+              <p className="text-base font-semibold">{order.contactPerson}</p>
+              <p className="mt-0.5 text-sm text-slate-700">{order.phone}</p>
+              <p className="mt-1 text-sm text-slate-700">{order.billingAddress}</p>
             </div>
           </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-slate-100 p-3">
+              <p className="text-xs text-slate-500">ইস্যুর তারিখ</p>
+              <p className="font-semibold">{toBanglaNum(order.orderDate)}</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 p-3">
+              <p className="text-xs text-slate-500">পরিশোধের শেষ তারিখ</p>
+              <p className="font-semibold">{toBanglaNum(dueDate)}</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 p-3">
+              <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
+              <p className="text-sm font-medium">{order.deliveryAddress}</p>
+            </div>
+          </div>
+
+          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+            <div className="divide-y divide-slate-100 print:hidden md:hidden">
+              {billedRows.map(({ line: r, billedLine, billedUnit, pct }) => (
+                <div key={r.id} className="space-y-2 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-slate-500">ক্রমিক: {toBanglaNum(String(r.serial))}</p>
+                      <p className="font-semibold">{r.itemNameBn}</p>
+                      <p className="text-xs text-slate-500">{r.itemNameEn}</p>
+                    </div>
+                    <p className="text-right text-sm font-semibold">৳ {moneyBn(billedLine)}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg bg-slate-50 px-2 py-1">
+                      <p className="text-slate-500">পরিমাণ</p>
+                      <p className="font-medium">{formatQtyLine(r.kg, r.gram, r.piece)}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 px-2 py-1 text-right">
+                      <p className="text-slate-500">ইউনিট মূল্য</p>
+                      <p className="font-medium">৳ {moneyBn(billedUnit)}</p>
+                      <p className="text-[10px] text-slate-500">+{toBanglaNum(money(pct))}%</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <table className="hidden w-full text-left text-sm print:table md:table">
+              <thead className="bg-slate-100 text-xs font-semibold text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">ক্রমিক</th>
+                  <th className="px-3 py-2">আইটেম</th>
+                  <th className="px-3 py-2">পরিমাণ</th>
+                  <th className="px-3 py-2 text-right">ইউনিট মূল্য</th>
+                  <th className="px-3 py-2 text-right">মোট মূল্য</th>
+                </tr>
+              </thead>
+              <tbody>
+                {billedRows.map(({ line: r, billedUnit, billedLine, pct }) => (
+                  <tr key={r.id} className="border-t border-slate-100">
+                    <td className="px-3 py-2 font-medium">{toBanglaNum(String(r.serial))}</td>
+                    <td className="px-3 py-2">
+                      <p className="font-semibold">{r.itemNameBn}</p>
+                      <p className="text-xs text-slate-500">{r.itemNameEn}</p>
+                    </td>
+                    <td className="px-3 py-2">{formatQtyLine(r.kg, r.gram, r.piece)}</td>
+                    <td className="px-3 py-2 text-right">
+                      ৳ {moneyBn(billedUnit)}
+                      <span className="ml-1 text-[10px] text-slate-500">(+{toBanglaNum(money(pct))}%)</span>
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold">
+                      ৳ {moneyBn(billedLine)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_300px]">
+            <div />
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between text-base font-bold">
+                <span>সর্বমোট</span>
+                <span className="text-slate-900">৳ {moneyBn(grand)}</span>
+              </div>
+            </div>
+          </div>
+
+          {order.signatureDataUrl ? (
+            <div className="mt-6 border-t border-dashed border-slate-200 pt-4">
+              <p className="text-xs text-slate-500">গ্রাহকের স্বাক্ষর</p>
+              <img src={order.signatureDataUrl} alt="Signature" className="mt-1 h-16 max-w-[200px] object-contain" />
+            </div>
+          ) : null}
         </div>
 
-        {order.signatureDataUrl ? (
-          <div className="mt-6 border-t border-dashed border-slate-200 pt-4">
-            <p className="text-xs text-slate-500">গ্রাহকের স্বাক্ষর</p>
-            <img src={order.signatureDataUrl} alt="Signature" className="mt-1 h-16 max-w-[200px] object-contain" />
+        <div className="print-invoice-footer mt-10 flex justify-end">
+          <div className="text-right leading-tight">
+            <p className="text-2xl font-black tracking-tight text-slate-700 sm:text-3xl">questco</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-800 sm:text-sm">managed by : int&apos;l</p>
           </div>
-        ) : null}
+        </div>
       </div>
     </div>
   );

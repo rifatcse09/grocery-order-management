@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -27,10 +27,14 @@ function formatQty(kg: string, gram: string, piece: string) {
 
 export function ReviewOrderPage() {
   const { id } = useParams();
-  const { getById, upsertOrder, deleteOrder } = useOrders();
+  const { loadOrders, getById, upsertOrder, deleteOrder } = useOrders();
   const navigate = useNavigate();
   const base = id ? getById(id) : undefined;
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   const order = useMemo(() => {
     if (!base) return undefined;
@@ -55,7 +59,7 @@ export function ReviewOrderPage() {
   const linesOk = order.lines.every(
     (l) => validateLineQuantity(l.kg, l.gram, l.piece) == null,
   );
-  const deliveryOk = canEditOrder(order.deliveryDate);
+  const deliveryOk = canEditOrder(order.deliveryDate, order.deliveryTime);
   const signed = Boolean(order.signatureDataUrl);
 
   const confirm = () => {
@@ -102,7 +106,7 @@ export function ReviewOrderPage() {
 
       {!deliveryOk ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          Delivery is within 48 hours; submission is not allowed.
+          Delivery is within 24 hours; submission is not allowed.
         </div>
       ) : null}
 

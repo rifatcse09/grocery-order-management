@@ -40,6 +40,19 @@ export function formatDeliveryWindow(input?: string): string {
 
   const { startDate, endDate } = parseDeliveryWindow(value);
   if (!startDate && !endDate) return value;
-  if (startDate && endDate) return startDate === endDate ? startDate : `${startDate} to ${endDate}`;
-  return startDate || endDate;
+  const fmt = (raw: string) => {
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00` : raw;
+    const d = new Date(normalized);
+    if (Number.isNaN(d.getTime())) return raw;
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    const hours24 = d.getHours();
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const ampm = hours24 >= 12 ? "PM" : "AM";
+    const hours12 = hours24 % 12 || 12;
+    return `${day}-${month}-${year}, ${hours12}:${minutes} ${ampm}`;
+  };
+  if (startDate && endDate) return startDate === endDate ? fmt(startDate) : `${fmt(startDate)} to ${fmt(endDate)}`;
+  return fmt(startDate || endDate);
 }

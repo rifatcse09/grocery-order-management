@@ -6,7 +6,7 @@ import { PaginationControls } from "../components/PaginationControls";
 import { ClipboardCheck, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readModeratorSeenOrderIds } from "../lib/orderNotifications";
-import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
+import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,7 @@ import {
 import { StatMetricCard } from "../components/StatMetricCard";
 
 export function ModeratorOrdersPage() {
-  const { orders } = useOrders();
+  const { orders, loadOrders } = useOrders();
   const location = useLocation();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
@@ -54,22 +54,24 @@ export function ModeratorOrdersPage() {
   });
 
   useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
+
+  useEffect(() => {
     const sync = () => setSeenTick((t) => t + 1);
     window.addEventListener(NOTIFICATIONS_EVENT, sync);
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, sync);
   }, []);
 
-  const mode = useMemo<"orders" | "purchase" | "purchase_pending" | "billing">(() => {
+  const mode = useMemo<"orders" | "purchase" | "purchase_pending">(() => {
     if (location.pathname.startsWith("/moderator/purchase-invoices")) return "purchase";
     if (location.pathname.startsWith("/moderator/purchase-pending-bills")) return "purchase_pending";
-    if (location.pathname.startsWith("/moderator/billing-invoices")) return "billing";
     return "orders";
   }, [location.pathname]);
 
   useEffect(() => {
     setPage(1);
     if (mode === "purchase" || mode === "purchase_pending") setDocFilter("purchase_yes");
-    else if (mode === "billing") setDocFilter("billing_yes");
     else setDocFilter("all");
   }, [mode]);
 
@@ -125,14 +127,13 @@ export function ModeratorOrdersPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return orders.filter((o) => {
+      if (o.status === "draft") return false;
       if (status !== "all" && o.status !== status) return false;
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
       if (docFilter === "challan_no" && o.challanGenerated) return false;
       if (docFilter === "purchase_yes" && !hasPurchaseInvoice(o)) return false;
       if (docFilter === "purchase_no" && hasPurchaseInvoice(o)) return false;
-      if (docFilter === "billing_yes" && !hasBillingInvoice(o)) return false;
-      if (docFilter === "billing_no" && hasBillingInvoice(o)) return false;
       if (mode === "purchase_pending" && (!hasPurchaseInvoice(o) || purchaseBalanceOf(o.id) <= 0)) return false;
       if (!q) return true;
       return (
@@ -159,17 +160,13 @@ export function ModeratorOrdersPage() {
             ? "Purchase invoice list"
             : mode === "purchase_pending"
               ? "Purchase pending bills"
-              : mode === "billing"
-                ? "Billing invoice list"
-                : "Moderator panel"}
+              : "Moderator panel"}
         </h1>
         <p className="mt-1 text-base font-medium text-slate-600">
           {mode === "purchase"
             ? "Purchase invoice status, payment adjustments, and pending balances."
             : mode === "purchase_pending"
               ? "Only unpaid purchase invoices are shown here with adjustment options."
-            : mode === "billing"
-              ? "Billing invoice availability and pending status by order."
               : "Edit quantities, set cost pricing, generate challan, and send purchase invoice to admin."}
         </p>
       </div>
@@ -252,25 +249,6 @@ export function ModeratorOrdersPage() {
                 ))}
               </select>
             </label>
-            <label className="text-xs font-semibold text-slate-600 sm:col-span-2 lg:col-span-2">
-              Documents
-              <select
-                value={docFilter}
-                onChange={(e) => {
-                  setDocFilter(e.target.value as typeof docFilter);
-                  setPage(1);
-                }}
-                className="mt-1 w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm"
-              >
-                <option value="all">All orders</option>
-                <option value="challan_yes">Challan available</option>
-                <option value="challan_no">Challan pending</option>
-                <option value="purchase_yes">Purchase invoice available</option>
-                <option value="purchase_no">Purchase invoice pending</option>
-                <option value="billing_yes">Billing invoice available</option>
-                <option value="billing_no">Billing invoice pending</option>
-              </select>
-            </label>
           </div>
           <p className="mt-3 text-xs text-slate-500">
             Showing <strong className="text-slate-700">{filtered.length}</strong> of {orders.length} orders
@@ -278,15 +256,14 @@ export function ModeratorOrdersPage() {
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
-          <table className="w-full text-left text-base">
+          <table className="min-w-[980px] w-full text-left text-sm lg:text-base">
           <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
             <tr>
               <th className="px-4 py-3">Order</th>
-              <th className="px-4 py-3">Submitted</th>
+              <th className="px-4 py-3 hidden xl:table-cell">Submitted</th>
               <th className="px-4 py-3">Customer</th>
               <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Purchase invoice</th>
-              <th className="px-4 py-3">Billing invoice</th>
+              <th className="px-4 py-3">Documents</th>
               <th className="px-4 py-3 text-right">Purchase balance</th>
               <th className="px-4 py-3">Purchase payment</th>
               <th className="px-4 py-3 text-right">Actions</th>
@@ -305,28 +282,30 @@ export function ModeratorOrdersPage() {
                     ) : null}
                   </div>
                 </td>
-                <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
+                <td className="px-4 py-4 text-sm text-slate-700 hidden xl:table-cell">{formatOrderSubmittedAt(o)}</td>
                 <td className="px-4 py-4 text-base font-semibold text-slate-800">{o.contactPerson}</td>
                 <td className="px-4 py-3">
                   <StatusBadge status={o.status} />
                 </td>
                 <td className="px-4 py-3">
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      hasPurchaseInvoice(o) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {hasPurchaseInvoice(o) ? "Available" : "Pending"}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                      hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
-                    }`}
-                  >
-                    {hasBillingInvoice(o) ? "Available" : "Pending"}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {o.challanGenerated ? (
+                      <Link
+                        to={`/moderator/challans/${o.id}`}
+                        className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                      >
+                        View challan
+                      </Link>
+                    ) : null}
+                    {hasPurchaseInvoice(o) ? (
+                      <Link
+                        to={`/moderator/purchase-invoices/${o.id}`}
+                        className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                      >
+                        View purchase invoice
+                      </Link>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right font-semibold">
                   ৳ {Math.round(purchaseBalanceOf(o.id)).toLocaleString("en-US")}
@@ -367,6 +346,14 @@ export function ModeratorOrdersPage() {
                           </Link>
                         </DropdownMenuItem>
                           {hasPurchaseInvoice(o) ? (
+                            <DropdownMenuItem asChild>
+                              <Link to={`/moderator/purchase-invoices/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                                <FileBadge2 className="h-4 w-4" />
+                                Purchase invoice
+                              </Link>
+                            </DropdownMenuItem>
+                          ) : null}
+                          {hasPurchaseInvoice(o) ? (
                             <DropdownMenuItem
                               onClick={() => {
                                 setAdjustOrderId(o.id);
@@ -406,21 +393,26 @@ export function ModeratorOrdersPage() {
                 Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
               </p>
               <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-sm">
-                <span
-                  className={`rounded-full px-2.5 py-1 font-semibold ${
-                    hasPurchaseInvoice(o) ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"
-                  }`}
-                >
-                  Purchase invoice: {hasPurchaseInvoice(o) ? "Available" : "Pending"}
-                </span>
-                <span
-                  className={`rounded-full px-2.5 py-1 font-semibold ${
-                    hasBillingInvoice(o) ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-500"
-                  }`}
-                >
-                  Billing invoice: {hasBillingInvoice(o) ? "Available" : "Pending"}
-                </span>
+              <p className="mt-1 text-sm text-slate-600">
+                Balance: <span className="font-semibold text-slate-900">৳ {Math.round(purchaseBalanceOf(o.id)).toLocaleString("en-US")}</span>
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                {o.challanGenerated ? (
+                  <Link
+                    to={`/moderator/challans/${o.id}`}
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800"
+                  >
+                    View challan
+                  </Link>
+                ) : null}
+                {hasPurchaseInvoice(o) ? (
+                  <Link
+                    to={`/moderator/purchase-invoices/${o.id}`}
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 font-semibold text-amber-800"
+                  >
+                    View purchase invoice
+                  </Link>
+                ) : null}
                 <span
                   className={`rounded-full px-2.5 py-1 font-semibold ${
                     purchasePaymentStatusOf(o.id) === "Paid"
@@ -433,25 +425,27 @@ export function ModeratorOrdersPage() {
                   Purchase payment: {purchasePaymentStatusOf(o.id)}
                 </span>
               </div>
-              <Link
-                to={`/moderator/orders/${o.id}`}
-                className="mt-3 inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white"
-              >
-                <FileBadge2 className="h-4 w-4" />
-                Open
-              </Link>
-              {hasPurchaseInvoice(o) ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdjustOrderId(o.id);
-                    setAdjustInput(String(Math.round(paidPurchaseOf(o.id))));
-                  }}
-                  className="mt-2 inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-sm font-semibold text-blue-800"
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  to={`/moderator/orders/${o.id}`}
+                  className="inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white"
                 >
-                  Adjust payment
-                </button>
-              ) : null}
+                  <FileBadge2 className="h-4 w-4" />
+                  Open
+                </Link>
+                {hasPurchaseInvoice(o) ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdjustOrderId(o.id);
+                      setAdjustInput(String(Math.round(paidPurchaseOf(o.id))));
+                    }}
+                    className="inline-flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-sm font-semibold text-blue-800"
+                  >
+                    Adjust payment
+                  </button>
+                ) : null}
+              </div>
             </div>
           ))}
           {pageList.length === 0 ? (

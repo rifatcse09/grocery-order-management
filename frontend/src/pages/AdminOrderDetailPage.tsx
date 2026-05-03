@@ -1,18 +1,15 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
   Clock,
-  FileText,
   MapPin,
   Package,
   Phone,
-  Receipt,
+  Truck,
   User,
 } from "lucide-react";
-import { DeliveryChallanTemplate } from "../components/DeliveryChallanTemplate";
-import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { OrderLinesEditor } from "../components/OrderLinesEditor";
 import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
@@ -23,7 +20,15 @@ import { clearAdminOrderNotification } from "../lib/orderNotifications";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
 import { loadCategoryMarkupSettings } from "../lib/categoryMarkupSettings";
-import { computeBillingTotalsFromCategoryMarkup, hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
+import { hasBillingInvoice, hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
+import {
+  apiEnabled,
+  apiGenerateBillingInvoice,
+  apiGenerateChallan,
+  apiGeneratePurchaseInvoice,
+  apiMarkOrderDelivered,
+  apiUpdateOrder,
+} from "../lib/api";
 import type { Order } from "../types";
 
 function makeAdminDraftOrder(owner: {
@@ -55,18 +60,36 @@ export function AdminOrderDetailPage() {
   const navigate = useNavigate();
   const { listAccounts } = useAuth();
   const { categories, addCategory, addCustomItem } = useCatalog();
-  const { orders, getById, upsertOrder, deleteOrder } = useOrders();
+  const { loadOrders, getById, upsertOrder, deleteOrder } = useOrders();
   const userAccounts = listAccounts().filter((a) => a.role === "user");
   const base = !isNew && id ? getById(id) : undefined;
   const [order, setOrder] = useState(base);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [addRowModal, setAddRowModal] = useState(false);
   const [newCatBn, setNewCatBn] = useState("");
   const [newCatEn, setNewCatEn] = useState("");
   const [itemCat, setItemCat] = useState("");
+  const [pickItem, setPickItem] = useState("");
   const [itemBn, setItemBn] = useState("");
   const [itemEn, setItemEn] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
+  const [workflowSuccess, setWorkflowSuccess] = useState("");
+  /** Each workflow action has its own busy flag so challan / purchase / billing never block one another. */
+  const [challanBusy, setChallanBusy] = useState(false);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
+  const [lineItemError, setLineItemError] = useState("");
   const categoryMarkups = loadCategoryMarkupSettings();
+  const itemsOf = useMemo(() => {
+    const c = categories.find((x) => x.id === itemCat);
+    return c?.items ?? [];
+  }, [categories, itemCat]);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   useEffect(() => {
     if (isNew) {
@@ -81,18 +104,23 @@ export function AdminOrderDetailPage() {
             billingAddress: firstUser.billingAddress,
             deliveryAddress: firstUser.deliveryAddress,
           },
-          nextOrderNo(orders),
+          nextOrderNo(),
         ),
       );
       return;
     }
     if (base) setOrder(base);
-  }, [isNew, userAccounts, orders, base]);
+  }, [isNew, userAccounts, base]);
 
   useEffect(() => {
     if (!order?.id) return;
     clearAdminOrderNotification(order.id);
   }, [order?.id]);
+
+  const purchaseLinesReady = useMemo(
+    () => linesReadyForPurchaseInvoice(order?.lines ?? []),
+    [order?.lines],
+  );
 
   if (!order || (!isNew && !base)) {
     return (
@@ -110,40 +138,194 @@ export function AdminOrderDetailPage() {
   }
 
   const lineCount = order.lines.length;
+  const deliveredOrInvoiced = !isNew && (order.status === "delivered" || order.status === "invoiced");
+  const quantityLocked = deliveredOrInvoiced;
+  const pricingLocked =
+    deliveredOrInvoiced ||
+    (!isNew && hasPurchaseInvoice(order)) ||
+    (!isNew && hasBillingInvoice(order));
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
   const save = () => upsertOrder(order);
-  const genChallan = () => {
-    const next = { ...order, challanGenerated: true, status: "under_review" as const };
-    setOrder(next);
-    upsertOrder(next);
+  const genChallan = async () => {
+    if (challanBusy || order.challanGenerated) return;
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    setChallanBusy(true);
+    try {
+      if (apiEnabled()) {
+        await apiGenerateChallan(order.id);
+        await loadOrders();
+        setWorkflowSuccess("Challan generated successfully.");
+        return;
+      }
+      const next = { ...order, challanGenerated: true, status: "under_review" as const };
+      setOrder(next);
+      upsertOrder(next);
+      setWorkflowSuccess("Challan generated successfully.");
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Failed to generate challan.");
+    } finally {
+      setChallanBusy(false);
+    }
   };
-  const generatePurchaseInvoice = () => {
+
+  const generatePurchaseInvoice = async () => {
+    if (purchaseBusy || hasPurchaseInvoice(order)) return;
+    if (apiEnabled() && isNew) {
+      setWorkflowError("Create the order on the server first, then generate a purchase invoice.");
+      return;
+    }
+    if (!purchaseLinesReady) {
+      setWorkflowError(
+        "Purchase invoice needs a cost amount on every line: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive line total.",
+      );
+      return;
+    }
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    setPurchaseBusy(true);
+    try {
+      if (apiEnabled()) {
+        const saved = await apiUpdateOrder(order.id, order);
+        setOrder(saved);
+        await apiGeneratePurchaseInvoice(saved.id);
+        await loadOrders();
+        setWorkflowSuccess("Purchase invoice generated successfully.");
+        navigate(`/admin/purchase-invoices/${saved.id}`);
+        return;
+      }
+      const next = {
+        ...order,
+        purchaseInvoiceGenerated: true,
+        purchaseInvoiceGeneratedBy: "admin" as const,
+        status: "under_review" as const,
+      };
+      setOrder(next);
+      upsertOrder(next);
+      setWorkflowSuccess("Purchase invoice generated successfully.");
+      navigate(`/admin/purchase-invoices/${order.id}`);
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Failed to generate purchase invoice.");
+    } finally {
+      setPurchaseBusy(false);
+    }
+  };
+
+  const markDeliveryComplete = async () => {
+    if (
+      markDeliverBusy ||
+      purchaseBusy ||
+      billingBusy ||
+      order.status === "delivered" ||
+      order.status === "invoiced"
+    )
+      return;
+    if (order.status !== "submitted" && order.status !== "under_review") return;
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    setMarkDeliverBusy(true);
+    try {
+      if (apiEnabled()) {
+        const updated = await apiMarkOrderDelivered(order.id);
+        await loadOrders();
+        setOrder(updated);
+        setWorkflowSuccess("Delivery marked complete. Order status updated.");
+        return;
+      }
+      const next = { ...order, status: "delivered" as const };
+      setOrder(next);
+      upsertOrder(next);
+      setWorkflowSuccess("Delivery marked complete (saved locally).");
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Could not mark delivery complete.");
+    } finally {
+      setMarkDeliverBusy(false);
+    }
+  };
+
+  const finalizeInvoice = async () => {
+    if (
+      billingBusy ||
+      !hasPurchaseInvoice(order) ||
+      hasBillingInvoice(order) ||
+      order.status !== "delivered"
+    )
+      return;
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    setBillingBusy(true);
+    try {
+      if (apiEnabled()) {
+        await apiGenerateBillingInvoice(order.id, {
+          markupPercent: 0,
+          markupByCategory: categoryMarkups,
+        });
+        await loadOrders();
+        setWorkflowSuccess("Billing invoice generated successfully.");
+        navigate(`/admin/billing-invoices/${order.id}`);
+        return;
+      }
+      const totals = {
+        purchaseSubtotal: order.lines.reduce((sum, line) => sum + Number(line.lineTotal ?? 0), 0),
+        billingSubtotal: order.lines.reduce((sum, line) => {
+          const purchaseLine = Number(line.lineTotal ?? 0);
+          const pct = Number(categoryMarkups[line.categoryId] ?? 0);
+          return sum + (purchaseLine + Math.round(purchaseLine * (pct / 100)));
+        }, 0),
+      };
+      const next = {
+        ...order,
+        billingInvoiceGenerated: true,
+        invoiceGenerated: true,
+        status: "invoiced" as const,
+        purchaseSubtotal: totals.purchaseSubtotal,
+        billingSubtotal: totals.billingSubtotal,
+        subtotal: totals.billingSubtotal,
+        markupPercent: undefined,
+        billingCategoryMarkups: categoryMarkups,
+        grandTotal: totals.billingSubtotal,
+      };
+      setOrder(next);
+      upsertOrder(next);
+      setWorkflowSuccess("Billing invoice generated successfully.");
+      navigate(`/admin/billing-invoices/${order.id}`);
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Failed to generate billing invoice.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const addFromCatalog = () => {
+    const cat = categories.find((c) => c.id === itemCat);
+    const it = cat?.items.find((i) => i.id === pickItem);
+    if (!cat || !it) return;
+    const exists = order.lines.some((l) => l.categoryId === cat.id && l.itemId === it.id);
+    if (exists) {
+      setLineItemError("Same item already exists in line items.");
+      return;
+    }
     const next = {
       ...order,
-      purchaseInvoiceGenerated: true,
-      purchaseInvoiceGeneratedBy: "admin" as const,
-      status: "delivered" as const,
+      lines: [
+        ...order.lines,
+        {
+          id: crypto.randomUUID(),
+          serial: order.lines.length + 1,
+          categoryId: cat.id,
+          itemId: it.id,
+          itemNameBn: it.nameBn,
+          itemNameEn: it.nameEn,
+          kg: "",
+          gram: "",
+          piece: "",
+        },
+      ],
     };
     setOrder(next);
     upsertOrder(next);
-  };
-  const finalizeInvoice = () => {
-    if (!hasPurchaseInvoice(order)) return;
-    const totals = computeBillingTotalsFromCategoryMarkup(order, categoryMarkups);
-    const next = {
-      ...order,
-      billingInvoiceGenerated: true,
-      invoiceGenerated: true,
-      status: "invoiced" as const,
-      purchaseSubtotal: totals.purchaseSubtotal,
-      billingSubtotal: totals.billingSubtotal,
-      subtotal: totals.billingSubtotal,
-      markupPercent: undefined,
-      billingCategoryMarkups: categoryMarkups,
-      grandTotal: totals.grandTotal,
-    };
-    setOrder(next);
-    upsertOrder(next);
+    setLineItemError("");
+    setAddRowModal(false);
   };
 
   return (
@@ -287,7 +469,11 @@ export function AdminOrderDetailPage() {
             <Package className="h-5 w-5 text-foreground" />
             Line items & pricing
             <span className="ml-2 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-foreground">
-              Editable
+              {quantityLocked && pricingLocked
+                ? "Locked"
+                : pricingLocked
+                  ? "Quantities editable — supplier/customer invoice locks cost until delivery"
+                  : "Editable — save cost changes before marking delivery complete"}
             </span>
           </h2>
         </div>
@@ -299,16 +485,42 @@ export function AdminOrderDetailPage() {
                 setItemCat(categories[0]?.id ?? "");
                 setShowCatalogModal(true);
               }}
-              className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted"
+              disabled={pricingLocked}
+              className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Manage catalog (add category/item)
+              + Add category/item
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setItemCat(categories[0]?.id ?? "");
+                setPickItem(categories[0]?.items[0]?.id ?? "");
+                setLineItemError("");
+                setAddRowModal(true);
+              }}
+              disabled={pricingLocked}
+              className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              + Add row
             </button>
           </div>
+          {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
+          {!hasPurchaseInvoice(order) ? (
+            <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+              <strong>Cost required for purchase invoice:</strong> each line must have a{" "}
+              <strong>supplier cost (unit) price</strong> greater than zero, valid <strong>quantity</strong>, and a
+              positive <strong>line total</strong>. The server will reject a purchase invoice without these.
+            </p>
+          ) : null}
           <OrderLinesEditor
             lines={order.lines}
             categories={categories}
             showPricing
             billingMarkupsByCategory={categoryMarkups}
+            globalBillingMarkupPercent={0}
+            linesLocked={false}
+            quantityLocked={quantityLocked}
+            pricingLocked={pricingLocked}
             onChange={(lines) => setOrder({ ...order, lines })}
           />
           <div className="mt-4 flex flex-wrap gap-3">
@@ -321,64 +533,81 @@ export function AdminOrderDetailPage() {
             </button>
             <button
               type="button"
-              onClick={genChallan}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
+              onClick={() => {
+                void genChallan();
+              }}
+              disabled={Boolean(challanBusy || order.challanGenerated)}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Generate / edit challan
+              {challanBusy ? "Generating…" : "Generate challan"}
             </button>
             <button
               type="button"
-              onClick={generatePurchaseInvoice}
-              className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white"
+              onClick={() => void generatePurchaseInvoice()}
+              disabled={Boolean(
+                purchaseBusy ||
+                  hasPurchaseInvoice(order) ||
+                  !purchaseLinesReady ||
+                  (apiEnabled() && isNew),
+              )}
+              title={
+                apiEnabled() && isNew
+                  ? "Save as a new order first."
+                  : !hasPurchaseInvoice(order) && !purchaseLinesReady
+                    ? "Enter cost (unit) price and quantity on every line before purchase invoice."
+                    : undefined
+              }
+              className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Generate purchase invoice
+              {purchaseBusy ? "Generating…" : "Generate purchase invoice"}
             </button>
             <button
               type="button"
-              onClick={finalizeInvoice}
-              disabled={!hasPurchaseInvoice(order)}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
+              onClick={() => void markDeliveryComplete()}
+              disabled={Boolean(
+                markDeliverBusy ||
+                  purchaseBusy ||
+                  billingBusy ||
+                  order.status === "delivered" ||
+                  order.status === "invoiced" ||
+                  (order.status !== "submitted" && order.status !== "under_review"),
+              )}
+              className="inline-flex items-center gap-2 rounded-xl border border-teal-600 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Generate customer billing invoice
+              <Truck className="h-4 w-4" />
+              {markDeliverBusy ? "Updating…" : "Mark delivery complete"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void finalizeInvoice();
+              }}
+              disabled={Boolean(
+                billingBusy ||
+                  !hasPurchaseInvoice(order) ||
+                  hasBillingInvoice(order) ||
+                  order.status !== "delivered",
+              )}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {billingBusy ? "Generating…" : "Generate customer billing invoice"}
             </button>
           </div>
-          {!hasPurchaseInvoice(order) ? (
+          {!hasPurchaseInvoice(order) && purchaseLinesReady ? (
             <p className="mt-2 text-xs font-semibold text-amber-700">
               Purchase invoice is required before customer billing invoice.
             </p>
           ) : null}
+          {hasPurchaseInvoice(order) && order.status !== "delivered" && order.status !== "invoiced" ? (
+            <p className="mt-2 text-xs font-semibold text-teal-800">
+              Use <strong>Mark delivery complete</strong> when the order has been delivered. Billing invoice is only
+              available after that.
+            </p>
+          ) : null}
+          {workflowSuccess ? <p className="mt-2 text-xs font-semibold text-emerald-700">{workflowSuccess}</p> : null}
+          {workflowError ? <p className="mt-2 text-xs font-semibold text-red-700">{workflowError}</p> : null}
         </div>
       </section>
-
-      {order.challanGenerated ? (
-        <section className="space-y-3">
-          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted px-4 py-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
-              <FileText className="h-5 w-5" />
-            </span>
-            <div>
-              <h3 className="text-base font-bold text-emerald-950">Challan preview</h3>
-              <p className="text-xs text-emerald-900">Delivery document (quantities only)</p>
-            </div>
-          </div>
-          <DeliveryChallanTemplate order={order} />
-        </section>
-      ) : null}
-
-      {hasBillingInvoice(order) ? (
-        <section className="space-y-3">
-          <div className="flex items-center gap-3 rounded-2xl border border-border bg-muted px-4 py-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-primary">
-              <Receipt className="h-5 w-5" />
-            </span>
-            <div>
-              <h3 className="text-base font-bold text-foreground">Invoice preview</h3>
-              <p className="text-xs text-foreground">Customer billing document generated by admin</p>
-            </div>
-          </div>
-          <BanglaInvoiceTemplate order={order} />
-        </section>
-      ) : null}
 
       {showCatalogModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950 p-4">
@@ -389,8 +618,8 @@ export function AdminOrderDetailPage() {
                 <p className="text-xs font-semibold uppercase text-slate-500">Add category</p>
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Category name (Bangla)" value={newCatBn} onChange={(e) => setNewCatBn(e.target.value)} />
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Category name (English)" value={newCatEn} onChange={(e) => setNewCatEn(e.target.value)} />
-                <button type="button" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white" onClick={() => {
-                  const c = addCategory(newCatBn, newCatEn);
+                <button type="button" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white" onClick={async () => {
+                  const c = await addCategory(newCatBn, newCatEn);
                   if (c) {
                     setItemCat(c.id);
                     setNewCatBn("");
@@ -411,8 +640,8 @@ export function AdminOrderDetailPage() {
                 </select>
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Item name (Bangla)" value={itemBn} onChange={(e) => setItemBn(e.target.value)} />
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Item name (English)" value={itemEn} onChange={(e) => setItemEn(e.target.value)} />
-                <button type="button" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white" onClick={() => {
-                  const created = addCustomItem(itemCat, itemBn, itemEn);
+                <button type="button" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white" onClick={async () => {
+                  const created = await addCustomItem(itemCat, itemBn, itemEn);
                   if (created) {
                     setItemBn("");
                     setItemEn("");
@@ -422,6 +651,62 @@ export function AdminOrderDetailPage() {
                 </button>
               </div>
               <button type="button" onClick={() => setShowCatalogModal(false)} className="w-full rounded-xl border border-slate-200 py-2 text-sm text-slate-700">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {addRowModal ? (
+        <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
+          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-slate-900">Add line</h3>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="text-xs text-slate-600">Category</label>
+                <select
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  value={itemCat}
+                  onChange={(e) => {
+                    setItemCat(e.target.value);
+                    const c = categories.find((x) => x.id === e.target.value);
+                    setPickItem(c?.items[0]?.id ?? "");
+                  }}
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nameEn} ({c.nameBn})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-600">Item</label>
+                <select
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  value={pickItem}
+                  onChange={(e) => setPickItem(e.target.value)}
+                >
+                  {itemsOf.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.nameEn} ({i.nameBn})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={addFromCatalog}
+                className="w-full rounded-xl bg-slate-700 py-2 text-sm font-semibold text-white hover:bg-slate-600"
+              >
+                Add row
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddRowModal(false)}
+                className="w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              >
                 Close
               </button>
             </div>

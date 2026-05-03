@@ -12,9 +12,9 @@ export function AdminCreateAccountPage() {
   });
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const result = createAccountByAdmin({
+    const result = await createAccountByAdmin({
       name: form.name,
       phone: form.phone,
       email: form.email,

@@ -34,6 +34,12 @@ export interface OrderLine {
   instructions?: string;
   unitPrice?: number;
   lineTotal?: number;
+  /** Set when admin generates billing invoice (DB + API). */
+  markupPercent?: number;
+  markupAmount?: number;
+  unitPriceAfterMarkup?: number | null;
+  lineTotalAfterMarkup?: number | null;
+  profitLossAmount?: number;
 }
 
 export interface Order {

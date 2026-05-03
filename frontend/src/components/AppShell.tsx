@@ -66,20 +66,16 @@ const navFor: Record<
   ],
   moderator: [
     { to: "/moderator/dashboard", label: "Dashboard", icon: BarChart3 },
-    { to: "/moderator/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
-    { to: "/moderator/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
-    { to: "/moderator/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
-    { to: "/moderator/billing-invoices", label: "Billing invoices", icon: FileText },
+    { to: "/moderator/orders", label: "Order list", icon: ClipboardList },
+    { to: "/moderator/purchase-statements", label: "Purchase statements", icon: FileText },
     { to: "/moderator/catalog/categories", label: "Category list", icon: Package },
-    { to: "/moderator/ledger", label: "Ledger", icon: BookText },
+    { to: "/moderator/catalog/products", label: "Product list", icon: Package },
   ],
   admin: [
     { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
     { to: "/admin/orders", label: "Order list", icon: ClipboardList },
-    { to: "/admin/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
     { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
-    { to: "/admin/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
-    { to: "/admin/billing-invoices", label: "Billing invoices", icon: FileText },
+    { to: "/admin/purchase-statements", label: "Purchase statements", icon: FileText },
     { to: "/admin/statements", label: "Billing cycle statements", icon: FileText },
     { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
     { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
@@ -103,6 +99,8 @@ export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [name, setName] = useState(user?.name ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
+  const [billingAddress, setBillingAddress] = useState(user?.billingAddress ?? "");
+  const [deliveryAddress, setDeliveryAddress] = useState(user?.deliveryAddress ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -130,7 +128,20 @@ export function AppShell() {
     if (!user) return;
     setName(user.name);
     setPhone(user.phone);
-  }, [user?.name, user?.phone, user]);
+    setBillingAddress(user.billingAddress);
+    setDeliveryAddress(user.deliveryAddress);
+  }, [user?.name, user?.phone, user?.billingAddress, user?.deliveryAddress, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== "user") return;
+    const needsProfile =
+      !user.phone.trim() || !user.billingAddress.trim() || !user.deliveryAddress.trim();
+    if (needsProfile) {
+      setShowProfile(true);
+      setMessage("Please complete profile before creating orders.");
+    }
+  }, [user]);
 
   const orderNotifyCount = useMemo(() => {
     void notifTick;
@@ -384,7 +395,7 @@ export function AppShell() {
               <UserRound className="h-4 w-4" />
               Profile settings
             </DialogTitle>
-            <DialogDescription>Update your display name and phone number.</DialogDescription>
+            <DialogDescription>Update name, phone, billing and delivery address.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
@@ -395,6 +406,22 @@ export function AppShell() {
               <Label htmlFor="profile-phone">Phone</Label>
               <Input id="profile-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="profile-billing">Billing address</Label>
+              <Input
+                id="profile-billing"
+                value={billingAddress}
+                onChange={(e) => setBillingAddress(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="profile-delivery">Delivery address</Label>
+              <Input
+                id="profile-delivery"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+              />
+            </div>
             {message ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{message}</p> : null}
           </div>
           <DialogFooter>
@@ -403,8 +430,13 @@ export function AppShell() {
             </Button>
             <Button
               type="button"
-              onClick={() => {
-                const res = updateProfile({ name, phone });
+              onClick={async () => {
+                const res = await updateProfile({
+                  name,
+                  phone,
+                  billingAddress,
+                  deliveryAddress,
+                });
                 setMessage(res.ok ? "Profile updated." : res.message ?? "Update failed.");
                 if (res.ok) setTimeout(() => setShowProfile(false), 700);
               }}

@@ -168,7 +168,14 @@ export function SignatureCapture({
       )}
 
       {value ? (
-        <p className="mt-2 text-xs text-emerald-700">Signature saved</p>
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <p className="text-xs font-medium text-emerald-700">Signature saved</p>
+          <img
+            src={value}
+            alt="Saved signature"
+            className="mt-2 h-16 max-w-[220px] rounded border border-emerald-200 bg-white object-contain p-1"
+          />
+        </div>
       ) : (
         <p className="mt-2 text-xs text-amber-700">No signature yet</p>
       )}

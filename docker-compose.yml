@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gom_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gom
+      POSTGRES_USER: gom
+      POSTGRES_PASSWORD: gom_secret
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gom_backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: gom
+      DB_USERNAME: gom
+      DB_PASSWORD: gom_secret
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    volumes:
+      - ./backend:/app
+    command: sh -c "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"
+
+volumes:
+  postgres_data:

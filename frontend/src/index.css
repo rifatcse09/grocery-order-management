@@ -129,26 +129,96 @@ html {
   }
 
   body.print-isolated .print-invoice-only {
-    position: absolute;
+    position: static;
     left: 0;
     top: 0;
     width: 100%;
     max-width: none;
     margin: 0 !important;
     padding: 0 !important;
-    break-inside: avoid-page;
-    page-break-inside: avoid;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  body.print-isolated .print-invoice-only .print-invoice-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: #fff;
+    padding: 12mm 10mm 5mm;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  body.print-isolated .print-invoice-only .print-invoice-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    background: #fff;
+    padding: 4mm 10mm 8mm;
+    border-top: 1px solid #e2e8f0;
+  }
+
+  body.print-isolated .print-invoice-only .print-invoice-body {
+    margin-top: 44mm;
+    margin-bottom: 42mm;
   }
 
   body.print-isolated .print-doc-only {
-    position: absolute;
+    position: static;
     left: 0;
     top: 0;
     width: 100%;
     max-width: none;
     margin: 0 !important;
     padding: 0 !important;
-    break-inside: avoid-page;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  body.print-isolated .print-doc-only .print-challan-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: #fff;
+    padding: 12mm 10mm 5mm;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  body.print-isolated .print-doc-only .print-challan-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    background: #fff;
+    padding: 4mm 10mm 8mm;
+    border-top: 1px solid #e2e8f0;
+  }
+
+  body.print-isolated .print-doc-only .print-challan-body {
+    margin-top: 36mm;
+    margin-bottom: 52mm;
+  }
+
+  body.print-isolated .print-doc-only table thead {
+    display: table-header-group;
+  }
+
+  body.print-isolated .print-invoice-only table thead {
+    display: table-header-group;
+  }
+
+  body.print-isolated .print-doc-only table tr {
+    page-break-inside: avoid;
+  }
+
+  body.print-isolated .print-invoice-only table tr {
     page-break-inside: avoid;
   }
 }

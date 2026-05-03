@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
-import { Plus, Pencil, FileCheck2, Search, Trash2, MoreVertical } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Pencil, FileCheck2, FileText, Search, Trash2, MoreVertical } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useOrders } from "../context/OrdersContext";
@@ -8,6 +8,8 @@ import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder } from "../lib/quantityRules";
 import { PaginationControls } from "../components/PaginationControls";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { hasBillingInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,13 +27,17 @@ import {
 
 export function UserOrderDashboard() {
   const { user } = useAuth();
-  const { orders, deleteOrder } = useOrders();
+  const { orders, loadOrders, deleteOrder } = useOrders();
   const mine = orders.filter((o) => o.ownerId === user?.id || user?.role === "admin");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; orderNo: string } | null>(null);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -53,8 +59,6 @@ export function UserOrderDashboard() {
 
   const btnPrimary =
     "inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900";
-  const btnPrimaryNew =
-    "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 sm:w-auto";
   const btnOutline =
     "inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-muted";
   const btnDisabled = "inline-flex cursor-not-allowed items-center gap-1 rounded-xl bg-slate-100 px-3.5 py-2 text-sm font-semibold text-slate-400";
@@ -68,13 +72,9 @@ export function UserOrderDashboard() {
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">User</p>
           <h1 className="mt-1 text-3xl font-extrabold text-slate-900">Order dashboard</h1>
           <p className="mt-1 text-base font-medium text-slate-600">
-            Search, filter, and paginate orders. Existing orders are editable until 48h before delivery.
+            Search, filter, and paginate orders. Existing orders are editable until 24h before delivery.
           </p>
         </div>
-        <Link to="/user/orders/new" className={btnPrimaryNew}>
-          <Plus className="h-4 w-4" />
-          New order
-        </Link>
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
@@ -127,23 +127,48 @@ export function UserOrderDashboard() {
                 <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Order date</th>
                 <th className="px-4 py-3">Delivery</th>
+                <th className="px-4 py-3">Time window</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Challan</th>
+                <th className="px-4 py-3">Invoice</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {pageItems.map((o) => {
-                const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+                const isClosed = o.status === "delivered" || o.status === "invoiced";
+                const editable = !isClosed && (o.status === "draft" || canEditOrder(o.deliveryDate, o.deliveryTime));
                 const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
-                const lockTitle = "Less than 48h to delivery — editing and review are locked";
+                const lockTitle = "Less than 24h to delivery — editing and review are locked";
                 return (
                   <tr key={o.id} className="border-t border-border bg-card">
                     <td className="px-4 py-4 font-mono text-base font-semibold text-slate-900">{o.orderNo}</td>
                     <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
                     <td className="px-4 py-4 text-slate-700">{o.orderDate}</td>
                     <td className="px-4 py-4 text-slate-700">{o.deliveryDate}</td>
+                    <td className="px-4 py-4 text-slate-700">{formatDeliveryWindow(o.deliveryTime)}</td>
                     <td className="px-4 py-3">
                       <StatusBadge status={o.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {o.challanGenerated ? (
+                        <Link
+                          to={`/user/challans/${o.id}`}
+                          className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                        >
+                          View challan
+                        </Link>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3">
+                      {hasBillingInvoice(o) ? (
+                        <Link
+                          to={`/user/invoices/${o.id}`}
+                          className="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800 hover:bg-blue-100"
+                        >
+                          View invoice
+                        </Link>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className={tableActionsWideUserRow()}>
@@ -213,6 +238,14 @@ export function UserOrderDashboard() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
+                            {o.challanGenerated ? (
+                              <DropdownMenuItem asChild>
+                                <Link to={`/user/challans/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                                  <FileText className="h-4 w-4" />
+                                  Challan
+                                </Link>
+                              </DropdownMenuItem>
+                            ) : null}
                             {editable ? (
                               <DropdownMenuItem asChild>
                                 <Link to={`/user/orders/${o.id}/review`} className="flex cursor-pointer items-center gap-2">
@@ -267,9 +300,10 @@ export function UserOrderDashboard() {
 
         <div className="space-y-3 p-3 md:hidden">
           {pageItems.map((o) => {
-            const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+            const isClosed = o.status === "delivered" || o.status === "invoiced";
+            const editable = !isClosed && (o.status === "draft" || canEditOrder(o.deliveryDate, o.deliveryTime));
             const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
-            const lockTitle = "Less than 48h to delivery — editing and review are locked";
+            const lockTitle = "Less than 24h to delivery — editing and review are locked";
             return (
               <div key={o.id} className="rounded-2xl border border-border bg-white p-3.5 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
@@ -285,7 +319,38 @@ export function UserOrderDashboard() {
                 <p className="mt-1 text-sm text-slate-600">
                   Delivery: <span className="font-medium text-slate-800">{o.deliveryDate}</span>
                 </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Time window: <span className="font-medium text-slate-800">{formatDeliveryWindow(o.deliveryTime)}</span>
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                  {o.challanGenerated ? (
+                    <Link
+                      to={`/user/challans/${o.id}`}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800"
+                    >
+                      Challan available
+                    </Link>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-500">Challan pending</span>
+                  )}
+                  {hasBillingInvoice(o) ? (
+                    <Link
+                      to={`/user/invoices/${o.id}`}
+                      className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-semibold text-blue-800"
+                    >
+                      Invoice available
+                    </Link>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-500">Invoice pending</span>
+                  )}
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  {o.challanGenerated ? (
+                    <Link to={`/user/challans/${o.id}`} className={`${btnOutline} flex-1 justify-center`}>
+                      <FileText className="h-4 w-4" />
+                      Challan
+                    </Link>
+                  ) : null}
                   {editable ? (
                     <Link to={`/user/orders/${o.id}/review`} className={`${btnOutline} flex-1 justify-center`}>
                       <FileCheck2 className="h-4 w-4" />
