@@ -48,7 +48,7 @@ function env_val(array $env, string $key, string $default): string {
 
 $backendRoot = dirname(__DIR__, 2);
 $env = load_dotenv($backendRoot . '/.env');
-$connection = strtolower(env_val($env, 'DB_CONNECTION', 'pgsql'));
+$connection = strtolower(env_val($env, 'DB_CONNECTION', 'mysql'));
 
 try {
     if ($connection === 'sqlite') {
@@ -60,21 +60,25 @@ try {
         ]);
     } else {
         $host = env_val($env, 'DB_HOST', '127.0.0.1');
-        $port = env_val($env, 'DB_PORT', '5432');
+        if (is_file('/.dockerenv') && in_array($host, ['127.0.0.1', 'localhost', '::1'], true)) {
+            $host = 'mysql';
+        }
+        $port = env_val($env, 'DB_PORT', '3306');
         $dbname = env_val($env, 'DB_DATABASE', 'gom');
         $user = env_val($env, 'DB_USERNAME', 'gom');
-        $pass = env_val($env, 'DB_PASSWORD', 'gom_secret');
-        $dsn = sprintf('pgsql:host=%s;port=%s;dbname=%s', $host, $port, $dbname);
+        $pass = env_val($env, 'DB_PASSWORD', '');
+        $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
         $pdo = new PDO($dsn, $user, $pass, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci',
         ]);
     }
 } catch (Throwable $e) {
     $msg = $e->getMessage();
     fwrite(STDERR, 'pick_dummy_users: DB connection failed: ' . $msg . "\n");
     if (str_contains($msg, 'could not find driver')) {
-        fwrite(STDERR, "hint: enable pdo_sqlite or pdo_pgsql in CLI php.ini, or run dummy_order_flow.sh without setting emails (it falls back to user@demo.local / moderator@demo.local).\n");
+        fwrite(STDERR, "hint: enable pdo_mysql or pdo_sqlite in CLI php.ini, or run dummy_order_flow.sh without setting emails (it falls back to user@demo.local / moderator@demo.local).\n");
     }
     exit(1);
 }

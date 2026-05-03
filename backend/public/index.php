@@ -34,7 +34,7 @@ set_exception_handler(static function (Throwable $e): void {
 });
 
 $method = $_SERVER['REQUEST_METHOD'];
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$path = legacy_api_request_path();
 
 \App\Http\ApiGatewayDispatcher::dispatchIfMatched($method, $path);
 

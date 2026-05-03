@@ -17,8 +17,9 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->string('phone')->default('');
             $table->string('role')->default('user')->index();
-            $table->text('billing_address')->default('');
-            $table->text('delivery_address')->default('');
+            // MySQL disallows DEFAULT on TEXT; VARCHAR supports empty default.
+            $table->string('billing_address', 2000)->default('');
+            $table->string('delivery_address', 2000)->default('');
             $table->boolean('is_active')->default(true);
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');

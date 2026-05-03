@@ -12,8 +12,21 @@ import {
   loadCategoryMarkupSettings,
   saveCategoryMarkupSettings,
 } from "../lib/categoryMarkupSettings";
+import type { CategoryDef } from "../types";
 
 type CatalogView = "all" | "categories" | "products";
+
+type ServerCatalogCategoryRow = {
+  id: string;
+  nameBn: string;
+  nameEn: string;
+  itemsCount: number;
+};
+
+function categoryRowItemCount(row: CategoryDef | ServerCatalogCategoryRow): number {
+  if ("itemsCount" in row) return row.itemsCount;
+  return row.items.length;
+}
 
 export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const { user } = useAuth();
@@ -32,14 +45,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const [catQuery, setCatQuery] = useState("");
   const [catPage, setCatPage] = useState(1);
   const [catPerPage, setCatPerPage] = useState(10);
-  const [apiCategories, setApiCategories] = useState<
-    Array<{
-      id: string;
-      nameBn: string;
-      nameEn: string;
-      itemsCount: number;
-    }>
-  >([]);
+  const [apiCategories, setApiCategories] = useState<ServerCatalogCategoryRow[]>([]);
   const [apiCategoriesTotal, setApiCategoriesTotal] = useState(0);
   const [itemQuery, setItemQuery] = useState("");
   const [itemPage, setItemPage] = useState(1);
@@ -482,7 +488,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                       c.nameBn
                     )}
                   </td>
-                  <td className="px-3 py-2.5">{useServerCategories ? c.itemsCount : c.items.length}</td>
+                  <td className="px-3 py-2.5">{categoryRowItemCount(c)}</td>
                   <td className="px-3 py-2.5">{usedCategoryIds.has(c.id) ? "Yes" : "No"}</td>
                   {canManageCategoryActions ? (
                     <td className="px-3 py-2.5 text-right">
@@ -522,7 +528,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                               <button
                                 type="button"
                                 onClick={() =>
-                                  removeCategory(c.id, useServerCategories ? c.itemsCount : c.items.length)
+                                  removeCategory(c.id, categoryRowItemCount(c))
                                 }
                                 className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
                                 title="Delete category"

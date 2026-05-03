@@ -21,6 +21,8 @@
 /public/uploads/signatures/*
 /storage/*.key
 /storage/pail
+# Local DB dumps from `php artisan gom:export-database`
+/storage/app/database-exports/
 /vendor
 _ide_helper.php
 Homestead.json

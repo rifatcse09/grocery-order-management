@@ -27,8 +27,56 @@ function app_debug(): bool {
     return strtolower(envv('APP_DEBUG', 'false')) === 'true';
 }
 
+/**
+ * Request path for the legacy API router (must match route definitions like /api/v1/health).
+ *
+ * All API routes live under /api/v1. On shared hosts the browser path is often prefixed
+ * (e.g. /hmc/backend/api/v1/… or …/public/index.php) while SCRIPT_NAME varies; we therefore
+ * derive the route path from REQUEST_URI, REDIRECT_URL (common after mod_rewrite), and PATH_INFO.
+ */
+function legacy_api_request_path(): string
+{
+    foreach (['REQUEST_URI', 'REDIRECT_URL', 'PATH_INFO'] as $serverKey) {
+        $raw = $_SERVER[$serverKey] ?? null;
+        if (! is_string($raw) || $raw === '') {
+            continue;
+        }
+        $path = parse_url($raw, PHP_URL_PATH);
+        if (! is_string($path) || $path === '') {
+            continue;
+        }
+        $path = str_replace('\\', '/', $path);
+        if ($path === '' || $path[0] !== '/') {
+            $path = '/' . ltrim($path, '/');
+        }
+        // Longest API suffix at end of this path segment (handles …/hmc/backend/api/v1/auth/login).
+        if (preg_match('#(/api/v1(?:/.*)?)$#', $path, $m)) {
+            $out = rtrim($m[1], '/') ?: '/';
+
+            return $out;
+        }
+    }
+
+    $raw = (string) ($_SERVER['REQUEST_URI'] ?? '/');
+    $path = parse_url($raw, PHP_URL_PATH);
+    $path = is_string($path) && $path !== '' ? str_replace('\\', '/', $path) : '/';
+    $p = strpos($path, '/api/v1');
+    if ($p !== false) {
+        return rtrim(substr($path, $p), '/') ?: '/';
+    }
+
+    return rtrim($path, '/') ?: '/';
+}
+
 function db(): PDO {
     return \App\Database\LegacyPdo::connection();
+}
+
+/** Undefined table: PostgreSQL 42P01, MySQL / MariaDB 42S02. */
+function pdo_exception_is_missing_table(\PDOException $e): bool {
+    $state = (string)($e->errorInfo[0] ?? '');
+
+    return $state === '42P01' || $state === '42S02';
 }
 
 function bearer_token(): ?string {
@@ -76,30 +124,71 @@ function make_token(int $userId): string {
     return $raw;
 }
 
+/** Matches LegacyPdo / Laravel DB_CONNECTION (mysql, sqlite, …). */
+function legacy_db_driver(): string {
+    return strtolower(trim(envv('DB_CONNECTION', 'mysql')));
+}
+
 function users_password_column(): string {
     static $column = null;
     if (is_string($column) && $column !== '') {
         return $column;
     }
+    if (legacy_db_driver() === 'sqlite') {
+        $stmt = db()->query('PRAGMA table_info(users)');
+        $column = 'password';
+        foreach ($stmt->fetchAll() ?: [] as $row) {
+            $n = (string) ($row['name'] ?? '');
+            if ($n === 'password') {
+                $column = 'password';
+                break;
+            }
+            if ($n === 'password_hash') {
+                $column = 'password_hash';
+            }
+        }
+
+        return $column;
+    }
     $stmt = db()->query("
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = 'public'
+        WHERE table_schema = DATABASE()
           AND table_name = 'users'
           AND column_name IN ('password', 'password_hash')
         ORDER BY CASE WHEN column_name = 'password' THEN 0 ELSE 1 END
         LIMIT 1
     ");
     $row = $stmt->fetch();
-    $column = (string)($row['column_name'] ?? 'password');
+    $column = (string) ($row['column_name'] ?? 'password');
     return $column;
 }
 
 function ensure_table_exists(string $table, string $featureLabel): void {
-    $stmt = db()->prepare("SELECT to_regclass(:name) AS t");
-    $stmt->execute(['name' => 'public.' . $table]);
-    $exists = (string)(($stmt->fetch()['t'] ?? ''));
-    if ($exists === '') {
+    if (legacy_db_driver() === 'sqlite') {
+        if (! preg_match('/^[a-zA-Z0-9_]+$/', $table)) {
+            json_response(503, ['message' => 'Invalid table name.', 'missingTable' => $table]);
+        }
+        $stmt = db()->prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = :t LIMIT 1");
+        $stmt->execute(['t' => $table]);
+        if (! $stmt->fetch()) {
+            json_response(503, [
+                'message' => "{$featureLabel} is not ready. Missing database table: {$table}. Please run migrations.",
+                'missingTable' => $table,
+            ]);
+        }
+
+        return;
+    }
+    $stmt = db()->prepare('
+        SELECT COUNT(*) AS c
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = :t
+    ');
+    $stmt->execute(['t' => $table]);
+    $c = (int) (($stmt->fetch()['c'] ?? 0));
+    if ($c < 1) {
         json_response(503, [
             'message' => "{$featureLabel} is not ready. Missing database table: {$table}. Please run migrations.",
             'missingTable' => $table,
@@ -108,16 +197,29 @@ function ensure_table_exists(string $table, string $featureLabel): void {
 }
 
 function table_has_column(string $table, string $column): bool {
-    $stmt = db()->prepare("
+    if (legacy_db_driver() === 'sqlite') {
+        if (! preg_match('/^[a-zA-Z0-9_]+$/', $table) || ! preg_match('/^[a-zA-Z0-9_]+$/', $column)) {
+            return false;
+        }
+        $stmt = db()->query('PRAGMA table_info('.$table.')');
+        foreach ($stmt->fetchAll() ?: [] as $row) {
+            if (($row['name'] ?? '') === $column) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+    $stmt = db()->prepare('
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'public'
+        WHERE table_schema = DATABASE()
           AND table_name = :table
           AND column_name = :column
         LIMIT 1
-    ");
+    ');
     $stmt->execute(['table' => $table, 'column' => $column]);
-    return (bool)$stmt->fetch();
+    return (bool) $stmt->fetch();
 }
 
 function persist_signature(mixed $incoming): ?string {
@@ -304,7 +406,7 @@ function log_activity(int $actorId, string $entityType, int $entityId, string $a
         ]);
     } catch (\PDOException $e) {
         // Allow business flow to continue when audit table is missing.
-        if ((string)$e->getCode() === '42P01') {
+        if (pdo_exception_is_missing_table($e)) {
             return;
         }
         throw $e;
@@ -475,7 +577,7 @@ function payment_or_order_type(array $input): string {
 /**
  * Insert one payment + matching ledger row. Caller may wrap in a DB transaction.
  *
- * @return array<string, mixed> Payment row from RETURNING *
+ * @return array<string, mixed> Inserted payment row
  */
 function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoiceId, string $paymentType, float $payAmount, string $note): array
 {
@@ -511,7 +613,7 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
         }
     }
     if (table_has_column('payments', 'payment_type')) {
-        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, payment_type, amount, note, created_by) VALUES (:order, :invoice, :ptype, :amount, :note, :uid) RETURNING *');
+        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, payment_type, amount, note, created_by) VALUES (:order, :invoice, :ptype, :amount, :note, :uid)');
         $stmt->execute([
             'order' => $orderId,
             'invoice' => $invoiceId,
@@ -521,7 +623,7 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
             'uid' => $userId,
         ]);
     } else {
-        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, amount, note, created_by) VALUES (:order, :invoice, :amount, :note, :uid) RETURNING *');
+        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, amount, note, created_by) VALUES (:order, :invoice, :amount, :note, :uid)');
         $stmt->execute([
             'order' => $orderId,
             'invoice' => $invoiceId,
@@ -530,7 +632,10 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
             'uid' => $userId,
         ]);
     }
-    $payment = $stmt->fetch();
+    $payId = (int)db()->lastInsertId();
+    $sel = db()->prepare('SELECT * FROM payments WHERE id = :id LIMIT 1');
+    $sel->execute(['id' => $payId]);
+    $payment = $sel->fetch();
     if (!$payment || !isset($payment['id'])) {
         throw new RuntimeException('Payment insert did not return a row.');
     }
@@ -548,7 +653,7 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
 }
 
 /**
- * @return array<string, mixed> Adjustment row from RETURNING *
+ * @return array<string, mixed> Inserted adjustment row
  */
 function insert_adjustment_and_ledger_row(int $userId, int $orderId, string $type, float $adjAmount, string $reason): array
 {
@@ -577,7 +682,7 @@ function insert_adjustment_and_ledger_row(int $userId, int $orderId, string $typ
             );
         }
     }
-    $stmt = db()->prepare('INSERT INTO adjustments (order_id, type, amount, reason, created_by) VALUES (:order, :type, :amount, :reason, :uid) RETURNING *');
+    $stmt = db()->prepare('INSERT INTO adjustments (order_id, type, amount, reason, created_by) VALUES (:order, :type, :amount, :reason, :uid)');
     $stmt->execute([
         'order' => $orderId,
         'type' => $type,
@@ -585,7 +690,10 @@ function insert_adjustment_and_ledger_row(int $userId, int $orderId, string $typ
         'reason' => $reason,
         'uid' => $userId,
     ]);
-    $adj = $stmt->fetch();
+    $adjId = (int)db()->lastInsertId();
+    $sel = db()->prepare('SELECT * FROM adjustments WHERE id = :id LIMIT 1');
+    $sel->execute(['id' => $adjId]);
+    $adj = $sel->fetch();
     if (!$adj || !isset($adj['id'])) {
         throw new RuntimeException('Adjustment insert did not return a row.');
     }

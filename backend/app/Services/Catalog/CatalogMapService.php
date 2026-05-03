@@ -16,13 +16,13 @@ final class CatalogMapService
      */
     public function mapIndexed(): array
     {
-        $cats = $this->pdo->query('SELECT id, code, name_bn, name_en, COALESCE(markup_percent, 0) AS markup_percent FROM categories WHERE is_active = true ORDER BY name_en')->fetchAll();
+        $cats = $this->pdo->query('SELECT id, code, name_bn, name_en, COALESCE(markup_percent, 0) AS markup_percent FROM categories WHERE is_active = 1 ORDER BY name_en')->fetchAll();
         if (! $cats) {
             return [];
         }
         $catIds = array_map(static fn (array $c): int => (int) $c['id'], $cats);
         $placeholders = implode(',', array_fill(0, count($catIds), '?'));
-        $stmt = $this->pdo->prepare("SELECT category_id, code, name_bn, name_en FROM catalog_items WHERE is_active = true AND category_id IN ($placeholders) ORDER BY name_en");
+        $stmt = $this->pdo->prepare("SELECT category_id, code, name_bn, name_en FROM catalog_items WHERE is_active = 1 AND category_id IN ($placeholders) ORDER BY name_en");
         $stmt->execute($catIds);
         $items = $stmt->fetchAll();
         $itemsByCat = [];

@@ -3,7 +3,7 @@
 #
 # Defaults (after php artisan db:seed):
 #   Emails match database/seeders/DatabaseSeeder.php: user@demo.local + moderator@demo.local
-#   If PHP has PDO (pdo_pgsql / pdo_sqlite), pick_dummy_users.php overrides from the users table.
+#   If PHP has PDO (pdo_mysql / pdo_sqlite), pick_dummy_users.php overrides from the users table.
 #   Passwords default to demo123 (override with GOM_SHARED_PASSWORD or per-account vars).
 #
 # Usage:
@@ -48,7 +48,7 @@ if [[ -z "${GOM_USER_EMAIL:-}" || -z "${GOM_STAFF_EMAIL:-}" ]]; then
     [[ -z "${GOM_STAFF_EMAIL:-}" ]] && GOM_STAFF_EMAIL="$(echo "$picked_output" | python3 -c "import json,sys; print(json.load(sys.stdin)['staffEmail'])")"
     echo "note: picked user emails from DB (pick_dummy_users.php)." >&2
   else
-    echo "note: using DatabaseSeeder defaults ($SEED_USER_EMAIL / $SEED_STAFF_EMAIL). Install php-pgsql or php-sqlite to auto-read users from DB." >&2
+    echo "note: using DatabaseSeeder defaults ($SEED_USER_EMAIL / $SEED_STAFF_EMAIL). Install php-mysql or php-sqlite to auto-read users from DB." >&2
     GOM_USER_EMAIL="${GOM_USER_EMAIL:-$SEED_USER_EMAIL}"
     GOM_STAFF_EMAIL="${GOM_STAFF_EMAIL:-$SEED_STAFF_EMAIL}"
   fi

@@ -40,7 +40,7 @@ if ($path === '/api/v1/auth/register' && $method === 'POST') {
         json_response(409, ['message' => 'Email already exists.']);
     }
     $passCol = users_password_column();
-    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery) RETURNING *");
+    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery)");
     $insert->execute([
         'name' => $name,
         'email' => $email,
@@ -50,7 +50,13 @@ if ($path === '/api/v1/auth/register' && $method === 'POST') {
         'billing' => trim((string)($in['billingAddress'] ?? '')),
         'delivery' => trim((string)($in['deliveryAddress'] ?? '')),
     ]);
-    $user = $insert->fetch();
+    $uid = (int)db()->lastInsertId();
+    $sel = db()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
+    $sel->execute(['id' => $uid]);
+    $user = $sel->fetch();
+    if (!$user) {
+        json_response(500, ['message' => 'User was not created.']);
+    }
     $token = make_token((int)$user['id']);
     json_response(201, ['token' => $token, 'user' => public_user($user)]);
 }
@@ -76,7 +82,7 @@ if ($path === '/api/v1/auth/profile' && $method === 'PUT') {
     if ($name === '') {
         json_response(422, ['message' => 'Name is required.']);
     }
-    $stmt = db()->prepare('UPDATE users SET name = :name, phone = :phone, billing_address = :billing, delivery_address = :delivery, updated_at = NOW() WHERE id = :id RETURNING *');
+    $stmt = db()->prepare('UPDATE users SET name = :name, phone = :phone, billing_address = :billing, delivery_address = :delivery, updated_at = NOW() WHERE id = :id');
     $stmt->execute([
         'id' => $user['id'],
         'name' => $name,
@@ -84,7 +90,9 @@ if ($path === '/api/v1/auth/profile' && $method === 'PUT') {
         'billing' => trim((string)($in['billingAddress'] ?? '')),
         'delivery' => trim((string)($in['deliveryAddress'] ?? '')),
     ]);
-    $updated = $stmt->fetch();
+    $sel = db()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
+    $sel->execute(['id' => $user['id']]);
+    $updated = $sel->fetch();
     json_response(200, ['user' => public_user($updated)]);
 }
 
@@ -226,9 +234,11 @@ if ($path === '/api/v1/catalog/categories' && $method === 'POST') {
         json_response(422, ['message' => 'Category Bangla and English names are required.']);
     }
     $code = 'custom-cat-' . time() . '-' . random_int(100, 999);
-    $stmt = db()->prepare('INSERT INTO categories (code, name_bn, name_en, markup_percent, is_active, created_at, updated_at) VALUES (:code, :bn, :en, 0, true, NOW(), NOW()) RETURNING code, name_bn, name_en');
+    $stmt = db()->prepare('INSERT INTO categories (code, name_bn, name_en, markup_percent, is_active, created_at, updated_at) VALUES (:code, :bn, :en, 0, true, NOW(), NOW())');
     $stmt->execute(['code' => $code, 'bn' => $nameBn, 'en' => $nameEn]);
-    $row = $stmt->fetch();
+    $sel = db()->prepare('SELECT code, name_bn, name_en FROM categories WHERE code = :code LIMIT 1');
+    $sel->execute(['code' => $code]);
+    $row = $sel->fetch();
     json_response(201, ['data' => [
         'id' => (string)$row['code'],
         'nameBn' => (string)$row['name_bn'],
@@ -248,9 +258,11 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $me
     if ($nameBn === '' || $nameEn === '') {
         json_response(422, ['message' => 'Category Bangla and English names are required.']);
     }
-    $stmt = db()->prepare('UPDATE categories SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true RETURNING code, name_bn, name_en, markup_percent');
+    $stmt = db()->prepare('UPDATE categories SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true');
     $stmt->execute(['bn' => $nameBn, 'en' => $nameEn, 'code' => $categoryCode]);
-    $row = $stmt->fetch();
+    $sel = db()->prepare('SELECT code, name_bn, name_en, markup_percent FROM categories WHERE code = :code LIMIT 1');
+    $sel->execute(['code' => $categoryCode]);
+    $row = $sel->fetch();
     if (!$row) json_response(404, ['message' => 'Category not found']);
     json_response(200, ['data' => [
         'id' => (string)$row['code'],
@@ -270,9 +282,9 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $me
     if ($usedStmt->fetch()) {
         json_response(409, ['message' => 'Category is used in orders and cannot be deleted.']);
     }
-    $stmt = db()->prepare('DELETE FROM categories WHERE code = :code RETURNING id');
+    $stmt = db()->prepare('DELETE FROM categories WHERE code = :code');
     $stmt->execute(['code' => $categoryCode]);
-    if (!$stmt->fetch()) json_response(404, ['message' => 'Category not found']);
+    if ($stmt->rowCount() === 0) json_response(404, ['message' => 'Category not found']);
     json_response(200, ['ok' => true]);
 }
 
@@ -291,9 +303,11 @@ if ($path === '/api/v1/catalog/items' && $method === 'POST') {
     $cat = $catStmt->fetch();
     if (!$cat) json_response(404, ['message' => 'Category not found']);
     $code = 'custom-' . $categoryCode . '-' . time() . '-' . random_int(100, 999);
-    $stmt = db()->prepare('INSERT INTO catalog_items (category_id, code, name_bn, name_en, is_active, created_at, updated_at) VALUES (:cid, :code, :bn, :en, true, NOW(), NOW()) RETURNING code, name_bn, name_en');
+    $stmt = db()->prepare('INSERT INTO catalog_items (category_id, code, name_bn, name_en, is_active, created_at, updated_at) VALUES (:cid, :code, :bn, :en, true, NOW(), NOW())');
     $stmt->execute(['cid' => $cat['id'], 'code' => $code, 'bn' => $nameBn, 'en' => $nameEn]);
-    $row = $stmt->fetch();
+    $sel = db()->prepare('SELECT code, name_bn, name_en FROM catalog_items WHERE code = :code LIMIT 1');
+    $sel->execute(['code' => $code]);
+    $row = $sel->fetch();
     json_response(201, ['data' => [
         'id' => (string)$row['code'],
         'categoryId' => $categoryCode,
@@ -312,9 +326,11 @@ if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method 
     if ($nameBn === '' || $nameEn === '') {
         json_response(422, ['message' => 'Item Bangla and English names are required.']);
     }
-    $stmt = db()->prepare('UPDATE catalog_items SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true RETURNING code, name_bn, name_en, category_id');
+    $stmt = db()->prepare('UPDATE catalog_items SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true');
     $stmt->execute(['bn' => $nameBn, 'en' => $nameEn, 'code' => $itemCode]);
-    $row = $stmt->fetch();
+    $sel = db()->prepare('SELECT code, name_bn, name_en, category_id FROM catalog_items WHERE code = :code LIMIT 1');
+    $sel->execute(['code' => $itemCode]);
+    $row = $sel->fetch();
     if (!$row) json_response(404, ['message' => 'Item not found']);
     $catStmt = db()->prepare('SELECT code FROM categories WHERE id = :id LIMIT 1');
     $catStmt->execute(['id' => $row['category_id']]);
@@ -336,9 +352,9 @@ if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method 
     if ($usedStmt->fetch()) {
         json_response(409, ['message' => 'Item is used in orders and cannot be deleted.']);
     }
-    $stmt = db()->prepare('DELETE FROM catalog_items WHERE code = :code RETURNING id');
+    $stmt = db()->prepare('DELETE FROM catalog_items WHERE code = :code');
     $stmt->execute(['code' => $itemCode]);
-    if (!$stmt->fetch()) json_response(404, ['message' => 'Item not found']);
+    if ($stmt->rowCount() === 0) json_response(404, ['message' => 'Item not found']);
     json_response(200, ['ok' => true]);
 }
 
@@ -369,7 +385,7 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
         json_response(409, ['message' => 'Email already exists.']);
     }
     $passCol = users_password_column();
-    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery) RETURNING *");
+    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery)");
     $insert->execute([
         'name' => $name,
         'email' => $email,
@@ -379,7 +395,13 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
         'billing' => trim((string)($in['billingAddress'] ?? '')),
         'delivery' => trim((string)($in['deliveryAddress'] ?? '')),
     ]);
-    $created = $insert->fetch();
+    $uid = (int)db()->lastInsertId();
+    $sel = db()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
+    $sel->execute(['id' => $uid]);
+    $created = $sel->fetch();
+    if (!$created) {
+        json_response(500, ['message' => 'User was not created.']);
+    }
     json_response(201, ['data' => public_user($created)]);
 }
 
@@ -405,7 +427,7 @@ if ($path === '/api/v1/orders' && $method === 'POST') {
     $orderNo = 'ORD-' . date('Ymd') . '-' . random_int(1000, 9999);
 
     $signature = array_key_exists('signatureDataUrl', $in) ? persist_signature($in['signatureDataUrl']) : null;
-    $q = db()->prepare('INSERT INTO orders (owner_id, order_no, order_date, delivery_datetime, delivery_time_window, status, billing_address, delivery_address, contact_person, phone, signature_data_url) VALUES (:owner, :order_no, :order_date, :delivery, :delivery_window, :status, :billing, :delivery_addr, :contact, :phone, :signature) RETURNING *');
+    $q = db()->prepare('INSERT INTO orders (owner_id, order_no, order_date, delivery_datetime, delivery_time_window, status, billing_address, delivery_address, contact_person, phone, signature_data_url) VALUES (:owner, :order_no, :order_date, :delivery, :delivery_window, :status, :billing, :delivery_addr, :contact, :phone, :signature)');
     $q->execute([
         'owner' => $user['id'],
         'order_no' => $orderNo,
@@ -419,11 +441,14 @@ if ($path === '/api/v1/orders' && $method === 'POST') {
         'phone' => (string)($in['phone'] ?? $user['phone']),
         'signature' => $signature,
     ]);
-    $order = $q->fetch();
-    replace_order_lines((int)$order['id'], is_array($in['lines'] ?? null) ? $in['lines'] : [], $user);
+    $newOrderId = (int)db()->lastInsertId();
+    replace_order_lines($newOrderId, is_array($in['lines'] ?? null) ? $in['lines'] : [], $user);
     $getCreated = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
-    $getCreated->execute(['id' => $order['id']]);
+    $getCreated->execute(['id' => $newOrderId]);
     $order = $getCreated->fetch();
+    if (!$order) {
+        json_response(500, ['message' => 'Order was not created.']);
+    }
     json_response(201, ['data' => read_order($order)]);
 }
 
@@ -490,13 +515,18 @@ if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'DELE
     $user = require_auth();
     require_role($user, ['user']);
     $orderId = (int)$m[1];
-    $stmt = db()->prepare('UPDATE orders SET is_active = false, updated_at = NOW() WHERE id = :id AND owner_id = :uid AND status = :status RETURNING *');
+    $stmt = db()->prepare('UPDATE orders SET is_active = false, updated_at = NOW() WHERE id = :id AND owner_id = :uid AND status = :status');
     $stmt->execute([
         'id' => $orderId,
         'uid' => $user['id'],
         'status' => 'draft',
     ]);
-    $order = $stmt->fetch();
+    if ($stmt->rowCount() === 0) {
+        json_response(404, ['message' => 'Order not found or cannot be deleted']);
+    }
+    $get = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
+    $get->execute(['id' => $orderId]);
+    $order = $get->fetch();
     if (!$order) {
         json_response(404, ['message' => 'Order not found or cannot be deleted']);
     }
@@ -507,9 +537,14 @@ if (preg_match('#^/api/v1/orders/(\d+)/confirm$#', $path, $m) === 1 && $method =
     $user = require_auth();
     require_role($user, ['user']);
     $orderId = (int)$m[1];
-    $stmt = db()->prepare('UPDATE orders SET status = :status, submitted_at = NOW(), updated_at = NOW() WHERE id = :id AND owner_id = :uid RETURNING *');
+    $stmt = db()->prepare('UPDATE orders SET status = :status, submitted_at = NOW(), updated_at = NOW() WHERE id = :id AND owner_id = :uid');
     $stmt->execute(['status' => 'submitted', 'id' => $orderId, 'uid' => $user['id']]);
-    $order = $stmt->fetch();
+    if ($stmt->rowCount() === 0) {
+        json_response(404, ['message' => 'Order not found']);
+    }
+    $get = db()->prepare('SELECT * FROM orders WHERE id = :id AND owner_id = :uid LIMIT 1');
+    $get->execute(['id' => $orderId, 'uid' => $user['id']]);
+    $order = $get->fetch();
     if (!$order) {
         json_response(404, ['message' => 'Order not found']);
     }
@@ -549,15 +584,22 @@ if (preg_match('#^/api/v1/orders/(\d+)/challan$#', $path, $m) === 1 && $method =
         json_response(409, ['message' => 'Challan already exists for this order.']);
     }
     $snapshot = read_order($order);
-    $q = db()->prepare('INSERT INTO challans (order_id, generated_by, snapshot) VALUES (:order, :user, :snap) RETURNING *');
+    $q = db()->prepare('INSERT INTO challans (order_id, generated_by, snapshot) VALUES (:order, :user, :snap)');
     $q->execute(['order' => $orderId, 'user' => $user['id'], 'snap' => json_encode($snapshot)]);
+    $challanId = (int)db()->lastInsertId();
     db()->prepare('UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :id')
         ->execute(['status' => 'processing', 'id' => $orderId]);
     log_activity((int)$user['id'], 'order', $orderId, 'challan_generated', null, [
         'orderNo' => (string)($order['order_no'] ?? ''),
         'challanGenerated' => true,
     ]);
-    json_response(201, ['data' => $q->fetch()]);
+    $chSel = db()->prepare('SELECT * FROM challans WHERE id = :id LIMIT 1');
+    $chSel->execute(['id' => $challanId]);
+    $chRow = $chSel->fetch();
+    if (!$chRow) {
+        json_response(500, ['message' => 'Challan was not created.']);
+    }
+    json_response(201, ['data' => $chRow]);
 }
 if (preg_match('#^/api/v1/orders/(\d+)/challan$#', $path, $m) === 1 && $method === 'GET') {
     $user = require_auth();
@@ -601,7 +643,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
     $verStmt = db()->prepare("SELECT COALESCE(MAX(version_no), 0) AS v FROM invoices WHERE order_id = :order AND type = 'purchase'");
     $verStmt->execute(['order' => $orderId]);
     $version = (int)$verStmt->fetch()['v'] + 1;
-    $ins = db()->prepare("INSERT INTO invoices (order_id, type, version_no, generated_by, subtotal, grand_total, snapshot) VALUES (:order, 'purchase', :version, :uid, :subtotal, :grand, :snap) RETURNING *");
+    $ins = db()->prepare("INSERT INTO invoices (order_id, type, version_no, generated_by, subtotal, grand_total, snapshot) VALUES (:order, 'purchase', :version, :uid, :subtotal, :grand, :snap)");
     $ins->execute([
         'order' => $orderId,
         'version' => $version,
@@ -610,7 +652,13 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
         'grand' => $subtotal,
         'snap' => $pack['snapshotJson'],
     ]);
-    $invoice = $ins->fetch();
+    $invId = (int)db()->lastInsertId();
+    $invSel = db()->prepare('SELECT * FROM invoices WHERE id = :id LIMIT 1');
+    $invSel->execute(['id' => $invId]);
+    $invoice = $invSel->fetch();
+    if (!$invoice) {
+        json_response(500, ['message' => 'Invoice was not created.']);
+    }
     // Do not set delivered/completed here — admin marks delivery complete separately.
     // Purchase invoice increases payable to supplier.
     add_ledger($orderId, 'purchase_invoice', $subtotal, 'credit', 'invoice', (int)$invoice['id']);
@@ -706,7 +754,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
     $verStmt = db()->prepare("SELECT COALESCE(MAX(version_no), 0) AS v FROM invoices WHERE order_id = :order AND type = 'billing'");
     $verStmt->execute(['order' => $orderId]);
     $version = (int)$verStmt->fetch()['v'] + 1;
-    $ins = db()->prepare("INSERT INTO invoices (order_id, type, version_no, generated_by, subtotal, grand_total, snapshot) VALUES (:order, 'billing', :version, :uid, :subtotal, :grand, :snap) RETURNING *");
+    $ins = db()->prepare("INSERT INTO invoices (order_id, type, version_no, generated_by, subtotal, grand_total, snapshot) VALUES (:order, 'billing', :version, :uid, :subtotal, :grand, :snap)");
     $ins->execute([
         'order' => $orderId,
         'version' => $version,
@@ -723,7 +771,13 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
             'lines' => $snapshotLines,
         ]),
     ]);
-    $invoice = $ins->fetch();
+    $invId = (int)db()->lastInsertId();
+    $invSel = db()->prepare('SELECT * FROM invoices WHERE id = :id LIMIT 1');
+    $invSel->execute(['id' => $invId]);
+    $invoice = $invSel->fetch();
+    if (!$invoice) {
+        json_response(500, ['message' => 'Invoice was not created.']);
+    }
     db()->prepare('UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :id')
         ->execute(['status' => 'invoiced', 'id' => $orderId]);
     // Billing invoice increases receivable from customer.
@@ -816,14 +870,21 @@ if ($path === '/api/v1/statements/generate' && $method === 'POST') {
     $in = json_input();
     $type = (string)($in['type'] ?? 'billing');
     if (!in_array($type, ['purchase', 'billing'], true)) json_response(422, ['message' => 'Invalid statement type']);
-    $stmt = db()->prepare('INSERT INTO statement_cycles (type, cycle_start, cycle_end, generated_by) VALUES (:type, :start, :end, :uid) RETURNING *');
+    $stmt = db()->prepare('INSERT INTO statement_cycles (type, cycle_start, cycle_end, generated_by) VALUES (:type, :start, :end, :uid)');
     $stmt->execute([
         'type' => $type,
         'start' => (string)($in['cycleStart'] ?? date('Y-m-01')),
         'end' => (string)($in['cycleEnd'] ?? date('Y-m-t')),
         'uid' => $user['id'],
     ]);
-    json_response(201, ['data' => $stmt->fetch()]);
+    $scId = (int)db()->lastInsertId();
+    $scSel = db()->prepare('SELECT * FROM statement_cycles WHERE id = :id LIMIT 1');
+    $scSel->execute(['id' => $scId]);
+    $scRow = $scSel->fetch();
+    if (!$scRow) {
+        json_response(500, ['message' => 'Statement cycle was not created.']);
+    }
+    json_response(201, ['data' => $scRow]);
 }
 
 if ($path === '/api/v1/statements' && $method === 'GET') {
@@ -1203,7 +1264,7 @@ if ($path === '/api/v1/admin/activity-logs' && $method === 'GET') {
         }
         $rows = $stmt->fetchAll();
     } catch (\PDOException $e) {
-        if ((string)$e->getCode() === '42P01' || str_contains((string)$e->getMessage(), 'activity_logs')) {
+        if (pdo_exception_is_missing_table($e) || str_contains((string)$e->getMessage(), 'activity_logs')) {
             json_response(200, ['data' => []]);
         }
         throw $e;

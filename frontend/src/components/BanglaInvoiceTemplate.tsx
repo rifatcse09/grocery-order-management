@@ -119,17 +119,19 @@ export function BanglaInvoiceTemplate({
       <div className="rounded-3xl bg-white p-4 sm:p-6">
         <div className="print-invoice-header flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-4">
           <div className="max-w-xl">
-            <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">হোসেন মিট এন্ড কো.</h2>
-            <p className="mt-2 text-sm font-bold text-slate-900 sm:text-base">
-              মাংসসহ গৃহের সব ধরনের মুদি সামগ্রী, প্রসসড ও বাজার উপযোগী পণ্য
-            </p>
-            <p className="text-sm font-bold text-slate-900 sm:text-base">সরবরাহ করা হয়—খুচরা / পাইকারী -</p>
-            <p className="text-sm font-bold text-slate-900 sm:text-base">আপনার দোরগোড়ায় ডেলিভারি করা হয়।</p>
+            <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">{companyNameBn}</h2>
+            {companyName !== companyNameBn ? (
+              <p className="mt-0.5 text-xs font-medium text-slate-600 sm:text-sm">{companyName}</p>
+            ) : null}
+            <p className="mt-2 text-sm font-bold text-slate-900 sm:text-base whitespace-pre-line">{companyTaglineBn}</p>
+            {companyTagline !== companyTaglineBn ? (
+              <p className="mt-1 text-sm font-bold text-slate-900 sm:text-base whitespace-pre-line">{companyTagline}</p>
+            ) : null}
             <p className="mt-4 text-xs text-slate-700 sm:text-sm">{companyAddress}</p>
             <p className="text-xs text-slate-700 sm:text-sm">হটলাইন: {hotline}</p>
           </div>
           <div className="ml-auto -mt-1 self-start text-right sm:-mt-2">
-            <img src="/hmc-logo.png" alt="HMC logo" className="ml-auto h-24 w-auto object-contain sm:h-28" />
+            <img src="/hmc-logo.png" alt={companyName} className="ml-auto h-24 w-auto object-contain sm:h-28" />
             <h2 className="mt-1 whitespace-nowrap text-lg font-extrabold tracking-[0.01em] text-slate-900 sm:text-xl">
               {invoiceHeading}
             </h2>
