@@ -67,6 +67,7 @@ const navFor: Record<
   moderator: [
     { to: "/moderator/dashboard", label: "Dashboard", icon: BarChart3 },
     { to: "/moderator/orders", label: "Order list", icon: ClipboardList },
+    { to: "/moderator/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
     { to: "/moderator/purchase-statements", label: "Purchase statements", icon: FileText },
     { to: "/moderator/catalog/categories", label: "Category list", icon: Package },
     { to: "/moderator/catalog/products", label: "Product list", icon: Package },
@@ -76,7 +77,7 @@ const navFor: Record<
     { to: "/admin/orders", label: "Order list", icon: ClipboardList },
     { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
     { to: "/admin/purchase-statements", label: "Purchase statements", icon: FileText },
-    { to: "/admin/statements", label: "Billing cycle statements", icon: FileText },
+    { to: "/admin/statements", label: "Billing statements", icon: FileText },
     { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
     { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
     { to: "/admin/catalog/categories", label: "Category list", icon: BookText },

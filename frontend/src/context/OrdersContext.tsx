@@ -84,27 +84,28 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   }, [user?.id, loadOrders]);
 
   const upsertOrder = useCallback((o: Order) => {
+    const normalized: Order = o.createdAt ? o : { ...o, createdAt: new Date().toISOString() };
     setOrders((prev) => {
-      const i = prev.findIndex((x) => x.id === o.id);
+      const i = prev.findIndex((x) => x.id === normalized.id);
       const next =
-        i >= 0 ? [...prev.slice(0, i), o, ...prev.slice(i + 1)] : [o, ...prev];
+        i >= 0 ? [...prev.slice(0, i), normalized, ...prev.slice(i + 1)] : [normalized, ...prev];
       localStorage.setItem(KEY, JSON.stringify(next));
       if (apiEnabled()) {
         if (i >= 0) {
-          void apiUpdateOrder(o.id, o)
+          void apiUpdateOrder(normalized.id, normalized)
             .then((updated) => {
               setOrders((curr) => {
-                const merged = curr.map((x) => (x.id === o.id ? updated : x));
+                const merged = curr.map((x) => (x.id === normalized.id ? updated : x));
                 localStorage.setItem(KEY, JSON.stringify(merged));
                 return merged;
               });
             })
             .catch(() => {
               // If update fails for temp/local ids, fallback to create on backend.
-              void apiCreateOrder(o)
+              void apiCreateOrder(normalized)
                 .then((created) => {
                   setOrders((curr) => {
-                    const merged = curr.map((x) => (x.id === o.id ? created : x));
+                    const merged = curr.map((x) => (x.id === normalized.id ? created : x));
                     localStorage.setItem(KEY, JSON.stringify(merged));
                     return merged;
                   });
@@ -114,10 +115,10 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
                 });
             });
         } else {
-          void apiCreateOrder(o)
+          void apiCreateOrder(normalized)
             .then((created) => {
               setOrders((curr) => {
-                const merged = curr.map((x) => (x.id === o.id ? created : x));
+                const merged = curr.map((x) => (x.id === normalized.id ? created : x));
                 localStorage.setItem(KEY, JSON.stringify(merged));
                 return merged;
               });

@@ -2,6 +2,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
+import { toBanglaDigits } from "../lib/banglaNumerals";
 import { useOrders } from "../context/OrdersContext";
 import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 
@@ -12,6 +13,11 @@ export function PurchaseInvoiceDetailPage() {
   const order = id ? getById(id) : undefined;
   const isAdmin = location.pathname.startsWith("/admin/");
   const backTo = isAdmin ? "/admin/purchase-invoices" : "/moderator/orders";
+  const deliveredAtText = order?.deliveredAt
+    ? toBanglaDigits(
+        new Date(order.deliveredAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+      )
+    : "Not marked delivered yet";
 
   useEffect(() => {
     if (!order) return;
@@ -67,6 +73,9 @@ export function PurchaseInvoiceDetailPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+              Delivered at: {deliveredAtText}
+            </span>
             <button
               type="button"
               onClick={() => window.print()}

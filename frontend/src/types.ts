@@ -48,8 +48,12 @@ export interface Order {
   ownerId?: string;
   orderNo: string;
   orderDate: string;
+  /** Server/local create timestamp. */
+  createdAt?: string;
   /** ISO timestamp when the user confirmed submit (optional on legacy / seed data). */
   submittedAt?: string;
+  /** ISO timestamp when delivery was marked complete. */
+  deliveredAt?: string;
   deliveryDate: string;
   deliveryTime?: string;
   status: OrderStatus;

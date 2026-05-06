@@ -61,7 +61,7 @@ export default function App() {
             <Route path="/moderator/orders" element={<ModeratorOrdersPage />} />
             <Route path="/moderator/purchase-invoices/:id" element={<PurchaseInvoiceDetailPage />} />
             <Route path="/moderator/challans/:id" element={<UserChallanDetailPage />} />
-            <Route path="/moderator/purchase-pending-bills" element={<ModeratorOrdersPage />} />
+            <Route path="/moderator/purchase-pending-bills" element={<AdminPurchasePendingBillsPage />} />
             <Route path="/moderator/purchase-statements" element={<PurchaseBillingStatementsPage />} />
             <Route path="/moderator/orders/:id" element={<ModeratorOrderDetailPage />} />
             <Route path="/moderator/dashboard" element={<AdminDashboardPage />} />

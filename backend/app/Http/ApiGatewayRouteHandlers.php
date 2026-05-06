@@ -497,11 +497,14 @@ if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'PUT'
     if (
         $after
         && in_array((string)($user['role'] ?? ''), ['admin', 'moderator'], true)
-        && (string)$after['status'] !== 'invoiced'
-        && order_has_invoice_type($orderId, 'purchase')
         && array_key_exists('lines', $in) && is_array($in['lines']) && count($in['lines']) > 0
     ) {
-        sync_latest_purchase_invoice_from_order_lines($orderId);
+        if (order_has_invoice_type($orderId, 'purchase')) {
+            sync_latest_purchase_invoice_from_order_lines($orderId);
+        }
+        if (order_has_challan($orderId)) {
+            sync_latest_challan_snapshot_from_order($orderId);
+        }
     }
     $get->execute(['id' => $orderId]);
     $final = $get->fetch();
@@ -687,6 +690,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
     $in = json_input();
     $markupPercent = (float)($in['markupPercent'] ?? 0);
     $markupByCategory = is_array($in['markupByCategory'] ?? null) ? $in['markupByCategory'] : [];
+    $markupByItem = is_array($in['markupByItem'] ?? null) ? $in['markupByItem'] : [];
     $existingStmt = db()->prepare("SELECT id FROM invoices WHERE order_id = :order AND type = 'billing' ORDER BY id DESC LIMIT 1");
     $existingStmt->execute(['order' => $orderId]);
     if ($existingStmt->fetch()) {
@@ -711,9 +715,13 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
         $base = (float)($line['lineTotal'] ?? 0);
         $purchaseSubtotal += $base;
         $lineCategory = (string)($line['categoryId'] ?? '');
+        $lineIdKey = (string)($line['id'] ?? '');
         $lineMarkupPercent = $markupPercent;
         if ($lineCategory !== '' && array_key_exists($lineCategory, $markupByCategory)) {
             $lineMarkupPercent = (float)$markupByCategory[$lineCategory];
+        }
+        if ($lineIdKey !== '' && array_key_exists($lineIdKey, $markupByItem)) {
+            $lineMarkupPercent = (float)$markupByItem[$lineIdKey];
         }
         $markupAmount = round($base * ($lineMarkupPercent / 100), 2);
         $billedTotal = $base + $markupAmount;
@@ -765,6 +773,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
             'markupMode' => empty($markupByCategory) ? 'global' : 'category_wise',
             'markupPercent' => $markupPercent,
             'markupByCategory' => $markupByCategory,
+            'markupByItem' => $markupByItem,
             'purchaseSubtotal' => $purchaseSubtotal,
             'billingSubtotal' => $subtotal,
             'profitLossTotal' => $profitLossTotal,
@@ -792,13 +801,17 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
 
 if (preg_match('#^/api/v1/orders/(\d+)/mark-delivered$#', $path, $m) === 1 && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'moderator']);
     $orderId = (int)$m[1];
     $get = db()->prepare('SELECT * FROM orders WHERE id = :id AND is_active = true LIMIT 1');
     $get->execute(['id' => $orderId]);
     $order = $get->fetch();
     if (!$order) {
         json_response(404, ['message' => 'Order not found']);
+    }
+    // Business rule: moderators handle delivery marking. Admin can mark delivered only for admin-owned orders.
+    if ((string)$user['role'] === 'admin' && (int)$order['owner_id'] !== (int)$user['id']) {
+        json_response(403, ['message' => 'Only moderators can mark this order as delivered.']);
     }
     $st = (string)$order['status'];
     if ($st === 'invoiced') {
@@ -812,7 +825,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/mark-delivered$#', $path, $m) === 1 && $m
         json_response(422, ['message' => 'Order cannot be marked delivered from its current status.']);
     }
     $before = ['status' => $st];
-    db()->prepare('UPDATE orders SET status = :status, updated_at = NOW() WHERE id = :id')
+    db()->prepare('UPDATE orders SET status = :status, delivered_at = NOW(), updated_at = NOW() WHERE id = :id')
         ->execute(['status' => 'completed', 'id' => $orderId]);
     log_activity((int)$user['id'], 'order', $orderId, 'order_marked_delivered', $before, [
         'status' => 'completed',

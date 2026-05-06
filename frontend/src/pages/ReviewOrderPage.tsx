@@ -8,6 +8,7 @@ import {
   Package,
   Pen,
   Phone,
+  Truck,
   User,
 } from "lucide-react";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
@@ -16,6 +17,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 
 function formatQty(kg: string, gram: string, piece: string) {
   const parts: string[] = [];
@@ -164,6 +166,13 @@ export function ReviewOrderPage() {
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
+          {order.status === "delivered" || order.status === "invoiced" ? (
+            <DetailTile
+              icon={Truck}
+              label="Delivered"
+              value={order.deliveredAt ? formatShortDeliveredAt(order.deliveredAt) : "Time will appear when recorded"}
+            />
+          ) : null}
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">

@@ -19,7 +19,7 @@ import {
 
 interface AuthState {
   user: SessionUser | null;
-  login: (email: string, password: string, role: Role) => Promise<{ ok: boolean; message?: string }>;
+  login: (email: string, password: string) => Promise<{ ok: boolean; role?: Role; message?: string }>;
   register: (payload: RegisterPayload) => Promise<{ ok: boolean; message?: string }>;
   createAccountByAdmin: (payload: AdminCreatePayload) => Promise<{ ok: boolean; message?: string }>;
   listAccounts: () => SessionUser[];
@@ -171,29 +171,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   const login = useCallback(
-    async (email: string, password: string, role: Role) => {
+    async (email: string, password: string) => {
       if (apiEnabled()) {
         try {
-          const res = await apiLogin({ email, password, role });
+          const res = await apiLogin({ email, password });
           setUser(res.user);
           localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
           localStorage.setItem(TOKEN_KEY, res.token);
-          return { ok: true };
+          return { ok: true, role: res.user.role };
         } catch (error) {
           return { ok: false, message: error instanceof Error ? error.message : "Sign in failed." };
         }
       }
       const emailNorm = email.trim().toLowerCase();
-      const fallbackEmail = demoProfiles[role].email.toLowerCase();
-      const targetEmail = emailNorm || fallbackEmail;
-      const accountFromStore = accounts.find(
-        (a) => a.role === role && a.email.toLowerCase() === targetEmail,
-      );
-      const account = accountFromStore ?? demoProfiles[role];
-
-      const isBuiltInDemo = account.id === demoProfiles[role].id;
+      if (emailNorm === "") {
+        return { ok: false, message: "Email is required." };
+      }
+      const account = accounts.find((a) => a.email.toLowerCase() === emailNorm);
+      if (!account) {
+        return { ok: false, message: "Account not found." };
+      }
+      const isBuiltInDemo = Object.values(demoProfiles).some((d) => d.id === account.id);
       const passwordOk = isBuiltInDemo
-        ? password.trim().length > 0 || password === demoProfiles[role].password
+        ? password.trim().length > 0
         : account.password === password;
 
       if (!passwordOk) {
@@ -207,7 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const next = toSession(account);
       setUser(next);
       localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-      return { ok: true };
+      return { ok: true, role: next.role };
     },
     [accounts],
   );

@@ -396,6 +396,11 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
             </table>
           </div>
           <h3 className="mt-5 text-sm font-semibold text-slate-900">Markup rate history</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Each row records one past change (previous → new). Current defaults used for new calculations are always the
+            percentages in the <strong className="font-semibold text-slate-800">Billing markup settings</strong> table
+            above — not an older value from this log.
+          </p>
           <div className="table-scroll mt-2 rounded-2xl border border-border">
             <table className="min-w-[640px] w-full text-left text-sm">
               <thead className="bg-muted text-xs uppercase tracking-wide text-foreground">

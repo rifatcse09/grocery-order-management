@@ -4,6 +4,7 @@ import { ArrowLeft, Receipt, User } from "lucide-react";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { StatusBadge } from "../components/StatusBadge";
 import { useOrders } from "../context/OrdersContext";
+import { formatMoneyBn } from "../lib/banglaNumerals";
 import { billedAmountsForLine } from "../lib/billingLineAmounts";
 import { hasBillingInvoice } from "../lib/invoiceFlow";
 
@@ -112,13 +113,15 @@ export function UserInvoiceDetailPage() {
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
+            {subtotal > 0 ? `৳ ${formatMoneyBn(Math.round(subtotal), { minFractionDigits: 0, maxFractionDigits: 0 })}` : "—"}
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {order.grandTotal != null ? `৳ ${Math.round(order.grandTotal).toLocaleString("en-US")}` : "—"}
+            {order.grandTotal != null
+              ? `৳ ${formatMoneyBn(Math.round(order.grandTotal), { minFractionDigits: 0, maxFractionDigits: 0 })}`
+              : "—"}
           </p>
         </div>
       </div>

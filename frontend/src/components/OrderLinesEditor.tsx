@@ -11,13 +11,17 @@ export function OrderLinesEditor({
   showPricing = false,
   largeText = false,
   billingMarkupsByCategory,
+  /** When true with showPricing, always show Markup % / after-markup columns (uses empty category map if needed). */
+  billingMarkupPreview = false,
   globalBillingMarkupPercent = 0,
   /** When true, entire editor is read-only (legacy). */
   linesLocked = false,
   /** When true, kg / g / pcs cannot change (defaults to same as `linesLocked` if omitted). */
   quantityLocked: quantityLockedProp,
-  /** When true, cost unit, billing markup columns, delete row locked (defaults to same as `linesLocked` if omitted). */
+  /** When true, cost unit and line total are locked (defaults to same as `linesLocked` if omitted). */
   pricingLocked: pricingLockedProp,
+  /** When set, locks Markup % only; if omitted, markup follows `pricingLocked`. */
+  markupLocked,
 }: {
   lines: OrderLine[];
   onChange: (next: OrderLine[]) => void;
@@ -25,16 +29,33 @@ export function OrderLinesEditor({
   showPricing?: boolean;
   largeText?: boolean;
   billingMarkupsByCategory?: Record<string, number>;
+  billingMarkupPreview?: boolean;
   /** Used with category map when computing billing columns (matches invoice). */
   globalBillingMarkupPercent?: number;
   linesLocked?: boolean;
   quantityLocked?: boolean;
   pricingLocked?: boolean;
+  markupLocked?: boolean;
 }) {
   const catMap = new Map(categories.map((c) => [c.id, c]));
+  const billingCategoryMap = billingMarkupsByCategory ?? {};
+  const showMarkupCols = Boolean(
+    showPricing && (billingMarkupPreview || billingMarkupsByCategory != null),
+  );
   const lockAll = Boolean(linesLocked);
   const quantityLocked = lockAll || Boolean(quantityLockedProp);
   const pricingLocked = lockAll || Boolean(pricingLockedProp);
+  /**
+   * Admin billing preview: never infer markup lock from cost lock (purchase invoice locks cost, not markup).
+   * Pass markupLocked explicitly to freeze % after billing if needed.
+   */
+  const markupLockedEffective =
+    lockAll ||
+    (markupLocked !== undefined
+      ? Boolean(markupLocked)
+      : showMarkupCols
+        ? false
+        : pricingLocked);
 
   const update = (id: string, patch: Partial<OrderLine>) => {
     if (lockAll) return;
@@ -44,6 +65,7 @@ export function OrderLinesEditor({
     ) {
       return;
     }
+    if (markupLockedEffective && "markupPercent" in patch) return;
     if (pricingLocked && ("unitPrice" in patch || "lineTotal" in patch)) return;
     onChange(
       lines.map((l) => {
@@ -98,7 +120,7 @@ export function OrderLinesEditor({
               <>
                 <th className="px-3 py-3 text-right normal-case">Cost unit (required)</th>
                 <th className="px-3 py-3 text-right normal-case">{COL.lineTotal}</th>
-                {billingMarkupsByCategory ? (
+                {showMarkupCols ? (
                   <>
                     <th className="px-3 py-3 text-right normal-case">Markup %</th>
                     <th className="px-3 py-3 text-right normal-case">After markup unit</th>
@@ -113,15 +135,22 @@ export function OrderLinesEditor({
         <tbody>
           {lines.map((line) => {
             const cat = catMap.get(line.categoryId);
-            const markupPctFromCat = Number(billingMarkupsByCategory?.[line.categoryId] ?? globalBillingMarkupPercent);
-            const { billedUnit: billingUnit, billedLine: billingLineTotal, pct: computedPct } =
-              billingMarkupsByCategory != null
-                ? billedAmountsForLine(line, billingMarkupsByCategory, globalBillingMarkupPercent)
-                : { billedUnit: null as number | null, billedLine: null as number | null, pct: 0 };
-            const markupPct =
-              line.markupPercent != null && Number.isFinite(Number(line.markupPercent))
-                ? Number(line.markupPercent)
-                : markupPctFromCat || computedPct;
+            const markupPctFromCat = Number(
+              billingCategoryMap[line.categoryId] ?? globalBillingMarkupPercent,
+            );
+            const { billedUnit: billingUnit, billedLine: billingLineTotal } = showMarkupCols
+              ? billedAmountsForLine(line, billingCategoryMap, globalBillingMarkupPercent)
+              : { billedUnit: null as number | null, billedLine: null as number | null };
+            const lineMarkupOverride =
+              line.markupPercent !== undefined &&
+              line.markupPercent !== null &&
+              Number.isFinite(Number(line.markupPercent));
+            const markupPlaceholder = Number.isFinite(markupPctFromCat)
+              ? String(markupPctFromCat)
+              : "—";
+            const markupTitle = Number.isFinite(markupPctFromCat)
+              ? `Category default ${markupPctFromCat}% (editable)`
+              : "Markup %";
             return (
               <tr key={line.id} className={`${showPricing ? "border-t border-border bg-card" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
@@ -220,9 +249,37 @@ export function OrderLinesEditor({
                     <td className="px-3 py-2 text-right text-sm font-medium tabular-nums">
                       {line.lineTotal != null ? line.lineTotal.toFixed(0) : "—"}
                     </td>
-                    {billingMarkupsByCategory ? (
+                    {showMarkupCols ? (
                       <>
-                        <td className="px-3 py-2 text-right text-sm font-semibold text-amber-700">{markupPct}%</td>
+                        <td className="px-3 py-2 text-right">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            autoComplete="off"
+                            aria-label="Markup percent for this line"
+                            readOnly={markupLockedEffective}
+                            disabled={markupLockedEffective}
+                            className={`pointer-events-auto w-28 rounded-lg border px-2 py-1.5 text-right text-sm tabular-nums outline-none transition-colors ${
+                              markupLockedEffective
+                                ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-600"
+                                : "cursor-text border-slate-200 bg-white text-slate-900 shadow-sm placeholder:text-slate-500 hover:border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/25"
+                            }`}
+                            value={lineMarkupOverride ? String(line.markupPercent) : ""}
+                            placeholder={markupPlaceholder}
+                            title={markupTitle}
+                            onChange={(e) => {
+                              if (markupLockedEffective) return;
+                              const raw = e.target.value.trim().replace(",", ".");
+                              if (raw === "" || raw === ".") {
+                                update(line.id, { markupPercent: undefined });
+                                return;
+                              }
+                              const pct = Number(raw);
+                              if (!Number.isFinite(pct) || pct < 0) return;
+                              update(line.id, { markupPercent: pct });
+                            }}
+                          />
+                        </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
                           {billingUnit != null ? billingUnit.toFixed(0) : "—"}
                         </td>

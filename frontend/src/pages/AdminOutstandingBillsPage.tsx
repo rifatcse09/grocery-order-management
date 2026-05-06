@@ -4,12 +4,48 @@ import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
 import { BdTakaIcon } from "../components/icons/BdTakaIcon";
-import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
+import {
+  apiApplyStatementBooking,
+  apiEnabled,
+  apiListAdjustments,
+  apiListPayments,
+  type AdjustmentTxn,
+  type PaymentTxn,
+} from "../lib/api";
+import { useAuth } from "../context/AuthContext";
+import {
+  invoiceCapForStatement,
+  netPaidAppliedOnOrder,
+  orderNumericId,
+  planAdjustmentDecreaseChunks,
+  planPaymentIncreaseChunks,
+  totalPaymentRoomOnOrders,
+} from "../lib/statementPaymentAllocation";
+import type { Order } from "../types";
 
 type Range = "all" | "7d" | "30d" | "90d";
 
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function billingStatementAmount(o: { grandTotal?: number; billingSubtotal?: number }): number {
+  return Number(o.grandTotal ?? o.billingSubtotal ?? 0) || 0;
+}
+
+/** After save: cumulative total paid (current + pay now), clamped to [0, cap]. */
+function previewPaidAfterPayNow(cap: number, currentPaid: number, payNowRaw: string): number | null {
+  const t = payNowRaw.trim();
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  const sum = Math.round((currentPaid + n) * 100) / 100;
+  return Math.round(Math.min(cap, Math.max(0, sum)) * 100) / 100;
+}
+
 export function AdminOutstandingBillsPage() {
-  const { orders } = useOrders();
+  const { orders, loadOrders } = useOrders();
+  const { user } = useAuth();
   const [range, setRange] = useState<Range>("all");
   const [customer, setCustomer] = useState("all");
   const [page, setPage] = useState(1);
@@ -18,23 +54,32 @@ export function AdminOutstandingBillsPage() {
     payments: [],
     adjustments: [],
   });
+  const [adjustOrder, setAdjustOrder] = useState<Order | null>(null);
+  const [adjustPayNowInput, setAdjustPayNowInput] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+
+  const canAdjust = user?.role === "admin";
 
   useEffect(() => {
+    if (!user || !apiEnabled()) return;
     void Promise.all([apiListPayments(), apiListAdjustments()])
       .then(([payments, adjustments]) => setTransactions({ payments, adjustments }))
       .catch(() => setTransactions({ payments: [], adjustments: [] }));
-  }, []);
+  }, [user]);
 
-  const invoiced = useMemo(
-    () => orders.filter((o) => o.status === "invoiced" || o.invoiceGenerated),
+  const billingInvoiced = useMemo(
+    () =>
+      orders.filter((o) => o.billingInvoiceGenerated && billingStatementAmount(o) > 0),
     [orders],
   );
 
   const customers = useMemo(
     () =>
-      [...new Set(invoiced.map((o) => o.contactPerson?.trim()).filter(Boolean))]
-        .sort((a, b) => String(a).localeCompare(String(b))),
-    [invoiced],
+      [...new Set(billingInvoiced.map((o) => o.contactPerson?.trim()).filter(Boolean))].sort((a, b) =>
+        String(a).localeCompare(String(b)),
+      ),
+    [billingInvoiced],
   );
 
   const rows = useMemo(() => {
@@ -45,7 +90,7 @@ export function AdminOutstandingBillsPage() {
     if (range === "30d") from.setDate(now.getDate() - 30);
     if (range === "90d") from.setDate(now.getDate() - 90);
 
-    const invoiceRows = invoiced
+    const invoiceRows = billingInvoiced
       .filter((o) => {
         if (customer !== "all" && o.contactPerson !== customer) return false;
         if (range === "all") return true;
@@ -58,60 +103,43 @@ export function AdminOutstandingBillsPage() {
         due.setDate(due.getDate() + 7);
         const diff = Math.floor((now.getTime() - due.getTime()) / 86400000);
         const overdueDays = diff > 0 ? diff : 0;
+        const oid = orderNumericId(o);
+        const cap = invoiceCapForStatement(o, "billing");
+        const net =
+          oid != null ? netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments) : 0;
+        // Keep “Remaining” consistent with UI display (whole taka). Avoid lingering 0.01/0.1 due to rounding.
+        const remaining = Math.max(0, Math.round(cap) - Math.round(net));
         return {
           id: o.id,
+          order: o,
           orderNo: o.orderNo,
           customer: o.contactPerson || "Unknown",
           issue,
           due,
-          total: o.grandTotal ?? 0,
-          remaining: o.grandTotal ?? 0,
+          cap,
+          netPaid: net,
+          remaining,
           overdueDays,
           isOverdue: overdueDays > 0,
         };
       })
       .sort((a, b) => a.issue.getTime() - b.issue.getTime());
 
-    const paymentsByCustomer = new Map<string, number>();
-    transactions.payments
-      .filter((txn) => (txn.invoice_type ?? "billing") === "billing")
-      .forEach((txn) => {
-        const customerName = txn.contact_person?.trim() || "Unknown";
-        const amount = Number(txn.amount || 0);
-        if (!Number.isFinite(amount) || amount <= 0) return;
-        paymentsByCustomer.set(customerName, (paymentsByCustomer.get(customerName) ?? 0) + amount);
-      });
-    transactions.adjustments
-      .filter((txn) => txn.type === "billing")
-      .forEach((txn) => {
-        const customerName = txn.contact_person?.trim() || "Unknown";
-        const amount = Number(txn.amount || 0);
-        if (!Number.isFinite(amount) || amount <= 0) return;
-        paymentsByCustomer.set(customerName, Math.max(0, (paymentsByCustomer.get(customerName) ?? 0) - amount));
-      });
+    return invoiceRows.filter((r) => r.remaining > 0.001).sort((a, b) => b.issue.getTime() - a.issue.getTime());
+  }, [billingInvoiced, range, customer, transactions]);
 
-    const byCustomer = new Map<string, typeof invoiceRows>();
-    invoiceRows.forEach((r) => {
-      const arr = byCustomer.get(r.customer) ?? [];
-      arr.push(r);
-      byCustomer.set(r.customer, arr);
-    });
-
-    byCustomer.forEach((list, c) => {
-      let pool = paymentsByCustomer.get(c) ?? 0;
-      if (pool <= 0) return;
-      for (const row of list) {
-        if (pool <= 0) break;
-        const consume = Math.min(pool, row.remaining);
-        row.remaining -= consume;
-        pool -= consume;
-      }
-    });
-
-    return invoiceRows
-      .filter((r) => r.remaining > 0)
-      .sort((a, b) => b.issue.getTime() - a.issue.getTime());
-  }, [invoiced, range, customer, transactions]);
+  const adjustPayPreview = useMemo(() => {
+    if (!adjustOrder) return { cur: 0, cap: 0, next: null as number | null };
+    const oid = orderNumericId(adjustOrder);
+    const cap = invoiceCapForStatement(adjustOrder, "billing");
+    const cur =
+      oid != null ? netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments) : 0;
+    return {
+      cur,
+      cap,
+      next: previewPaidAfterPayNow(cap, cur, adjustPayNowInput),
+    };
+  }, [adjustOrder, adjustPayNowInput, transactions.payments, transactions.adjustments]);
 
   const totalUnpaid = rows.reduce((s, r) => s + r.remaining, 0);
   const pendingCount = rows.length;
@@ -124,14 +152,154 @@ export function AdminOutstandingBillsPage() {
     setPage(1);
   }, [range, customer]);
 
+  function openAdjustModal(order: Order) {
+    setAdjustOrder(order);
+    setAdjustPayNowInput("");
+    setSaveError(null);
+    setSaveSuccess(null);
+  }
+
+  function saveOrderBillingBooking() {
+    const order = adjustOrder;
+    if (!order) return;
+    if (!apiEnabled()) {
+      setSaveError("Recording payments requires the API. Set VITE_API_BASE_URL and reload.");
+      setSaveSuccess(null);
+      return;
+    }
+    if (!canAdjust) {
+      setSaveError("Only an admin account can record billing payments.");
+      setSaveSuccess(null);
+      return;
+    }
+    if (!adjustPayNowInput.trim()) {
+      setSaveError(
+        "Enter how much you are paying now (৳). Total paid after save is capped by the invoice amount. Use a negative number only to reduce recorded paid.",
+      );
+      setSaveSuccess(null);
+      return;
+    }
+    if (!Number.isFinite(Number(adjustPayNowInput.trim()))) {
+      setSaveError("Enter a valid number for the payment amount.");
+      setSaveSuccess(null);
+      return;
+    }
+    const oid = orderNumericId(order);
+    if (oid == null) {
+      setSaveError("This order has no valid ID for the server.");
+      setSaveSuccess(null);
+      return;
+    }
+    const cap = invoiceCapForStatement(order, "billing");
+    const current = netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments);
+    const bounded = previewPaidAfterPayNow(cap, current, adjustPayNowInput);
+    if (bounded == null) {
+      setSaveError("Could not compute new total paid. Check the amount paying now.");
+      setSaveSuccess(null);
+      return;
+    }
+    const delta = roundMoney(bounded - current);
+    if (delta === 0) {
+      setSaveError("That leaves total paid unchanged. Enter a different amount paying now, or cancel.");
+      setSaveSuccess(null);
+      return;
+    }
+
+    const cycleOrders = [order];
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    const run = async () => {
+      try {
+        let paymentChunks: Array<{ orderId: number; amount: number }> = [];
+        let adjustmentChunks: Array<{ orderId: number; amount: number }> = [];
+        if (delta > 0.001) {
+          const room = totalPaymentRoomOnOrders(cycleOrders, "billing", transactions.payments, transactions.adjustments);
+          if (delta > room + 0.02) {
+            setSaveError(
+              `You can record at most ৳ ${Math.round(room).toLocaleString("en-US")} against this billing invoice (per-order cap).`,
+            );
+            return;
+          }
+          const chunks = planPaymentIncreaseChunks(
+            cycleOrders,
+            "billing",
+            delta,
+            transactions.payments,
+            transactions.adjustments,
+          );
+          if (chunks.length === 0) {
+            setSaveError("No valid order ID to record payment against.");
+            return;
+          }
+          const sum = roundMoney(chunks.reduce((s, c) => s + c.amount, 0));
+          if (sum + 0.02 < delta) {
+            setSaveError(
+              `Could not allocate ৳ ${Math.round(delta).toLocaleString("en-US")} (allocated ৳ ${Math.round(sum).toLocaleString("en-US")}).`,
+            );
+            return;
+          }
+          paymentChunks = chunks.map((c) => ({ orderId: c.orderId, amount: c.amount }));
+        } else if (delta < -0.001) {
+          const adjChunks = planAdjustmentDecreaseChunks(
+            cycleOrders,
+            "billing",
+            delta,
+            transactions.payments,
+            transactions.adjustments,
+          );
+          if (adjChunks.length === 0) {
+            setSaveError("No recorded payments to reduce for this order.");
+            return;
+          }
+          const need = roundMoney(Math.abs(delta));
+          const sum = roundMoney(adjChunks.reduce((s, c) => s + c.amount, 0));
+          if (sum + 0.02 < need) {
+            setSaveError(
+              `Cannot reduce recorded payments by ৳ ${Math.round(need).toLocaleString("en-US")} — only ৳ ${Math.round(sum).toLocaleString("en-US")} can be adjusted back.`,
+            );
+            return;
+          }
+          adjustmentChunks = adjChunks.map((c) => ({ orderId: c.orderId, amount: c.amount }));
+        } else {
+          return;
+        }
+        await apiApplyStatementBooking({
+          type: "billing",
+          payments: paymentChunks,
+          adjustments: adjustmentChunks,
+          paymentNote: `Billing payment (${order.orderNo})`,
+          adjustmentReason: `Billing correction (${order.orderNo})`,
+        });
+        const [payments, adjustments] = await Promise.all([apiListPayments(), apiListAdjustments()]);
+        setTransactions({ payments, adjustments });
+        await loadOrders();
+        setSaveSuccess("Saved successfully.");
+        setAdjustOrder(null);
+        setAdjustPayNowInput("");
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : "Failed to save");
+      }
+    };
+    void run();
+  }
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">Outstanding bills</h1>
         <p className="text-sm text-slate-600">
-          Total unpaid, pending invoices, overdue payments with customer/date filters. Scroll the table on small
-          screens or long lists.
+          Customer billing invoices with a balance due (ledger-accurate).{" "}
+          {canAdjust ? (
+            <>Record payments and corrections here — billing statements are read-only for cycle totals.</>
+          ) : (
+            <>Sign in as an admin to record payments.</>
+          )}{" "}
+          Scroll the table on small screens or long lists.
         </p>
+        {saveSuccess && !adjustOrder ? (
+          <p className="mt-1 text-sm font-semibold text-emerald-700">{saveSuccess}</p>
+        ) : null}
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
@@ -191,28 +359,30 @@ export function AdminOutstandingBillsPage() {
         </div>
 
         <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
-          <table className="min-w-[720px] w-full text-left text-base">
+          <table className="min-w-[860px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
                 <th className="px-3 py-2">Invoice / Order</th>
                 <th className="px-3 py-2">Customer</th>
                 <th className="px-3 py-2">Issue date</th>
                 <th className="px-3 py-2">Due date</th>
-                <th className="px-3 py-2 text-right">Remaining amount</th>
-                <th className="px-3 py-2">Overdue days</th>
+                <th className="px-3 py-2 text-right">Invoice</th>
+                <th className="px-3 py-2 text-right">Net paid</th>
+                <th className="px-3 py-2 text-right">Remaining</th>
+                <th className="px-3 py-2">Overdue</th>
+                {canAdjust ? <th className="px-3 py-2 text-right">Action</th> : null}
               </tr>
             </thead>
             <tbody>
               {pagedRows.map((r) => (
-                <tr
-                  key={r.id}
-                  className={`border-t border-border ${r.isOverdue ? "bg-red-50" : "bg-card"}`}
-                >
+                <tr key={r.id} className={`border-t border-border ${r.isOverdue ? "bg-red-50" : "bg-card"}`}>
                   <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>
                   <td className="px-3 py-3.5 font-medium">{r.customer}</td>
                   <td className="px-3 py-3.5">{formatIso(r.issue)}</td>
                   <td className="px-3 py-3.5">{formatIso(r.due)}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">
+                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.cap).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.netPaid).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold tabular-nums">
                     ৳ {Math.round(r.remaining).toLocaleString("en-US")}
                   </td>
                   <td className="px-3 py-3.5">
@@ -226,6 +396,18 @@ export function AdminOutstandingBillsPage() {
                       </span>
                     )}
                   </td>
+                  {canAdjust ? (
+                    <td className="px-3 py-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openAdjustModal(r.order)}
+                        className="inline-flex rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 shadow-sm hover:bg-blue-100"
+                        title="Record billing payment or reduce recorded paid"
+                      >
+                        Settle
+                      </button>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
@@ -243,10 +425,91 @@ export function AdminOutstandingBillsPage() {
           }}
         />
       </div>
+
+      {adjustOrder ? (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl">
+            <h3 className="text-2xl font-bold text-slate-900">Settle customer bill</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Enter <strong>this payment</strong> in the red field (৳ paying now). The gray field shows{" "}
+              <strong>total paid after save</strong> (current + this payment, capped by invoice amount). Use a negative
+              “paying now” to record a correction that reduces paid.
+            </p>
+            <p className="mt-2 text-base text-slate-600">
+              {adjustOrder.orderNo} · {adjustOrder.contactPerson}
+            </p>
+            <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-slate-500">Invoice amount</p>
+                <p className="font-semibold text-slate-900">৳ {Math.round(adjustPayPreview.cap).toLocaleString("en-US")}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-slate-500">Paid</p>
+                <p className="font-semibold text-slate-900">৳ {Math.round(adjustPayPreview.cur).toLocaleString("en-US")}</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-slate-500">Balance</p>
+                <p className="font-semibold text-slate-900">
+                  ৳ {Math.round(Math.max(0, adjustPayPreview.cap - adjustPayPreview.cur)).toLocaleString("en-US")}
+                </p>
+              </div>
+            </div>
+            <label className="mt-5 block text-sm font-semibold text-slate-800">
+              <span className="text-red-600">Amount paying now (৳)</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={adjustPayNowInput}
+                onChange={(e) => setAdjustPayNowInput(e.target.value)}
+                className="mt-2 w-full rounded-xl border-2 border-red-300 bg-red-50/50 px-4 py-3 text-lg font-semibold text-red-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
+                placeholder="e.g. 20"
+                autoComplete="off"
+              />
+            </label>
+            <label className="mt-4 block text-sm font-semibold text-slate-600">
+              Total paid after save (read-only)
+              <input
+                type="text"
+                readOnly
+                tabIndex={-1}
+                value={
+                  adjustPayPreview.next == null
+                    ? adjustPayNowInput.trim() === ""
+                      ? `৳ ${Math.round(adjustPayPreview.cur).toLocaleString("en-US")} (enter amount above)`
+                      : "— (invalid number)"
+                    : `৳ ${Math.round(adjustPayPreview.next).toLocaleString("en-US")}`
+                }
+                className="mt-2 w-full cursor-default rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-lg font-semibold text-slate-900"
+              />
+            </label>
+            <div className="mt-6 flex justify-end gap-2">
+              {saveSuccess ? <p className="mr-auto text-sm text-emerald-700">{saveSuccess}</p> : null}
+              {saveError ? <p className="mr-auto text-sm text-rose-600">{saveError}</p> : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setAdjustOrder(null);
+                  setAdjustPayNowInput("");
+                  setSaveError(null);
+                }}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-base font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveOrderBillingBooking()}
+                className="rounded-lg bg-slate-700 px-4 py-2 text-base font-semibold text-white hover:bg-slate-600"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
-
 
 function parseIso(iso: string): Date | null {
   const d = new Date(iso);

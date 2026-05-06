@@ -4,7 +4,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
 import { ClipboardCheck, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
-import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
 import { NOTIFICATIONS_EVENT, readModeratorSeenOrderIds } from "../lib/orderNotifications";
 import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
@@ -63,15 +63,14 @@ export function ModeratorOrdersPage() {
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, sync);
   }, []);
 
-  const mode = useMemo<"orders" | "purchase" | "purchase_pending">(() => {
+  const mode = useMemo<"orders" | "purchase">(() => {
     if (location.pathname.startsWith("/moderator/purchase-invoices")) return "purchase";
-    if (location.pathname.startsWith("/moderator/purchase-pending-bills")) return "purchase_pending";
     return "orders";
   }, [location.pathname]);
 
   useEffect(() => {
     setPage(1);
-    if (mode === "purchase" || mode === "purchase_pending") setDocFilter("purchase_yes");
+    if (mode === "purchase") setDocFilter("purchase_yes");
     else setDocFilter("all");
   }, [mode]);
 
@@ -134,7 +133,6 @@ export function ModeratorOrdersPage() {
       if (docFilter === "challan_no" && o.challanGenerated) return false;
       if (docFilter === "purchase_yes" && !hasPurchaseInvoice(o)) return false;
       if (docFilter === "purchase_no" && hasPurchaseInvoice(o)) return false;
-      if (mode === "purchase_pending" && (!hasPurchaseInvoice(o) || purchaseBalanceOf(o.id) <= 0)) return false;
       if (!q) return true;
       return (
         o.orderNo.toLowerCase().includes(q) ||
@@ -156,18 +154,12 @@ export function ModeratorOrdersPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-extrabold text-slate-900">
-          {mode === "purchase"
-            ? "Purchase invoice list"
-            : mode === "purchase_pending"
-              ? "Purchase pending bills"
-              : "Moderator panel"}
+          {mode === "purchase" ? "Purchase invoice list" : "Moderator panel"}
         </h1>
         <p className="mt-1 text-base font-medium text-slate-600">
           {mode === "purchase"
             ? "Purchase invoice status, payment adjustments, and pending balances."
-            : mode === "purchase_pending"
-              ? "Only unpaid purchase invoices are shown here with adjustment options."
-              : "Edit quantities, set cost pricing, generate challan, and send purchase invoice to admin."}
+            : "Edit quantities, set cost pricing, generate challan, and send purchase invoice to admin."}
         </p>
       </div>
 
@@ -256,12 +248,13 @@ export function ModeratorOrdersPage() {
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
-          <table className="min-w-[980px] w-full text-left text-sm lg:text-base">
+          <table className="min-w-[1040px] w-full text-left text-sm lg:text-base">
           <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
             <tr>
               <th className="px-4 py-3">Order</th>
-              <th className="px-4 py-3 hidden xl:table-cell">Submitted</th>
               <th className="px-4 py-3">Customer</th>
+              <th className="px-4 py-3 min-w-[160px]">Delivery</th>
+              <th className="px-4 py-3 min-w-[160px]">Delivered</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Documents</th>
               <th className="px-4 py-3 text-right">Purchase balance</th>
@@ -282,8 +275,13 @@ export function ModeratorOrdersPage() {
                     ) : null}
                   </div>
                 </td>
-                <td className="px-4 py-4 text-sm text-slate-700 hidden xl:table-cell">{formatOrderSubmittedAt(o)}</td>
                 <td className="px-4 py-4 text-base font-semibold text-slate-800">{o.contactPerson}</td>
+                <td className="px-4 py-3 text-sm text-slate-800">
+                  <OrderScheduledDeliveryCell order={o} />
+                </td>
+                <td className="px-4 py-3 text-sm text-slate-800">
+                  <OrderDeliveredAtCell order={o} />
+                </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={o.status} />
                 </td>
@@ -389,10 +387,15 @@ export function ModeratorOrdersPage() {
                 </div>
                 <StatusBadge status={o.status} />
               </div>
-              <p className="mt-2 text-sm text-slate-600">
-                Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
-              </p>
-              <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-2 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
+              <div className="text-sm text-slate-800">
+                <OrderScheduledDeliveryCell order={o} />
+              </div>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivered</p>
+              <div className="text-sm text-slate-800">
+                <OrderDeliveredAtCell order={o} />
+              </div>
               <p className="mt-1 text-sm text-slate-600">
                 Balance: <span className="font-semibold text-slate-900">৳ {Math.round(purchaseBalanceOf(o.id)).toLocaleString("en-US")}</span>
               </p>

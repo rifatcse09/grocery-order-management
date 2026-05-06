@@ -9,13 +9,24 @@ import { useOrders } from "../context/OrdersContext";
 import type { Order, OrderLine } from "../types";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
-import { buildDeliveryWindow, parseDeliveryWindow } from "../lib/deliveryWindow";
 
-function toDateTimeLocalValue(value: string): string {
+function toDisplayDate(value: string): string {
   if (!value) return "";
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return value;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00`;
-  return "";
+  const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB");
+}
+
+function toTimeValue(value?: string): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/);
+  if (isoMatch) return isoMatch[2];
+  const rangeStartMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})\s*(?:to|–|—|-)\s*/i);
+  if (rangeStartMatch) return rangeStartMatch[2];
+  const anyTime = raw.match(/(\d{2}:\d{2})/);
+  return anyTime ? anyTime[1] : "";
 }
 
 export function OrderFormPage() {
@@ -43,6 +54,7 @@ export function OrderFormPage() {
       ownerId: user.id,
       orderNo: nextOrderNo(),
       orderDate: todayIsoDate(),
+      createdAt: new Date().toISOString(),
       deliveryDate: todayIsoDate(),
       status: "draft",
       billingAddress: user.billingAddress,
@@ -87,19 +99,10 @@ export function OrderFormPage() {
   const linesOk =
     order.lines.length > 0 &&
     order.lines.every((l) => validateLineQuantity(l.kg, l.gram, l.piece) == null);
-  const deliveryWindowRange = parseDeliveryWindow(order.deliveryTime);
-  const startDateTime = toDateTimeLocalValue(deliveryWindowRange.startDate);
-  const endDateTime = toDateTimeLocalValue(deliveryWindowRange.endDate);
+  const deliveryTimeValue = toTimeValue(order.deliveryTime);
   const requiredFieldIssues: string[] = [];
   if (!order.deliveryDate?.trim()) requiredFieldIssues.push("Delivery date");
-  if (!startDateTime || !endDateTime) requiredFieldIssues.push("Time window (start and end)");
-  if (
-    startDateTime &&
-    endDateTime &&
-    new Date(startDateTime).getTime() > new Date(endDateTime).getTime()
-  ) {
-    requiredFieldIssues.push("Time window must be a valid range (start before end)");
-  }
+  if (!deliveryTimeValue) requiredFieldIssues.push("Delivery time");
   if (!order.contactPerson?.trim()) requiredFieldIssues.push("Contact person");
   if (!order.deliveryAddress?.trim()) requiredFieldIssues.push("Delivery address");
   if (!order.phone?.trim()) requiredFieldIssues.push("Phone");
@@ -192,7 +195,7 @@ export function OrderFormPage() {
         <h1 className="mt-2 text-2xl font-extrabold text-brand-dark sm:text-3xl">{isNew ? "Create order" : "Edit order"}</h1>
         <p className="mt-1 text-base font-medium text-slate-700">
           {isNew
-            ? "Add line items and details, then save. Open Review from your order list to sign and submit."
+            ? "Add item items and details, then save. Open Review from your order list to sign and submit."
             : "Add basic details, line items, and signature before review."}
         </p>
       </div>
@@ -220,11 +223,10 @@ export function OrderFormPage() {
           <div>
             <p className="text-sm font-semibold text-slate-600">Date</p>
             <input
-              type="date"
+              type="text"
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base font-mono font-semibold text-slate-900"
-              value={order.orderDate}
-              onChange={(e) => setOrder({ ...order, orderDate: e.target.value })}
-              disabled={!editWindowOk}
+              value={toDisplayDate(order.orderDate)}
+              readOnly
             />
           </div>
           <div className="md:col-span-2">
@@ -263,37 +265,15 @@ export function OrderFormPage() {
           </div>
           <div>
             <label className="text-sm font-semibold text-slate-700">
-              Time window (date & time range) <span className="text-red-600">*</span>
+              Delivery time <span className="text-red-600">*</span>
             </label>
-            <div className="mt-1 grid gap-2 sm:grid-cols-2">
-              <input
-                type="datetime-local"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-                value={startDateTime}
-                onChange={(e) =>
-                  setOrder({
-                    ...order,
-                    deliveryDate: e.target.value ? e.target.value.slice(0, 10) : order.deliveryDate,
-                    deliveryTime: buildDeliveryWindow(e.target.value, endDateTime),
-                  })
-                }
-                placeholder="Start date & time"
-                disabled={!editWindowOk}
-              />
-              <input
-                type="datetime-local"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
-                value={endDateTime}
-                onChange={(e) =>
-                  setOrder({
-                    ...order,
-                    deliveryTime: buildDeliveryWindow(startDateTime, e.target.value),
-                  })
-                }
-                placeholder="End date & time"
-                disabled={!editWindowOk}
-              />
-            </div>
+            <input
+              type="time"
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base"
+              value={deliveryTimeValue}
+              onChange={(e) => setOrder({ ...order, deliveryTime: e.target.value })}
+              disabled={!editWindowOk}
+            />
           </div>
           <div>
             <label className="text-sm font-semibold text-slate-700">
@@ -353,7 +333,7 @@ export function OrderFormPage() {
               }}
               className="rounded-xl bg-brand-dark px-3 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
             >
-              + Add row
+              + Add item
             </button>
           </div>
         </div>
@@ -429,7 +409,7 @@ export function OrderFormPage() {
       {addRowModal ? (
         <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Add line</h3>
+            <h3 className="text-lg font-bold text-slate-900">Add item</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category (ধরন)</label>

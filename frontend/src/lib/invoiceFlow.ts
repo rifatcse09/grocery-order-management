@@ -1,12 +1,23 @@
 import type { Order, OrderLine } from "../types";
 import { validateLineQuantity } from "./quantityRules";
 
+/** API / localStorage sometimes stores 0/1 or "true"/"false" strings; `Boolean("false")` would be wrong. */
+function orderFlagIsOn(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0 || v == null) return false;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes";
+  }
+  return Boolean(v);
+}
+
 export function hasPurchaseInvoice(order: Order): boolean {
-  return Boolean(order.purchaseInvoiceGenerated);
+  return orderFlagIsOn(order.purchaseInvoiceGenerated);
 }
 
 export function hasBillingInvoice(order: Order): boolean {
-  return Boolean(order.billingInvoiceGenerated || order.invoiceGenerated);
+  return orderFlagIsOn(order.billingInvoiceGenerated);
 }
 
 /** Same weight/piece rules as OrderLinesEditor (supports comma decimals). */

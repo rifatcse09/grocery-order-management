@@ -6,7 +6,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.repl
 const SESSION_KEY = "gom_session";
 const TOKEN_KEY = "gom_token";
 
-type LoginPayload = { email: string; password: string; role: Role };
+type LoginPayload = { email: string; password: string };
 type RegisterPayload = {
   name: string;
   phone: string;
@@ -86,6 +86,17 @@ function optionalMoney(v: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** Same as invoiceFlow `orderFlagIsOn` — avoid `Boolean("false") === true` from loose-typed JSON. */
+function normalizeBoolFlag(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0 || v == null) return false;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "yes";
+  }
+  return Boolean(v);
+}
+
 function normalizeOrderLine(raw: Record<string, unknown>): Order["lines"][number] {
   const kg = raw.kg != null && String(raw.kg) !== "" ? String(raw.kg) : "";
   const gram = raw.gram != null && String(raw.gram) !== "" ? String(raw.gram) : "";
@@ -103,7 +114,14 @@ function normalizeOrderLine(raw: Record<string, unknown>): Order["lines"][number
     instructions: raw.instructions != null ? String(raw.instructions) : undefined,
     unitPrice: optionalMoney(raw.unitPrice ?? raw.unit_price),
     lineTotal: optionalMoney(raw.lineTotal ?? raw.line_total),
-    markupPercent: optionalMoney(raw.markupPercent ?? raw.markup_percent),
+    markupPercent: (() => {
+      const m = optionalMoney(raw.markupPercent ?? raw.markup_percent);
+      if (m == null) return undefined;
+      const billed = optionalMoney(raw.lineTotalAfterMarkup ?? raw.line_total_after_markup);
+      // DB often stores 0 when unset; treat as "use category" until a billing line exists.
+      if (m === 0 && billed == null) return undefined;
+      return m;
+    })(),
     markupAmount: optionalMoney(raw.markupAmount ?? raw.markup_amount),
     unitPriceAfterMarkup: optionalMoney(raw.unitPriceAfterMarkup ?? raw.unit_price_after_markup) ?? null,
     lineTotalAfterMarkup: optionalMoney(raw.lineTotalAfterMarkup ?? raw.line_total_after_markup) ?? null,
@@ -128,11 +146,13 @@ function normalizeOrder(order: Record<string, unknown>): Order {
     rawStatus === "invoiced";
   // Use explicit flags / invoice records from the API only — do not infer from order status.
   // Backend sets these from purchase_invoice_generated / billing_invoice_generated and invoices table.
-  const purchaseInvoiceGenerated = Boolean(
+  const purchaseInvoiceGenerated = normalizeBoolFlag(
     order.purchaseInvoiceGenerated ?? order.purchase_invoice_generated,
   );
-  const billingInvoiceGenerated = Boolean(
-    order.billingInvoiceGenerated ?? order.billing_invoice_generated ?? order.invoiceGenerated,
+  // Do not use legacy `invoiceGenerated` / `invoice_generated` here — some APIs used it for any invoice,
+  // which incorrectly hid billing markup as "already invoiced" and locked Markup % before customer billing.
+  const billingInvoiceGenerated = normalizeBoolFlag(
+    order.billingInvoiceGenerated ?? order.billing_invoice_generated,
   );
 
   const rawSignature =
@@ -154,7 +174,9 @@ function normalizeOrder(order: Record<string, unknown>): Order {
     ownerId: String(order.ownerId ?? order.owner_id ?? ""),
     orderNo: String(order.orderNo ?? order.order_no ?? ""),
     orderDate: String(order.orderDate ?? order.order_date ?? ""),
+    createdAt: (order.createdAt as string | undefined) ?? (order.created_at as string | undefined),
     submittedAt: (order.submittedAt as string | undefined) ?? (order.submitted_at as string | undefined),
+    deliveredAt: (order.deliveredAt as string | undefined) ?? (order.delivered_at as string | undefined),
     deliveryDate: String(order.deliveryDate ?? String(order.delivery_datetime ?? "").slice(0, 10) ?? ""),
     deliveryTime: String(
       order.deliveryTime ??
@@ -366,7 +388,11 @@ export async function apiGeneratePurchaseInvoice(id: string): Promise<void> {
 
 export async function apiGenerateBillingInvoice(
   id: string,
-  payload: { markupPercent?: number; markupByCategory?: Record<string, number> },
+  payload: {
+    markupPercent?: number;
+    markupByCategory?: Record<string, number>;
+    markupByItem?: Record<string, number>;
+  },
 ): Promise<void> {
   await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${id}/billing-invoice`, {
     method: "POST",

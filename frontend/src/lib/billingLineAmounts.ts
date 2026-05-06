@@ -9,28 +9,30 @@ export function billedAmountsForLine(
   billingCategoryMarkups: Record<string, number>,
   globalMarkupPercent: number,
 ): { billedUnit: number; billedLine: number; pct: number } {
+  const linePctRaw = line.markupPercent;
+  const hasLinePct = linePctRaw != null && Number.isFinite(Number(linePctRaw));
+  const linePct = hasLinePct ? Math.max(0, Number(linePctRaw)) : null;
+  const fallbackPct = Number(
+    billingCategoryMarkups[line.categoryId] ?? globalMarkupPercent ?? 0,
+  );
+  const pct = linePct ?? fallbackPct;
+
   const storedLine = line.lineTotalAfterMarkup;
   if (storedLine != null && Number.isFinite(Number(storedLine))) {
     const billedLine = Number(storedLine);
     const storedUnit = line.unitPriceAfterMarkup;
-    const linePct = Number(line.markupPercent ?? 0);
     const billedUnit =
       storedUnit != null && Number.isFinite(Number(storedUnit))
         ? Number(storedUnit)
         : (() => {
             const pu = Number(line.unitPrice ?? 0);
-            const pct = linePct || Number(billingCategoryMarkups[line.categoryId] ?? globalMarkupPercent ?? 0);
             return pu + Math.round(pu * (pct / 100));
           })();
-    const pct =
-      linePct ||
-      Number(billingCategoryMarkups[line.categoryId] ?? globalMarkupPercent ?? 0);
     return { billedUnit, billedLine, pct };
   }
 
   const purchaseUnit = Number(line.unitPrice ?? 0);
   const purchaseLine = Number(line.lineTotal ?? 0);
-  const pct = Number(billingCategoryMarkups[line.categoryId] ?? globalMarkupPercent ?? 0);
   return {
     billedUnit: purchaseUnit + Math.round(purchaseUnit * (pct / 100)),
     billedLine: purchaseLine + Math.round(purchaseLine * (pct / 100)),

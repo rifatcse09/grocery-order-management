@@ -3,10 +3,9 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Eye, MoreVertical, Search, Truck } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
 import { apiEnabled, apiMarkOrderDelivered } from "../lib/api";
-import { formatDeliveryScheduleLabel } from "../lib/deliverySchedule";
+import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
 import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
-import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
 import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { Order, OrderStatus } from "../types";
@@ -60,23 +59,12 @@ export function AdminOrdersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [adminNewIds, setAdminNewIds] = useState(() => readAdminNotifyOrderIds());
-  const [purchasePayments] = useState<Record<string, number>>(() => {
-    try {
-      const raw = localStorage.getItem("gom_purchase_payments");
-      if (!raw) return {};
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  });
   const location = useLocation();
   const [deliverBusyId, setDeliverBusyId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
-  const mode = useMemo<"orders" | "purchase" | "purchase_pending" | "billing">(() => {
+  const mode = useMemo<"orders" | "purchase" | "billing">(() => {
     if (location.pathname.startsWith("/admin/purchase-invoices")) return "purchase";
-    if (location.pathname.startsWith("/admin/purchase-pending-bills")) return "purchase_pending";
     if (location.pathname.startsWith("/admin/billing-invoices")) return "billing";
     return "orders";
   }, [location.pathname]);
@@ -93,24 +81,10 @@ export function AdminOrdersPage() {
 
   useEffect(() => {
     setPage(1);
-    if (mode === "purchase" || mode === "purchase_pending") setDocFilter("purchase_yes");
+    if (mode === "purchase") setDocFilter("purchase_yes");
     else if (mode === "billing") setDocFilter("billing_yes");
     else setDocFilter("all");
   }, [mode]);
-
-  function purchaseAmountOf(orderId: string): number {
-    const order = orders.find((o) => o.id === orderId);
-    if (!order) return 0;
-    return order.lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
-  }
-
-  function paidPurchaseOf(orderId: string): number {
-    return Math.max(0, Number(purchasePayments[orderId] ?? 0));
-  }
-
-  function purchaseBalanceOf(orderId: string): number {
-    return Math.max(0, purchaseAmountOf(orderId) - paidPurchaseOf(orderId));
-  }
 
   async function markOrderDelivered(o: Order) {
     if (!apiEnabled()) return;
@@ -146,7 +120,6 @@ export function AdminOrdersPage() {
       if (docFilter === "purchase_no" && hasPurchaseInvoice(o)) return false;
       if (docFilter === "billing_yes" && !hasBillingInvoice(o)) return false;
       if (docFilter === "billing_no" && hasBillingInvoice(o)) return false;
-      if (mode === "purchase_pending" && (!hasPurchaseInvoice(o) || purchaseBalanceOf(o.id) <= 0)) return false;
       if (!q) return true;
       return (
         o.orderNo.toLowerCase().includes(q) ||
@@ -155,7 +128,7 @@ export function AdminOrdersPage() {
         o.deliveryAddress.toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter, mode, purchasePayments]);
+  }, [orders, query, status, customer, docFilter, mode]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -168,20 +141,16 @@ export function AdminOrdersPage() {
         <h1 className="text-3xl font-extrabold text-slate-900">
           {mode === "purchase"
             ? "Purchase invoice list"
-            : mode === "purchase_pending"
-              ? "Purchase pending bills"
-              : mode === "billing"
-                ? "Billing invoice list"
-                : "Admin order list"}
+            : mode === "billing"
+              ? "Billing invoice list"
+              : "Admin order list"}
         </h1>
         <p className="mt-1 text-base font-medium text-slate-600">
           {mode === "purchase"
             ? "Orders with purchase invoices. Track available and pending purchase documents."
-            : mode === "purchase_pending"
-              ? "Only unpaid purchase invoices are shown here."
             : mode === "billing"
               ? "Orders with billing invoices. Open invoice details and track pending billing documents."
-              : "Admin can edit orders, add pricing, generate challan, purchase and billing invoices, and mark orders delivered. Scheduled delivery date is shown (no live countdown)."}
+              : "Admin can edit orders, add pricing, generate challan, purchase and billing invoices, and mark orders delivered. Scheduled and actual delivery appear in separate columns."}
         </p>
         {listError ? (
           <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{listError}</p>
@@ -280,13 +249,13 @@ export function AdminOrdersPage() {
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
-          <table className="min-w-[1080px] w-full text-left text-base">
+          <table className="min-w-[1180px] w-full text-left text-base">
             <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="px-4 py-3">Order</th>
-                <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3">Delivery</th>
+                <th className="px-4 py-3 min-w-[160px]">Delivery</th>
+                <th className="px-4 py-3 min-w-[160px]">Delivered</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Challan</th>
                 <th className="px-4 py-3">Purchase invoice</th>
@@ -307,9 +276,13 @@ export function AdminOrdersPage() {
                       ) : null}
                     </div>
                   </td>
-                  <td className="px-4 py-3 align-middle text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
                   <td className="px-4 py-3 align-middle text-base font-semibold text-slate-800">{o.contactPerson}</td>
-                  <td className="px-4 py-3 align-middle text-sm text-slate-800">{formatDeliveryScheduleLabel(o)}</td>
+                  <td className="px-4 py-3 align-middle text-sm text-slate-800">
+                    <OrderScheduledDeliveryCell order={o} />
+                  </td>
+                  <td className="px-4 py-3 align-middle text-sm text-slate-800">
+                    <OrderDeliveredAtCell order={o} />
+                  </td>
                   <td className="px-4 py-3 align-middle">
                     <StatusBadge status={o.status} />
                   </td>
@@ -442,13 +415,15 @@ export function AdminOrdersPage() {
                 </div>
                 <StatusBadge status={o.status} />
               </div>
-              <p className="mt-2 text-sm text-slate-600">
-                Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
-              </p>
-              <p className="mt-1 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
-              <p className="mt-1 text-sm text-slate-600">
-                Delivery: <span className="font-medium text-slate-800">{formatDeliveryScheduleLabel(o)}</span>
-              </p>
+              <p className="mt-2 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
+              <div className="text-sm text-slate-800">
+                <OrderScheduledDeliveryCell order={o} />
+              </div>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivered</p>
+              <div className="text-sm text-slate-800">
+                <OrderDeliveredAtCell order={o} />
+              </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                 {o.challanGenerated ? (
                   <Link

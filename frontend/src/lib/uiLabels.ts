@@ -1,3 +1,5 @@
+import { toBanglaDigits } from "./banglaNumerals";
+
 /** English-first UI; Bangla in parentheses for measurements / table map. */
 
 export const COL = {
@@ -28,4 +30,9 @@ function format2(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+/** Same as {@link formatQtyLine} with Western digits replaced by Bengali (invoice / Bangla print). */
+export function formatQtyLineBn(kg: string, gram: string, piece: string): string {
+  return toBanglaDigits(formatQtyLine(kg, gram, piece));
 }

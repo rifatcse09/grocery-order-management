@@ -7,8 +7,8 @@ import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder } from "../lib/quantityRules";
 import { PaginationControls } from "../components/PaginationControls";
-import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
-import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatOrderSavedAt, formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
 import { hasBillingInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
@@ -126,8 +126,8 @@ export function UserOrderDashboard() {
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Submitted</th>
                 <th className="px-4 py-3">Order date</th>
-                <th className="px-4 py-3">Delivery</th>
-                <th className="px-4 py-3">Time window</th>
+                <th className="px-4 py-3 min-w-[140px]">Delivery</th>
+                <th className="px-4 py-3 min-w-[140px]">Delivered</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Challan</th>
                 <th className="px-4 py-3">Invoice</th>
@@ -144,9 +144,13 @@ export function UserOrderDashboard() {
                   <tr key={o.id} className="border-t border-border bg-card">
                     <td className="px-4 py-4 font-mono text-base font-semibold text-slate-900">{o.orderNo}</td>
                     <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
-                    <td className="px-4 py-4 text-slate-700">{o.orderDate}</td>
-                    <td className="px-4 py-4 text-slate-700">{o.deliveryDate}</td>
-                    <td className="px-4 py-4 text-slate-700">{formatDeliveryWindow(o.deliveryTime)}</td>
+                    <td className="px-4 py-4 text-slate-700">{formatOrderSavedAt(o)}</td>
+                    <td className="px-4 py-4 text-slate-700">
+                      <OrderScheduledDeliveryCell order={o} />
+                    </td>
+                    <td className="px-4 py-4 text-slate-700">
+                      <OrderDeliveredAtCell order={o} />
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={o.status} />
                     </td>
@@ -314,14 +318,16 @@ export function UserOrderDashboard() {
                   Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
                 </p>
                 <p className="mt-1 text-sm text-slate-600">
-                  Order date: <span className="font-medium text-slate-800">{o.orderDate}</span>
+                  Order date: <span className="font-medium text-slate-800">{formatOrderSavedAt(o)}</span>
                 </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Delivery: <span className="font-medium text-slate-800">{o.deliveryDate}</span>
-                </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Time window: <span className="font-medium text-slate-800">{formatDeliveryWindow(o.deliveryTime)}</span>
-                </p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
+                <div className="text-sm text-slate-800">
+                  <OrderScheduledDeliveryCell order={o} />
+                </div>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivered</p>
+                <div className="text-sm text-slate-800">
+                  <OrderDeliveredAtCell order={o} />
+                </div>
                 <div className="mt-2 flex flex-wrap gap-2 text-sm">
                   {o.challanGenerated ? (
                     <Link

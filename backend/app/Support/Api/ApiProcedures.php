@@ -368,12 +368,18 @@ function read_order(array $row): array {
     $billingCategoryMarkups = is_array($billingSnap['markupByCategory'] ?? null) ? $billingSnap['markupByCategory'] : null;
     $billingMarkupPercent = isset($billingSnap['markupPercent']) ? (float)$billingSnap['markupPercent'] : null;
     $grandTotal = $billingSubtotal;
+    $deliveredAt = $row['delivered_at'] ?? null;
+    if (($deliveredAt === null || $deliveredAt === '') && in_array((string)($row['status'] ?? ''), ['completed', 'invoiced'], true)) {
+        $deliveredAt = order_delivered_at_from_activity($orderId);
+    }
     return [
         'id' => (string)$orderId,
         'ownerId' => (string)$row['owner_id'],
         'orderNo' => $row['order_no'],
         'orderDate' => $row['order_date'],
+        'createdAt' => $row['created_at'] ?? null,
         'submittedAt' => $row['submitted_at'],
+        'deliveredAt' => $deliveredAt,
         'deliveryDate' => substr((string)$row['delivery_datetime'], 0, 10),
         'deliveryTime' => $deliveryWindow !== '' ? $deliveryWindow : substr((string)$row['delivery_datetime'], 11, 5),
         'status' => $row['status'],
@@ -393,6 +399,28 @@ function read_order(array $row): array {
         'grandTotal' => $grandTotal,
         'lines' => read_order_lines($orderId),
     ];
+}
+
+function order_delivered_at_from_activity(int $orderId): ?string
+{
+    try {
+        $stmt = db()->prepare("
+            SELECT created_at
+            FROM activity_logs
+            WHERE entity_type = 'order' AND entity_id = :id AND action = 'order_marked_delivered'
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['id' => $orderId]);
+        $row = $stmt->fetch();
+        $v = (string)($row['created_at'] ?? '');
+        return $v !== '' ? $v : null;
+    } catch (\PDOException $e) {
+        if (pdo_exception_is_missing_table($e)) {
+            return null;
+        }
+        throw $e;
+    }
 }
 
 function log_activity(int $actorId, string $entityType, int $entityId, string $action, ?array $before = null, ?array $after = null): void {
@@ -805,15 +833,35 @@ function upsert_item_price_history(int $orderId, array $line, ?array $actorUser)
     ]);
 }
 
+function order_line_optional_float(array $line, string $camel, string $snake): ?float
+{
+    $v = $line[$camel] ?? $line[$snake] ?? null;
+    if ($v === null || $v === '') {
+        return null;
+    }
+    if (! is_numeric((string) $v)) {
+        return null;
+    }
+    $f = (float) $v;
+
+    return is_finite($f) ? $f : null;
+}
+
 function replace_order_lines(int $orderId, array $lines, ?array $actorUser = null): void {
     db()->prepare('DELETE FROM order_lines WHERE order_id = :id')->execute(['id' => $orderId]);
     if (!$lines) return;
-    $ins = db()->prepare('INSERT INTO order_lines (order_id, serial, category_code, item_code, item_name_bn, item_name_en, kg, gram, piece, instructions, unit_price, line_total, created_at, updated_at) VALUES (:order_id, :serial, :category_code, :item_code, :item_name_bn, :item_name_en, :kg, :gram, :piece, :instructions, :unit_price, :line_total, NOW(), NOW())');
+    $ins = db()->prepare('INSERT INTO order_lines (order_id, serial, category_code, item_code, item_name_bn, item_name_en, kg, gram, piece, instructions, unit_price, line_total, markup_percent, markup_amount, unit_price_after_markup, line_total_after_markup, profit_loss_amount, created_at, updated_at) VALUES (:order_id, :serial, :category_code, :item_code, :item_name_bn, :item_name_en, :kg, :gram, :piece, :instructions, :unit_price, :line_total, :markup_percent, :markup_amount, :unit_after, :line_after, :profit_loss, NOW(), NOW())');
     foreach ($lines as $idx => $line) {
         if (!is_array($line)) continue;
         $pr = order_line_purchase_prices($line);
         $cat = (string)($line['categoryId'] ?? $line['category_code'] ?? '');
         $item = (string)($line['itemId'] ?? $line['item_code'] ?? '');
+        $markupPct = order_line_optional_float($line, 'markupPercent', 'markup_percent');
+        $markupPctIns = $markupPct !== null ? max(0.0, $markupPct) : 0.0;
+        $markupAmt = order_line_optional_float($line, 'markupAmount', 'markup_amount');
+        $unitAfter = order_line_optional_float($line, 'unitPriceAfterMarkup', 'unit_price_after_markup');
+        $lineAfter = order_line_optional_float($line, 'lineTotalAfterMarkup', 'line_total_after_markup');
+        $profitLoss = order_line_optional_float($line, 'profitLossAmount', 'profit_loss_amount');
         $ins->execute([
             'order_id' => $orderId,
             'serial' => (int)($line['serial'] ?? ($idx + 1)),
@@ -827,6 +875,11 @@ function replace_order_lines(int $orderId, array $lines, ?array $actorUser = nul
             'instructions' => isset($line['instructions']) ? (string)$line['instructions'] : '',
             'unit_price' => $pr['unit'],
             'line_total' => $pr['total'],
+            'markup_percent' => $markupPctIns,
+            'markup_amount' => $markupAmt !== null ? $markupAmt : 0.0,
+            'unit_after' => $unitAfter,
+            'line_after' => $lineAfter,
+            'profit_loss' => $profitLoss !== null ? $profitLoss : 0.0,
         ]);
         $normLine = array_merge($line, [
             'categoryId' => $cat,
@@ -928,5 +981,33 @@ function sync_latest_purchase_invoice_from_order_lines(int $orderId): void
         'g' => $pack['subtotal'],
         'snap' => $pack['snapshotJson'],
         'id' => (int)$inv['id'],
+    ]);
+}
+
+/** Refresh latest challan snapshot after order line edits. */
+function sync_latest_challan_snapshot_from_order(int $orderId): void
+{
+    if (!order_has_challan($orderId)) {
+        return;
+    }
+    $chStmt = db()->prepare('SELECT id FROM challans WHERE order_id = :oid ORDER BY id DESC LIMIT 1');
+    $chStmt->execute(['oid' => $orderId]);
+    $ch = $chStmt->fetch();
+    if (!$ch || !isset($ch['id'])) {
+        return;
+    }
+
+    $orderStmt = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
+    $orderStmt->execute(['id' => $orderId]);
+    $orderRow = $orderStmt->fetch();
+    if (!$orderRow) {
+        return;
+    }
+
+    $snapshot = read_order($orderRow);
+    $upd = db()->prepare('UPDATE challans SET snapshot = :snap, updated_at = NOW() WHERE id = :id');
+    $upd->execute([
+        'snap' => json_encode($snapshot),
+        'id' => (int)$ch['id'],
     ]);
 }

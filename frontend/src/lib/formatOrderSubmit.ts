@@ -11,3 +11,12 @@ export function formatOrderSubmittedAt(order: Order): string {
   }
   return order.orderDate || "—";
 }
+
+/** Saved timestamp shown in lists; falls back to orderDate on old rows. */
+export function formatOrderSavedAt(order: Order): string {
+  const source = order.createdAt || order.orderDate;
+  if (!source) return "—";
+  const d = new Date(source);
+  if (Number.isNaN(d.getTime())) return source;
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}

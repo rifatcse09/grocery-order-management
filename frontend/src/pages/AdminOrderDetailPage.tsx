@@ -19,7 +19,9 @@ import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { clearAdminOrderNotification } from "../lib/orderNotifications";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
-import { loadCategoryMarkupSettings } from "../lib/categoryMarkupSettings";
+import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
+import { buildMarkupByItemPayload } from "../lib/billingMarkupPayload";
+import { loadCategoryMarkupSettings, saveCategoryMarkupSettings } from "../lib/categoryMarkupSettings";
 import { hasBillingInvoice, hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
 import {
   apiEnabled,
@@ -30,6 +32,14 @@ import {
   apiUpdateOrder,
 } from "../lib/api";
 import type { Order } from "../types";
+
+function formatReadableOrderDate(value: string): string {
+  if (!value) return "—";
+  const dateOnlyMatch = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const parsed = new Date(dateOnlyMatch ? `${value}T00:00:00` : value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString("en-GB");
+}
 
 function makeAdminDraftOrder(owner: {
   id: string;
@@ -43,6 +53,7 @@ function makeAdminDraftOrder(owner: {
     ownerId: owner.id,
     orderNo: nextNo,
     orderDate: todayIsoDate(),
+    createdAt: new Date().toISOString(),
     deliveryDate: todayIsoDate(),
     status: "draft",
     billingAddress: owner.billingAddress || "—",
@@ -58,10 +69,13 @@ export function AdminOrderDetailPage() {
   const { id } = useParams();
   const isNew = id === "new" || !id;
   const navigate = useNavigate();
-  const { listAccounts } = useAuth();
+  const { listAccounts, user } = useAuth();
   const { categories, addCategory, addCustomItem } = useCatalog();
   const { loadOrders, getById, upsertOrder, deleteOrder } = useOrders();
-  const userAccounts = listAccounts().filter((a) => a.role === "user");
+  const userAccounts = useMemo(
+    () => listAccounts().filter((a) => a.role === "user"),
+    [listAccounts],
+  );
   const base = !isNew && id ? getById(id) : undefined;
   const [order, setOrder] = useState(base);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
@@ -81,7 +95,10 @@ export function AdminOrderDetailPage() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
   const [lineItemError, setLineItemError] = useState("");
-  const categoryMarkups = loadCategoryMarkupSettings();
+  const [generatedAtIso] = useState(() => new Date().toISOString());
+  const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>(() =>
+    loadCategoryMarkupSettings(),
+  );
   const itemsOf = useMemo(() => {
     const c = categories.find((x) => x.id === itemCat);
     return c?.items ?? [];
@@ -91,26 +108,44 @@ export function AdminOrderDetailPage() {
     void loadOrders();
   }, [loadOrders]);
 
+  /** Catalog → localStorage updates won’t refresh this page unless we re-read on focus. */
   useEffect(() => {
-    if (isNew) {
-      const firstUser = userAccounts[0];
-      if (!firstUser) return;
-      setOrder(
-        makeAdminDraftOrder(
-          {
-            id: firstUser.id,
-            name: firstUser.name,
-            phone: firstUser.phone,
-            billingAddress: firstUser.billingAddress,
-            deliveryAddress: firstUser.deliveryAddress,
-          },
-          nextOrderNo(),
-        ),
-      );
-      return;
-    }
+    const syncFromStorage = () => setCategoryMarkups(loadCategoryMarkupSettings());
+    const onVis = () => {
+      if (document.visibilityState === "visible") syncFromStorage();
+    };
+    window.addEventListener("focus", syncFromStorage);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("focus", syncFromStorage);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  /** Existing orders: only re-sync when the copy in OrdersContext changes (not on every render). */
+  useEffect(() => {
+    if (isNew) return;
     if (base) setOrder(base);
-  }, [isNew, userAccounts, base]);
+  }, [isNew, base]);
+
+  /** New admin draft: init when user list is available; must not share deps with the sync above (unstable arrays used to reset edits). */
+  useEffect(() => {
+    if (!isNew) return;
+    const firstUser = userAccounts[0];
+    if (!firstUser) return;
+    setOrder(
+      makeAdminDraftOrder(
+        {
+          id: firstUser.id,
+          name: firstUser.name,
+          phone: firstUser.phone,
+          billingAddress: firstUser.billingAddress,
+          deliveryAddress: firstUser.deliveryAddress,
+        },
+        nextOrderNo(),
+      ),
+    );
+  }, [isNew, userAccounts]);
 
   useEffect(() => {
     if (!order?.id) return;
@@ -120,6 +155,15 @@ export function AdminOrderDetailPage() {
   const purchaseLinesReady = useMemo(
     () => linesReadyForPurchaseInvoice(order?.lines ?? []),
     [order?.lines],
+  );
+
+  /** Saved order snapshot + latest catalog/local defaults so rows don’t fall back to 0% when IDs align but storage was empty. */
+  const billingMarkupMapForLines = useMemo(
+    () => ({
+      ...(order?.billingCategoryMarkups ?? {}),
+      ...categoryMarkups,
+    }),
+    [order?.billingCategoryMarkups, categoryMarkups],
   );
 
   if (!order || (!isNew && !base)) {
@@ -138,6 +182,7 @@ export function AdminOrderDetailPage() {
   }
 
   const lineCount = order.lines.length;
+  const adminCanMarkDelivered = !!user && order.ownerId === user.id;
   const deliveredOrInvoiced = !isNew && (order.status === "delivered" || order.status === "invoiced");
   const quantityLocked = deliveredOrInvoiced;
   const pricingLocked =
@@ -145,6 +190,9 @@ export function AdminOrderDetailPage() {
     (!isNew && hasPurchaseInvoice(order)) ||
     (!isNew && hasBillingInvoice(order));
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
+  const orderDateDisplay = isNew
+    ? formatReadableOrderDate(generatedAtIso)
+    : formatReadableOrderDate(order.orderDate);
   const save = () => upsertOrder(order);
   const genChallan = async () => {
     if (challanBusy || order.challanGenerated) return;
@@ -232,7 +280,7 @@ export function AdminOrderDetailPage() {
         setWorkflowSuccess("Delivery marked complete. Order status updated.");
         return;
       }
-      const next = { ...order, status: "delivered" as const };
+      const next = { ...order, status: "delivered" as const, deliveredAt: new Date().toISOString() };
       setOrder(next);
       upsertOrder(next);
       setWorkflowSuccess("Delivery marked complete (saved locally).");
@@ -255,10 +303,24 @@ export function AdminOrderDetailPage() {
     setWorkflowSuccess("");
     setBillingBusy(true);
     try {
+      const normalizedCategoryMarkups: Record<string, number> = {};
+      Object.entries(billingMarkupMapForLines).forEach(([k, v]) => {
+        const n = Number(v);
+        if (Number.isFinite(n)) normalizedCategoryMarkups[k] = Math.max(0, n);
+      });
+      const billingGlobalMarkup = 0;
+      const normalizedItemMarkups = buildMarkupByItemPayload(
+        order.lines,
+        normalizedCategoryMarkups,
+        billingGlobalMarkup,
+        {},
+      );
+      saveCategoryMarkupSettings(normalizedCategoryMarkups);
       if (apiEnabled()) {
         await apiGenerateBillingInvoice(order.id, {
-          markupPercent: 0,
-          markupByCategory: categoryMarkups,
+          markupPercent: billingGlobalMarkup,
+          markupByCategory: normalizedCategoryMarkups,
+          markupByItem: normalizedItemMarkups,
         });
         await loadOrders();
         setWorkflowSuccess("Billing invoice generated successfully.");
@@ -269,7 +331,8 @@ export function AdminOrderDetailPage() {
         purchaseSubtotal: order.lines.reduce((sum, line) => sum + Number(line.lineTotal ?? 0), 0),
         billingSubtotal: order.lines.reduce((sum, line) => {
           const purchaseLine = Number(line.lineTotal ?? 0);
-          const pct = Number(categoryMarkups[line.categoryId] ?? 0);
+          const lineId = String(line.id ?? "");
+          const pct = lineId ? Number(normalizedItemMarkups[lineId] ?? 0) : 0;
           return sum + (purchaseLine + Math.round(purchaseLine * (pct / 100)));
         }, 0),
       };
@@ -281,9 +344,26 @@ export function AdminOrderDetailPage() {
         purchaseSubtotal: totals.purchaseSubtotal,
         billingSubtotal: totals.billingSubtotal,
         subtotal: totals.billingSubtotal,
-        markupPercent: undefined,
-        billingCategoryMarkups: categoryMarkups,
+        markupPercent: billingGlobalMarkup,
+        billingCategoryMarkups: normalizedCategoryMarkups,
         grandTotal: totals.billingSubtotal,
+        lines: order.lines.map((line) => {
+          const lineId = String(line.id ?? "");
+          const pct = lineId ? Number(normalizedItemMarkups[lineId] ?? 0) : 0;
+          const base = Number(line.lineTotal ?? 0);
+          const unit = line.unitPrice != null ? Number(line.unitPrice) : null;
+          const markupAmount = Math.round(base * (pct / 100));
+          const lineAfter = base + markupAmount;
+          const unitAfter = unit != null ? unit + Math.round(unit * (pct / 100)) : undefined;
+          return {
+            ...line,
+            markupPercent: pct,
+            markupAmount,
+            unitPriceAfterMarkup: unitAfter,
+            lineTotalAfterMarkup: lineAfter,
+            profitLossAmount: markupAmount,
+          };
+        }),
       };
       setOrder(next);
       upsertOrder(next);
@@ -436,11 +516,18 @@ export function AdminOrderDetailPage() {
               </select>
             </div>
           ) : null}
-          <DetailTile icon={Calendar} label="Order date" value={order.orderDate} />
+          <DetailTile icon={Calendar} label="Order date" value={orderDateDisplay} />
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
+          {order.status === "delivered" || order.status === "invoiced" ? (
+            <DetailTile
+              icon={Truck}
+              label="Marked delivered"
+              value={order.deliveredAt ? formatShortDeliveredAt(order.deliveredAt) : "Not recorded"}
+            />
+          ) : null}
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -468,13 +555,6 @@ export function AdminOrderDetailPage() {
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
             Line items & pricing
-            <span className="ml-2 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-foreground">
-              {quantityLocked && pricingLocked
-                ? "Locked"
-                : pricingLocked
-                  ? "Quantities editable — supplier/customer invoice locks cost until delivery"
-                  : "Editable — save cost changes before marking delivery complete"}
-            </span>
           </h2>
         </div>
         <div className="p-4 sm:p-5">
@@ -501,7 +581,7 @@ export function AdminOrderDetailPage() {
               disabled={pricingLocked}
               className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              + Add row
+              + Add item
             </button>
           </div>
           {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
@@ -516,12 +596,14 @@ export function AdminOrderDetailPage() {
             lines={order.lines}
             categories={categories}
             showPricing
-            billingMarkupsByCategory={categoryMarkups}
+            billingMarkupPreview
+            billingMarkupsByCategory={billingMarkupMapForLines}
             globalBillingMarkupPercent={0}
             linesLocked={false}
             quantityLocked={quantityLocked}
             pricingLocked={pricingLocked}
-            onChange={(lines) => setOrder({ ...order, lines })}
+            markupLocked={hasBillingInvoice(order) || order.status === "invoiced"}
+            onChange={(lines) => setOrder((prev) => (prev ? { ...prev, lines } : prev))}
           />
           <div className="mt-4 flex flex-wrap gap-3">
             <button
@@ -565,6 +647,7 @@ export function AdminOrderDetailPage() {
               type="button"
               onClick={() => void markDeliveryComplete()}
               disabled={Boolean(
+                !adminCanMarkDelivered ||
                 markDeliverBusy ||
                   purchaseBusy ||
                   billingBusy ||
@@ -579,9 +662,7 @@ export function AdminOrderDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => {
-                void finalizeInvoice();
-              }}
+              onClick={() => void finalizeInvoice()}
               disabled={Boolean(
                 billingBusy ||
                   !hasPurchaseInvoice(order) ||
@@ -602,6 +683,12 @@ export function AdminOrderDetailPage() {
             <p className="mt-2 text-xs font-semibold text-teal-800">
               Use <strong>Mark delivery complete</strong> when the order has been delivered. Billing invoice is only
               available after that.
+            </p>
+          ) : null}
+          {!adminCanMarkDelivered ? (
+            <p className="mt-2 text-xs font-semibold text-amber-800">
+              Moderator marks delivery complete for user-owned orders. Admin can mark delivered only on admin-owned
+              orders.
             </p>
           ) : null}
           {workflowSuccess ? <p className="mt-2 text-xs font-semibold text-emerald-700">{workflowSuccess}</p> : null}
@@ -661,7 +748,7 @@ export function AdminOrderDetailPage() {
       {addRowModal ? (
         <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Add line</h3>
+            <h3 className="text-lg font-bold text-slate-900">Add item</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category</label>
@@ -700,7 +787,7 @@ export function AdminOrderDetailPage() {
                 onClick={addFromCatalog}
                 className="w-full rounded-xl bg-slate-700 py-2 text-sm font-semibold text-white hover:bg-slate-600"
               >
-                Add row
+                Add item
               </button>
               <button
                 type="button"

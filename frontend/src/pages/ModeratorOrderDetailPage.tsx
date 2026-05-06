@@ -7,6 +7,7 @@ import {
   MapPin,
   Package,
   Phone,
+  Truck,
   User,
 } from "lucide-react";
 import { OrderLinesEditor } from "../components/OrderLinesEditor";
@@ -20,8 +21,9 @@ import {
   orderHasPricingData,
 } from "../lib/orderNotifications";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 import { hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
-import { apiEnabled, apiGenerateChallan, apiGeneratePurchaseInvoice, apiUpdateOrder } from "../lib/api";
+import { apiEnabled, apiGenerateChallan, apiGeneratePurchaseInvoice, apiMarkOrderDelivered, apiUpdateOrder } from "../lib/api";
 import type { Order } from "../types";
 
 function applyMarkup(sub: number): { pct: number; grand: number } {
@@ -49,6 +51,7 @@ export function ModeratorOrderDetailPage() {
   const [workflowSuccess, setWorkflowSuccess] = useState("");
   const [challanBusy, setChallanBusy] = useState(false);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
   const [lineItemError, setLineItemError] = useState("");
   const itemsOf = useMemo(() => {
     const c = categories.find((x) => x.id === itemCat);
@@ -154,10 +157,38 @@ export function ModeratorOrderDetailPage() {
     }
   };
 
+  const markDeliveryComplete = async () => {
+    if (markDeliverBusy || order.status === "delivered" || order.status === "invoiced") return;
+    if (order.status !== "submitted" && order.status !== "under_review") return;
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    setMarkDeliverBusy(true);
+    try {
+      if (apiEnabled()) {
+        const updated = await apiMarkOrderDelivered(order.id);
+        setOrder(updated);
+        await loadOrders();
+        flagOrderForAdminReview(order.id);
+        setWorkflowSuccess("Delivery marked complete.");
+        return;
+      }
+      const next = { ...order, status: "delivered" as const, deliveredAt: new Date().toISOString() };
+      setOrder(next);
+      upsertOrder(next);
+      flagOrderForAdminReview(order.id);
+      setWorkflowSuccess("Delivery marked complete.");
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Failed to mark delivery complete.");
+    } finally {
+      setMarkDeliverBusy(false);
+    }
+  };
+
   const lineCount = order.lines.length;
   const deliveredOrInvoiced = order.status === "delivered" || order.status === "invoiced";
   const quantityLocked = deliveredOrInvoiced;
-  const pricingLocked = deliveredOrInvoiced || hasPurchaseInvoice(order);
+  // Moderator can keep editing cost prices even after admin billing invoice.
+  const pricingLocked = false;
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
   const previewGrand =
     order.grandTotal != null
@@ -170,7 +201,7 @@ export function ModeratorOrderDetailPage() {
     "rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
 
   const addFromCatalog = () => {
-    if (pricingLocked) return;
+    if (quantityLocked) return;
     const cat = categories.find((c) => c.id === itemCat);
     const it = cat?.items.find((i) => i.id === pickItem);
     if (!cat || !it) return;
@@ -283,6 +314,13 @@ export function ModeratorOrderDetailPage() {
           <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
+          {order.status === "delivered" || order.status === "invoiced" ? (
+            <DetailTile
+              icon={Truck}
+              label="Marked delivered"
+              value={order.deliveredAt ? formatShortDeliveredAt(order.deliveredAt) : "Not recorded"}
+            />
+          ) : null}
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -310,13 +348,6 @@ export function ModeratorOrderDetailPage() {
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
             Line items &amp; cost pricing
-            <span className="ml-2 rounded-full bg-amber-200 px-2.5 py-0.5 text-xs font-semibold text-amber-950">
-              {quantityLocked && pricingLocked
-                ? "Locked"
-                : pricingLocked
-                  ? "Qty editable — cost locked (purchase invoice)"
-                  : "Editable"}
-            </span>
           </h2>
         </div>
         <div className="p-4 sm:p-5">
@@ -327,7 +358,7 @@ export function ModeratorOrderDetailPage() {
                 setItemCat(categories[0]?.id ?? "");
                 setShowCatalogModal(true);
               }}
-              disabled={pricingLocked}
+              disabled={quantityLocked}
               className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               + Add category/item
@@ -340,10 +371,10 @@ export function ModeratorOrderDetailPage() {
                 setLineItemError("");
                 setAddRowModal(true);
               }}
-              disabled={pricingLocked}
+              disabled={quantityLocked}
               className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              + Add row
+              + Add item
             </button>
           </div>
           {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
@@ -403,6 +434,19 @@ export function ModeratorOrderDetailPage() {
             className={actionBtn}
           >
             {purchaseBusy ? "Generating…" : "Generate purchase invoice"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void markDeliveryComplete()}
+            disabled={Boolean(
+              markDeliverBusy ||
+                order.status === "delivered" ||
+                order.status === "invoiced" ||
+                (order.status !== "submitted" && order.status !== "under_review"),
+            )}
+            className={actionBtn}
+          >
+            {markDeliverBusy ? "Updating…" : "Mark delivered"}
           </button>
         </div>
         {hasPurchaseInvoice(order) ? (
@@ -464,7 +508,7 @@ export function ModeratorOrderDetailPage() {
       {addRowModal ? (
         <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
           <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Add line</h3>
+            <h3 className="text-lg font-bold text-slate-900">Add item</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category</label>
@@ -503,7 +547,7 @@ export function ModeratorOrderDetailPage() {
                 onClick={addFromCatalog}
                 className="w-full rounded-xl bg-slate-700 py-2 text-sm font-semibold text-white hover:bg-slate-600"
               >
-                Add row
+                Add item
               </button>
               <button
                 type="button"
