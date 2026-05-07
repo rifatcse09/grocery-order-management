@@ -400,6 +400,70 @@ export async function apiGenerateBillingInvoice(
   });
 }
 
+export type CategoryMarkupHistoryEntry = {
+  id: string;
+  categoryId: string;
+  categoryNameBn: string;
+  categoryNameEn: string;
+  previousPercent: number;
+  nextPercent: number;
+  changedAt: string;
+  changedByName: string;
+};
+
+export async function apiGetCategoryMarkupSettings(): Promise<{
+  settings: Record<string, number>;
+  categories: Array<{ categoryId: string; nameBn: string; nameEn: string; markupPercent: number }>;
+  history: CategoryMarkupHistoryEntry[];
+}> {
+  const res = await req<{
+    data: {
+      settings?: Record<string, unknown>;
+      categories?: Array<{
+        categoryId?: unknown;
+        nameBn?: unknown;
+        nameEn?: unknown;
+        markupPercent?: unknown;
+      }>;
+      history?: Array<Record<string, unknown>>;
+    };
+  }>("/api/v1/catalog/category-markups");
+  const settingsRaw = res.data?.settings ?? {};
+  const settings: Record<string, number> = {};
+  Object.entries(settingsRaw).forEach(([categoryId, value]) => {
+    const pct = Number(value);
+    if (Number.isFinite(pct) && pct >= 0) settings[categoryId] = pct;
+  });
+  const categories = Array.isArray(res.data?.categories)
+    ? res.data.categories.map((row) => ({
+        categoryId: String(row?.categoryId ?? ""),
+        nameBn: String(row?.nameBn ?? ""),
+        nameEn: String(row?.nameEn ?? ""),
+        markupPercent: Number(row?.markupPercent ?? 0),
+      }))
+    : [];
+  const history = Array.isArray(res.data?.history)
+    ? res.data.history.map((row) => ({
+        id: String(row.id ?? ""),
+        categoryId: String(row.categoryId ?? ""),
+        categoryNameBn: String(row.categoryNameBn ?? ""),
+        categoryNameEn: String(row.categoryNameEn ?? ""),
+        previousPercent: Number(row.previousPercent ?? 0),
+        nextPercent: Number(row.nextPercent ?? 0),
+        changedAt: String(row.changedAt ?? ""),
+        changedByName: String(row.changedByName ?? ""),
+      }))
+    : [];
+  return { settings, categories, history };
+}
+
+export async function apiUpdateCategoryMarkup(categoryId: string, markupPercent: number): Promise<void> {
+  await req<{ data: Record<string, unknown> }>(`/api/v1/catalog/categories/${encodeURIComponent(categoryId)}/markup`, {
+    method: "PUT",
+    body: JSON.stringify({ markupPercent }),
+  });
+}
+
 /** Prefer created_at; some stacks expose camelCase or only updated_at. */
 function pickRowTimestamp(row: Record<string, unknown>): string {
   const candidates = [row.created_at, row.createdAt, row.updated_at, row.updatedAt];

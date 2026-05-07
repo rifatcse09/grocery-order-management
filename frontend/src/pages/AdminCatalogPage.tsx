@@ -5,13 +5,14 @@ import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
-import { apiEnabled, apiListCatalogCategories, apiListCatalogItems } from "../lib/api";
 import {
-  appendCategoryMarkupHistory,
-  loadCategoryMarkupHistory,
-  loadCategoryMarkupSettings,
-  saveCategoryMarkupSettings,
-} from "../lib/categoryMarkupSettings";
+  apiEnabled,
+  apiGetCategoryMarkupSettings,
+  apiListCatalogCategories,
+  apiListCatalogItems,
+  apiUpdateCategoryMarkup,
+  type CategoryMarkupHistoryEntry,
+} from "../lib/api";
 import type { CategoryDef } from "../types";
 
 type CatalogView = "all" | "categories" | "products";
@@ -64,8 +65,8 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   const [pendingDelete, setPendingDelete] = useState<
     { type: "category"; id: string; name: string } | { type: "item"; id: string; name: string } | null
   >(null);
-  const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>(loadCategoryMarkupSettings);
-  const [markupHistory, setMarkupHistory] = useState(loadCategoryMarkupHistory);
+  const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>({});
+  const [markupHistory, setMarkupHistory] = useState<CategoryMarkupHistoryEntry[]>([]);
 
   useEffect(() => {
     void loadCatalog();
@@ -185,6 +186,19 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
       });
   }, [showProducts, useServerItems, itemQuery, itemPage, itemPerPage, categories]);
 
+  useEffect(() => {
+    if (role !== "admin" || !apiEnabled()) return;
+    void apiGetCategoryMarkupSettings()
+      .then((res) => {
+        setCategoryMarkups(res.settings);
+        setMarkupHistory(res.history);
+      })
+      .catch(() => {
+        setCategoryMarkups({});
+        setMarkupHistory([]);
+      });
+  }, [role, categories]);
+
   const saveCategory = async () => {
     const created = await addCategory(newCatBn, newCatEn);
     if (!created) {
@@ -254,21 +268,25 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     setPendingDelete({ type: "item", id, name: item?.nameEn ?? "this item" });
   };
 
-  const setCategoryMarkup = (categoryId: string, value: string) => {
+  const setCategoryMarkup = async (categoryId: string, value: string) => {
     const pct = Number(value);
     const safe = Number.isFinite(pct) && pct >= 0 ? pct : 0;
     const prevPct = Number(categoryMarkups[categoryId] ?? 0);
     if (prevPct === safe) return;
-    const next = { ...categoryMarkups, [categoryId]: safe };
-    setCategoryMarkups(next);
-    saveCategoryMarkupSettings(next);
-    setMarkupHistory(
-      appendCategoryMarkupHistory({
-        categoryId,
-        previousPercent: prevPct,
-        nextPercent: safe,
-      }),
-    );
+    if (!apiEnabled()) {
+      setCategoryMarkups((prev) => ({ ...prev, [categoryId]: safe }));
+      return;
+    }
+    setCategoryMarkups((prev) => ({ ...prev, [categoryId]: safe }));
+    try {
+      await apiUpdateCategoryMarkup(categoryId, safe);
+      const updated = await apiGetCategoryMarkupSettings();
+      setCategoryMarkups(updated.settings);
+      setMarkupHistory(updated.history);
+    } catch {
+      setCategoryMarkups((prev) => ({ ...prev, [categoryId]: prevPct }));
+      setMessage("Could not save markup setting. Please try again.");
+    }
   };
 
   return (
@@ -422,7 +440,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                       <td className="px-3 py-2.5 text-right text-slate-600">{h.previousPercent}%</td>
                       <td className="px-3 py-2.5 text-right font-semibold text-slate-900">{h.nextPercent}%</td>
                       <td className="px-3 py-2.5 text-slate-600">
-                        {new Date(h.changedAtIso).toLocaleString()}
+                        {new Date(h.changedAt).toLocaleString()}
                       </td>
                     </tr>
                   );

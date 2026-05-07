@@ -21,7 +21,6 @@ import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
 import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 import { buildMarkupByItemPayload } from "../lib/billingMarkupPayload";
-import { loadCategoryMarkupSettings, saveCategoryMarkupSettings } from "../lib/categoryMarkupSettings";
 import { hasBillingInvoice, hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
 import {
   apiEnabled,
@@ -96,9 +95,13 @@ export function AdminOrderDetailPage() {
   const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
   const [lineItemError, setLineItemError] = useState("");
   const [generatedAtIso] = useState(() => new Date().toISOString());
-  const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>(() =>
-    loadCategoryMarkupSettings(),
-  );
+  const categoryMarkups = useMemo(() => {
+    const map: Record<string, number> = {};
+    categories.forEach((c) => {
+      map[c.id] = Number(c.markupPercent ?? 0);
+    });
+    return map;
+  }, [categories]);
   const itemsOf = useMemo(() => {
     const c = categories.find((x) => x.id === itemCat);
     return c?.items ?? [];
@@ -107,20 +110,6 @@ export function AdminOrderDetailPage() {
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
-
-  /** Catalog → localStorage updates won’t refresh this page unless we re-read on focus. */
-  useEffect(() => {
-    const syncFromStorage = () => setCategoryMarkups(loadCategoryMarkupSettings());
-    const onVis = () => {
-      if (document.visibilityState === "visible") syncFromStorage();
-    };
-    window.addEventListener("focus", syncFromStorage);
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      window.removeEventListener("focus", syncFromStorage);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, []);
 
   /** Existing orders: only re-sync when the copy in OrdersContext changes (not on every render). */
   useEffect(() => {
@@ -315,7 +304,6 @@ export function AdminOrderDetailPage() {
         billingGlobalMarkup,
         {},
       );
-      saveCategoryMarkupSettings(normalizedCategoryMarkups);
       if (apiEnabled()) {
         await apiGenerateBillingInvoice(order.id, {
           markupPercent: billingGlobalMarkup,

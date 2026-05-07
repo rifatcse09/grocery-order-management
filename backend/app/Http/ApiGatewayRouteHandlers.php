@@ -224,6 +224,60 @@ if ($path === '/api/v1/catalog/categories' && $method === 'GET') {
     ]);
 }
 
+if ($path === '/api/v1/catalog/category-markups' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin']);
+
+    $catsStmt = db()->query('
+        SELECT code, name_bn, name_en, COALESCE(markup_percent, 0) AS markup_percent
+        FROM categories
+        WHERE is_active = true
+        ORDER BY name_en ASC
+    ');
+    $cats = $catsStmt->fetchAll();
+    $settings = [];
+    $categoryRows = [];
+    foreach ($cats as $cat) {
+        $code = (string)$cat['code'];
+        $pct = (float)$cat['markup_percent'];
+        $settings[$code] = $pct;
+        $categoryRows[] = [
+            'categoryId' => $code,
+            'nameBn' => (string)$cat['name_bn'],
+            'nameEn' => (string)$cat['name_en'],
+            'markupPercent' => $pct,
+        ];
+    }
+
+    $histStmt = db()->query('
+        SELECT h.id, c.code AS category_code, c.name_bn AS category_name_bn, c.name_en AS category_name_en,
+               h.previous_percent, h.new_percent, h.created_at,
+               COALESCE(u.name, \'\') AS actor_name
+        FROM category_markup_histories h
+        JOIN categories c ON c.id = h.category_id
+        LEFT JOIN users u ON u.id = h.changed_by
+        ORDER BY h.id DESC
+        LIMIT 300
+    ');
+    $historyRows = $histStmt->fetchAll();
+    $history = array_map(static fn(array $r): array => [
+        'id' => (string)$r['id'],
+        'categoryId' => (string)$r['category_code'],
+        'categoryNameBn' => (string)$r['category_name_bn'],
+        'categoryNameEn' => (string)$r['category_name_en'],
+        'previousPercent' => (float)$r['previous_percent'],
+        'nextPercent' => (float)$r['new_percent'],
+        'changedAt' => (string)$r['created_at'],
+        'changedByName' => (string)$r['actor_name'],
+    ], $historyRows);
+
+    json_response(200, ['data' => [
+        'settings' => $settings,
+        'categories' => $categoryRows,
+        'history' => $history,
+    ]]);
+}
+
 if ($path === '/api/v1/catalog/categories' && $method === 'POST') {
     $user = require_auth();
     require_role($user, ['admin', 'moderator']);
@@ -270,6 +324,59 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $me
         'nameEn' => (string)$row['name_en'],
         'markupPercent' => (float)$row['markup_percent'],
         'items' => [],
+    ]]);
+}
+
+if (preg_match('#^/api/v1/catalog/categories/([^/]+)/markup$#', $path, $m) === 1 && $method === 'PUT') {
+    $user = require_auth();
+    require_role($user, ['admin']);
+    $categoryCode = urldecode($m[1]);
+    $in = json_input();
+    $markupPercent = (float)($in['markupPercent'] ?? 0);
+    if (!is_finite($markupPercent) || $markupPercent < 0) {
+        json_response(422, ['message' => 'Markup percent must be a non-negative number.']);
+    }
+    $markupPercent = round($markupPercent, 2);
+
+    $sel = db()->prepare('SELECT id, code, markup_percent FROM categories WHERE code = :code AND is_active = true LIMIT 1');
+    $sel->execute(['code' => $categoryCode]);
+    $row = $sel->fetch();
+    if (!$row) {
+        json_response(404, ['message' => 'Category not found']);
+    }
+
+    $previousPercent = (float)$row['markup_percent'];
+    if (round($previousPercent, 2) !== $markupPercent) {
+        db()->beginTransaction();
+        try {
+            $upd = db()->prepare('UPDATE categories SET markup_percent = :pct, updated_at = NOW() WHERE id = :id');
+            $upd->execute([
+                'pct' => $markupPercent,
+                'id' => (int)$row['id'],
+            ]);
+            $hist = db()->prepare('
+                INSERT INTO category_markup_histories (category_id, previous_percent, new_percent, changed_by, created_at)
+                VALUES (:category_id, :previous_percent, :new_percent, :changed_by, NOW())
+            ');
+            $hist->execute([
+                'category_id' => (int)$row['id'],
+                'previous_percent' => $previousPercent,
+                'new_percent' => $markupPercent,
+                'changed_by' => (int)$user['id'],
+            ]);
+            db()->commit();
+        } catch (Throwable $e) {
+            if (db()->inTransaction()) {
+                db()->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    json_response(200, ['data' => [
+        'categoryId' => (string)$row['code'],
+        'markupPercent' => $markupPercent,
+        'previousPercent' => $previousPercent,
     ]]);
 }
 
@@ -707,6 +814,24 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
             updated_at = NOW()
         WHERE id = :id AND order_id = :order_id
     ');
+    $lineCategoryCodes = [];
+    foreach ($lines as $line) {
+        $lineCategory = (string)($line['categoryId'] ?? '');
+        if ($lineCategory !== '') {
+            $lineCategoryCodes[$lineCategory] = true;
+        }
+    }
+    $dbMarkupByCategory = [];
+    if (!empty($lineCategoryCodes)) {
+        $codes = array_keys($lineCategoryCodes);
+        $placeholders = implode(',', array_fill(0, count($codes), '?'));
+        $catMarkupStmt = db()->prepare("SELECT code, COALESCE(markup_percent, 0) AS markup_percent FROM categories WHERE code IN ($placeholders)");
+        $catMarkupStmt->execute($codes);
+        foreach ($catMarkupStmt->fetchAll() as $catMarkupRow) {
+            $dbMarkupByCategory[(string)$catMarkupRow['code']] = (float)$catMarkupRow['markup_percent'];
+        }
+    }
+
     $subtotal = 0.0;
     $purchaseSubtotal = 0.0;
     $profitLossTotal = 0.0;
@@ -716,7 +841,9 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
         $purchaseSubtotal += $base;
         $lineCategory = (string)($line['categoryId'] ?? '');
         $lineIdKey = (string)($line['id'] ?? '');
-        $lineMarkupPercent = $markupPercent;
+        $lineMarkupPercent = $lineCategory !== '' && array_key_exists($lineCategory, $dbMarkupByCategory)
+            ? $dbMarkupByCategory[$lineCategory]
+            : $markupPercent;
         if ($lineCategory !== '' && array_key_exists($lineCategory, $markupByCategory)) {
             $lineMarkupPercent = (float)$markupByCategory[$lineCategory];
         }

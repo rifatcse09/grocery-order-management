@@ -18,6 +18,7 @@ export interface CategoryDef {
   id: string;
   nameBn: string;
   nameEn: string;
+  markupPercent?: number;
   items: CatalogItem[];
 }
 
