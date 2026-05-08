@@ -26,12 +26,18 @@ const roleCards: { role: Role; title: string; hint: string }[] = [
     title: "Administrator",
     hint: "Full analytics & reports",
   },
+  {
+    role: "master_admin",
+    title: "Master administrator",
+    hint: "Full control, document regeneration & soft delete",
+  },
 ];
 
 const demoCreds: Record<Role, { email: string; password: string }> = {
   user: { email: "user@demo.local", password: "demo123" },
   moderator: { email: "moderator@demo.local", password: "demo123" },
   admin: { email: "admin@demo.local", password: "demo123" },
+  master_admin: { email: "master@demo.local", password: "demo123" },
 };
 
 /** Demo quick-pick cards are for `vite` dev only; production build uses a plain role control. */
@@ -246,9 +252,6 @@ export function LoginPage() {
             </div>
           </CardContent>
         </Card>
-        <p className="mt-6 text-center text-xs text-muted-foreground">
-          Front-end prototype · Laravel API in a later phase
-        </p>
       </div>
     </div>
   );

@@ -9,9 +9,30 @@ use App\Models\CatalogItem;
 use App\Models\Category;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class CatalogController extends Controller
 {
+    private function nextCategoryCodeFromEnglishName(string $nameEn): string
+    {
+        $baseSlug = Str::slug($nameEn, '-');
+        if ($baseSlug === '') {
+            $baseSlug = 'category';
+        }
+        $base = 'custom-cat-' . $baseSlug;
+        $base = substr($base, 0, 50);
+        $code = $base;
+        $suffix = 2;
+        while (Category::query()->where('code', $code)->exists()) {
+            $suffixText = '-' . $suffix;
+            $trimLen = max(1, 50 - strlen($suffixText));
+            $code = substr($base, 0, $trimLen) . $suffixText;
+            $suffix++;
+        }
+
+        return $code;
+    }
+
     public function index(Request $request): JsonResponse
     {
         $categories = Category::query()
@@ -45,7 +66,17 @@ class CatalogController extends Controller
             return response()->json(['message' => 'Forbidden'], 403);
         }
         $data = $request->validated();
-        $code = 'custom-cat-' . now()->timestamp . '-' . random_int(100, 999);
+        $duplicateExists = Category::query()
+            ->where('is_active', true)
+            ->where(static function ($q) use ($data): void {
+                $q->whereRaw('LOWER(name_bn) = LOWER(?)', [$data['nameBn']])
+                    ->orWhereRaw('LOWER(name_en) = LOWER(?)', [$data['nameEn']]);
+            })
+            ->exists();
+        if ($duplicateExists) {
+            return response()->json(['message' => 'Duplicate category name found for Bangla or English.'], 409);
+        }
+        $code = $this->nextCategoryCodeFromEnglishName($data['nameEn']);
         $category = Category::query()->create([
             'code' => $code,
             'name_bn' => $data['nameBn'],
@@ -67,13 +98,24 @@ class CatalogController extends Controller
     public function storeItem(CatalogStoreItemRequest $request): JsonResponse
     {
         $user = $request->user();
-        if (!$user || !in_array($user->role, ['admin', 'moderator'], true)) {
+        if (!$user || !in_array($user->role, ['admin', 'moderator', 'user'], true)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
         $data = $request->validated();
         $category = Category::query()->where('code', $data['categoryId'])->first();
         if (!$category) {
             return response()->json(['message' => 'Category not found'], 404);
+        }
+        $duplicateExists = CatalogItem::query()
+            ->where('category_id', $category->id)
+            ->where('is_active', true)
+            ->where(static function ($q) use ($data): void {
+                $q->whereRaw('LOWER(name_bn) = LOWER(?)', [$data['nameBn']])
+                    ->orWhereRaw('LOWER(name_en) = LOWER(?)', [$data['nameEn']]);
+            })
+            ->exists();
+        if ($duplicateExists) {
+            return response()->json(['message' => 'Duplicate item name found in this category for Bangla or English.'], 409);
         }
         $code = 'custom-' . $category->code . '-' . now()->timestamp . '-' . random_int(100, 999);
         $item = CatalogItem::query()->create([

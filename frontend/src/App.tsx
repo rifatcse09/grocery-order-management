@@ -45,7 +45,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<Navigate to="/user/orders" replace />} />
-          <Route element={<RequireRole allow={["user", "admin"]} />}>
+          <Route element={<RequireRole allow={["user", "admin", "master_admin"]} />}>
             <Route path="/user/orders" element={<UserOrderDashboard />} />
             <Route path="/user/orders/new" element={<OrderFormPage />} />
             <Route path="/user/orders/:id/edit" element={<OrderFormPage />} />
@@ -57,7 +57,7 @@ export default function App() {
             <Route path="/user/catalog/categories" element={<AdminCatalogPage view="categories" />} />
             <Route path="/user/catalog/products" element={<AdminCatalogPage view="products" />} />
           </Route>
-          <Route element={<RequireRole allow={["moderator", "admin"]} />}>
+          <Route element={<RequireRole allow={["moderator", "admin", "master_admin"]} />}>
             <Route path="/moderator/orders" element={<ModeratorOrdersPage />} />
             <Route path="/moderator/purchase-invoices/:id" element={<PurchaseInvoiceDetailPage />} />
             <Route path="/moderator/challans/:id" element={<UserChallanDetailPage />} />
@@ -69,7 +69,7 @@ export default function App() {
             <Route path="/moderator/catalog/categories" element={<AdminCatalogPage view="categories" />} />
             <Route path="/moderator/catalog/products" element={<AdminCatalogPage view="products" />} />
           </Route>
-          <Route element={<RequireRole allow={["admin"]} />}>
+          <Route element={<RequireRole allow={["admin", "master_admin"]} />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
             <Route path="/admin/catalog" element={<Navigate to="/admin/catalog/categories" replace />} />
             <Route path="/admin/catalog/categories" element={<AdminCatalogPage view="categories" />} />

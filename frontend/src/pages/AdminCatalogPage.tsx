@@ -13,7 +13,8 @@ import {
   apiUpdateCategoryMarkup,
   type CategoryMarkupHistoryEntry,
 } from "../lib/api";
-import type { CategoryDef } from "../types";
+import { getCategoryColor } from "../lib/categoryColors";
+import { type CategoryDef, isAdministrationRole } from "../types";
 
 type CatalogView = "all" | "categories" | "products";
 
@@ -77,12 +78,12 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     [categories],
   );
   const role = user?.role ?? "user";
-  const canAddCategory = role === "admin" || role === "moderator";
-  const canAddItem = role === "admin" || role === "moderator";
-  const canEditCategory = role === "admin";
-  const canDeleteCategory = role === "admin";
-  const canEditItem = role === "admin" || role === "moderator";
-  const canDeleteItem = role === "admin";
+  const canAddCategory = isAdministrationRole(role) || role === "moderator";
+  const canAddItem = isAdministrationRole(role) || role === "moderator";
+  const canEditCategory = isAdministrationRole(role);
+  const canDeleteCategory = isAdministrationRole(role);
+  const canEditItem = isAdministrationRole(role) || role === "moderator";
+  const canDeleteItem = isAdministrationRole(role);
   const canManageCategoryActions = canEditCategory || canDeleteCategory;
   const canManageItemActions = canEditItem || canDeleteItem;
   const canViewProducts = canAddItem || role === "user";
@@ -187,7 +188,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
   }, [showProducts, useServerItems, itemQuery, itemPage, itemPerPage, categories]);
 
   useEffect(() => {
-    if (role !== "admin" || !apiEnabled()) return;
+    if (!isAdministrationRole(role) || !apiEnabled()) return;
     void apiGetCategoryMarkupSettings()
       .then((res) => {
         setCategoryMarkups(res.settings);
@@ -296,7 +297,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
           {view === "categories" ? "Category list" : view === "products" ? "Product list" : "Catalog list"}
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          {role === "admin"
+          {isAdministrationRole(role)
             ? "Admin can add, edit, and delete categories and products/items."
             : canAddCategory
               ? "Moderator can add categories. Product list is hidden."
@@ -378,11 +379,11 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">{message}</div>
       ) : null}
 
-      {role === "admin" ? (
+      {isAdministrationRole(role) ? (
         <section className="rounded-3xl border border-border bg-card p-5 shadow-card">
           <h2 className="text-base font-semibold text-slate-900">Billing markup settings (category-wise)</h2>
           <p className="mt-1 text-sm text-slate-600">
-            This markup % is added to purchase line prices when admin generates customer billing invoice.
+            This markup % is added to purchase item prices when admin generates customer billing invoice.
           </p>
           <div className="table-scroll mt-3 rounded-2xl border border-border">
             <table className="min-w-[640px] w-full text-left text-sm">
@@ -396,7 +397,16 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
               <tbody>
                 {sorted.map((c) => (
                   <tr key={`markup-${c.id}`} className="border-t border-border bg-card">
-                    <td className="px-3 py-2.5 font-semibold text-slate-900">{c.nameEn}</td>
+                    <td className="px-3 py-2.5 font-semibold text-slate-900">
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-slate-200"
+                          style={{ backgroundColor: getCategoryColor(c.id) }}
+                          aria-hidden="true"
+                        />
+                        {c.nameEn}
+                      </span>
+                    </td>
                     <td className="px-3 py-2.5 font-bn text-slate-700">{c.nameBn}</td>
                     <td className="px-3 py-2.5 text-right">
                       <input
@@ -497,7 +507,14 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                         className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
                       />
                     ) : (
-                      c.nameEn
+                      <span className="inline-flex items-center gap-2">
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full ring-1 ring-slate-200"
+                          style={{ backgroundColor: getCategoryColor(c.id) }}
+                          aria-hidden="true"
+                        />
+                        {c.nameEn}
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-2.5 font-bn text-slate-700">

@@ -31,14 +31,15 @@ import {
 import { StatMetricCard, type MetricCardTone } from "../components/StatMetricCard";
 import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 import { useAuth } from "../context/AuthContext";
+import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
 import type { OrderStatus } from "../types";
 import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
-
-const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#0f766e", "#64748B"];
+import { getCategoryColor } from "../lib/categoryColors";
 
 export function AdminDashboardPage() {
   const { orders } = useOrders();
+  const { categories } = useCatalog();
   const { user } = useAuth();
   const [historyQuery, setHistoryQuery] = useState("");
   const [trendMode, setTrendMode] = useState<"weekly" | "monthly">("weekly");
@@ -58,12 +59,22 @@ export function AdminDashboardPage() {
       .catch(() => setTransactions({ payments: [], adjustments: [] }));
   }, []);
 
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((c) => {
+      const label = c.nameEn || c.nameBn || prettifyCatalogCode(c.id, "category");
+      map.set(c.id, label);
+    });
+    return map;
+  }, [categories]);
+
   const filterMeta = useMemo(() => {
     const customers = [...new Set(orders.map((o) => o.contactPerson).filter(Boolean))].sort();
-    const categories = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.categoryId)).filter(Boolean))].sort();
+    const categories = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.categoryId)).filter(Boolean))]
+      .sort((a, b) => categoryDisplayName(a, categoryNameById).localeCompare(categoryDisplayName(b, categoryNameById)));
     const products = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.itemNameEn || l.itemNameBn)).filter(Boolean))].sort();
     return { customers, categories, products };
-  }, [orders]);
+  }, [orders, categoryNameById]);
 
   const filteredOrders = useMemo(() => {
     const today = new Date();
@@ -128,17 +139,21 @@ export function AdminDashboardPage() {
     const map = new Map<string, number>();
     filteredOrders.forEach((order) => {
       order.lines.forEach((line) => {
-        const name = line.categoryId || "Uncategorized";
-        map.set(name, (map.get(name) ?? 0) + Number(line.lineTotal ?? 0));
+        const categoryCode = line.categoryId || "uncategorized";
+        map.set(categoryCode, (map.get(categoryCode) ?? 0) + Number(line.lineTotal ?? 0));
       });
     });
     return [...map.entries()]
-      .map(([name, amount]) => ({ name, amount: Math.round(amount) }))
+      .map(([code, amount]) => ({
+        code,
+        name: categoryDisplayName(code, categoryNameById),
+        amount: Math.round(amount),
+      }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 8);
-  }, [filteredOrders]);
+  }, [filteredOrders, categoryNameById]);
 
-  const pieData = categorySales.map((c) => ({ name: c.name, value: c.amount }));
+  const pieData = categorySales.map((c) => ({ code: c.code, name: c.name, value: c.amount }));
   const totalCat = pieData.reduce((s, p) => s + p.value, 0);
 
   const trendAnalytics = useMemo(() => {
@@ -204,7 +219,7 @@ export function AdminDashboardPage() {
           (parseFloat(l.gram || "0") || 0) / 1000 +
           (parseFloat(l.piece || "0") || 0);
         const prev = map.get(key) ?? {
-          name: l.itemNameEn || l.itemNameBn || "Unknown item",
+          name: l.itemNameEn || l.itemNameBn || prettifyCatalogCode(l.itemId, "Unknown item"),
           orders: 0,
           qtyScore: 0,
           sales: 0,
@@ -290,9 +305,10 @@ export function AdminDashboardPage() {
 
     filteredOrders.forEach((o) => {
       o.lines.forEach((l) => {
-        const itemName = l.itemNameEn || l.itemNameBn || "Unknown item";
-        const category = l.categoryId || "uncategorized";
-        const key = `${category}::${itemName}`;
+        const itemName = l.itemNameEn || l.itemNameBn || prettifyCatalogCode(l.itemId, "Unknown item");
+        const categoryCode = l.categoryId || "uncategorized";
+        const category = categoryDisplayName(categoryCode, categoryNameById);
+        const key = `${categoryCode}::${itemName}`;
         const prev = grouped.get(key) ?? { item: itemName, category, orders: 0, qtyScore: 0, amount: 0 };
         const qtyScore =
           (parseFloat(l.kg || "0") || 0) +
@@ -314,7 +330,7 @@ export function AdminDashboardPage() {
         return r.item.toLowerCase().includes(query) || r.category.toLowerCase().includes(query);
       })
       .sort((a, b) => b.amount - a.amount || b.orders - a.orders);
-  }, [filteredOrders, historyQuery]);
+  }, [filteredOrders, historyQuery, categoryNameById]);
   const deliveryMetrics = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -403,7 +419,7 @@ export function AdminDashboardPage() {
               <option value="all">All categories</option>
               {filterMeta.categories.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {categoryDisplayName(c, categoryNameById)}
                 </option>
               ))}
             </select>
@@ -550,7 +566,7 @@ export function AdminDashboardPage() {
                   paddingAngle={2}
                 >
                   {pieData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    <Cell key={i} fill={getCategoryColor(String(pieData[i]?.code ?? ""))} />
                   ))}
                 </Pie>
                 <Tooltip formatter={(v: number) => [`৳ ${v.toLocaleString("en-US")}`, ""]} />
@@ -572,7 +588,11 @@ export function AdminDashboardPage() {
                 <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-25} textAnchor="end" height={90} />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v: number) => [`৳ ${v.toLocaleString("en-US")}`, ""]} />
-                <Bar dataKey="amount" fill="#2563EB" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="amount" radius={[6, 6, 0, 0]}>
+                  {categorySales.map((entry) => (
+                    <Cell key={`bar-${entry.code}`} fill={getCategoryColor(entry.code)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -810,6 +830,21 @@ function startOfWeek(date: Date): Date {
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - d.getDay());
   return d;
+}
+
+function categoryDisplayName(code: string, categoryNameById: Map<string, string>): string {
+  if (!code) return "Uncategorized";
+  return categoryNameById.get(code) ?? prettifyCatalogCode(code, "category");
+}
+
+function prettifyCatalogCode(code: string, fallback: string): string {
+  const cleaned = code
+    .replace(/^custom-cat-/, "")
+    .replace(/^custom-/, "")
+    .replace(/-/g, " ")
+    .trim();
+  if (!cleaned) return fallback;
+  return cleaned.replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
 function Filter({ label, children }: { label: string; children: ReactNode }) {

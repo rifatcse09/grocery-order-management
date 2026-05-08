@@ -23,6 +23,8 @@ import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 import { buildMarkupByItemPayload } from "../lib/billingMarkupPayload";
 import { hasBillingInvoice, hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
 import {
+  apiCreateOrder,
+  apiDeleteOrder,
   apiEnabled,
   apiGenerateBillingInvoice,
   apiGenerateChallan,
@@ -30,7 +32,41 @@ import {
   apiMarkOrderDelivered,
   apiUpdateOrder,
 } from "../lib/api";
-import type { Order } from "../types";
+import { type Order, isAdministrationRole } from "../types";
+
+/** Compare draft to last server copy so we can gate workflow until Save. */
+function orderFingerprint(o: Order): string {
+  const lines = o.lines.map((l) => ({
+    id: l.id,
+    serial: l.serial,
+    categoryId: l.categoryId,
+    itemId: l.itemId,
+    itemNameBn: l.itemNameBn,
+    itemNameEn: l.itemNameEn,
+    kg: l.kg,
+    gram: l.gram,
+    piece: l.piece,
+    instructions: l.instructions ?? "",
+    unitPrice: l.unitPrice ?? null,
+    lineTotal: l.lineTotal ?? null,
+    markupPercent: l.markupPercent ?? null,
+    markupAmount: l.markupAmount ?? null,
+    unitPriceAfterMarkup: l.unitPriceAfterMarkup ?? null,
+    lineTotalAfterMarkup: l.lineTotalAfterMarkup ?? null,
+    profitLossAmount: l.profitLossAmount ?? null,
+  }));
+  return JSON.stringify({
+    ownerId: o.ownerId ?? "",
+    orderDate: o.orderDate,
+    deliveryDate: o.deliveryDate,
+    deliveryTime: o.deliveryTime ?? "",
+    billingAddress: o.billingAddress,
+    deliveryAddress: o.deliveryAddress,
+    contactPerson: o.contactPerson,
+    phone: o.phone,
+    lines,
+  });
+}
 
 function formatReadableOrderDate(value: string): string {
   if (!value) return "—";
@@ -93,6 +129,7 @@ export function AdminOrderDetailPage() {
   const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
   const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [lineItemError, setLineItemError] = useState("");
   const [generatedAtIso] = useState(() => new Date().toISOString());
   const categoryMarkups = useMemo(() => {
@@ -155,6 +192,15 @@ export function AdminOrderDetailPage() {
     [order?.billingCategoryMarkups, categoryMarkups],
   );
 
+  const isDeletedRecord = Boolean(order && !isNew && order.deletedAt);
+  const isDirty = useMemo(() => {
+    if (!order || isDeletedRecord) return false;
+    if (isNew) return true;
+    if (!base) return true;
+    return orderFingerprint(order) !== orderFingerprint(base);
+  }, [order, base, isNew, isDeletedRecord]);
+  const workflowBlocked = isDirty || saveBusy;
+
   if (!order || (!isNew && !base)) {
     return (
       <div className="rounded-2xl border border-border bg-muted p-8 text-center">
@@ -171,28 +217,60 @@ export function AdminOrderDetailPage() {
   }
 
   const lineCount = order.lines.length;
-  const adminCanMarkDelivered = !!user && order.ownerId === user.id;
+  const isMasterAdmin = user?.role === "master_admin";
+  const canFullAdmin = !!user && isAdministrationRole(user.role);
+  const adminCanMarkDelivered = !!user && (order.ownerId === user.id || canFullAdmin);
   const deliveredOrInvoiced = !isNew && (order.status === "delivered" || order.status === "invoiced");
-  const quantityLocked = deliveredOrInvoiced;
+  const quantityLocked = isDeletedRecord || (deliveredOrInvoiced && !canFullAdmin);
   const pricingLocked =
-    deliveredOrInvoiced ||
-    (!isNew && hasPurchaseInvoice(order)) ||
-    (!isNew && hasBillingInvoice(order));
+    isDeletedRecord ||
+    (!canFullAdmin &&
+      (deliveredOrInvoiced ||
+        (!isNew && hasPurchaseInvoice(order)) ||
+        (!isNew && hasBillingInvoice(order))));
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
   const orderDateDisplay = isNew
     ? formatReadableOrderDate(generatedAtIso)
     : formatReadableOrderDate(order.orderDate);
-  const save = () => upsertOrder(order);
-  const genChallan = async () => {
-    if (challanBusy || order.challanGenerated) return;
+  const save = async () => {
+    if (isDeletedRecord || !order || saveBusy) return;
+    setSaveBusy(true);
+    setWorkflowError("");
+    setWorkflowSuccess("");
+    try {
+      if (apiEnabled()) {
+        if (isNew) {
+          const created = await apiCreateOrder(order);
+          await loadOrders();
+          navigate(`/admin/orders/${created.id}`, { replace: true });
+          return;
+        }
+        await apiUpdateOrder(order.id, order);
+        await loadOrders();
+        setWorkflowSuccess("Changes saved.");
+        return;
+      }
+      upsertOrder(order);
+      setWorkflowSuccess("Saved locally.");
+    } catch (e) {
+      setWorkflowError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+  const genChallan = async (regenerate = false) => {
+    if (challanBusy) return;
+    if (regenerate && !canFullAdmin) return;
+    if (!regenerate && order.challanGenerated) return;
+    if (regenerate && !order.challanGenerated) return;
     setWorkflowError("");
     setWorkflowSuccess("");
     setChallanBusy(true);
     try {
       if (apiEnabled()) {
-        await apiGenerateChallan(order.id);
+        await apiGenerateChallan(order.id, regenerate ? { regenerate: true } : undefined);
         await loadOrders();
-        setWorkflowSuccess("Challan generated successfully.");
+        setWorkflowSuccess(regenerate ? "Challan snapshot updated." : "Challan generated successfully.");
         return;
       }
       const next = { ...order, challanGenerated: true, status: "under_review" as const };
@@ -206,15 +284,18 @@ export function AdminOrderDetailPage() {
     }
   };
 
-  const generatePurchaseInvoice = async () => {
-    if (purchaseBusy || hasPurchaseInvoice(order)) return;
+  const generatePurchaseInvoice = async (regenerate = false) => {
+    if (purchaseBusy) return;
+    if (regenerate && !canFullAdmin) return;
+    if (!regenerate && hasPurchaseInvoice(order)) return;
+    if (regenerate && !hasPurchaseInvoice(order)) return;
     if (apiEnabled() && isNew) {
       setWorkflowError("Create the order on the server first, then generate a purchase invoice.");
       return;
     }
     if (!purchaseLinesReady) {
       setWorkflowError(
-        "Purchase invoice needs a cost amount on every line: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive line total.",
+        "Purchase invoice needs a cost amount on every item: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive items total.",
       );
       return;
     }
@@ -225,9 +306,11 @@ export function AdminOrderDetailPage() {
       if (apiEnabled()) {
         const saved = await apiUpdateOrder(order.id, order);
         setOrder(saved);
-        await apiGeneratePurchaseInvoice(saved.id);
+        await apiGeneratePurchaseInvoice(saved.id, regenerate ? { regenerate: true } : undefined);
         await loadOrders();
-        setWorkflowSuccess("Purchase invoice generated successfully.");
+        setWorkflowSuccess(
+          regenerate ? "Purchase invoice regenerated successfully." : "Purchase invoice generated successfully.",
+        );
         navigate(`/admin/purchase-invoices/${saved.id}`);
         return;
       }
@@ -280,14 +363,13 @@ export function AdminOrderDetailPage() {
     }
   };
 
-  const finalizeInvoice = async () => {
-    if (
-      billingBusy ||
-      !hasPurchaseInvoice(order) ||
-      hasBillingInvoice(order) ||
-      order.status !== "delivered"
-    )
-      return;
+  const finalizeInvoice = async (regenerate = false) => {
+    if (billingBusy || !hasPurchaseInvoice(order)) return;
+    if (regenerate && !canFullAdmin) return;
+    if (!regenerate && hasBillingInvoice(order)) return;
+    if (regenerate && !hasBillingInvoice(order)) return;
+    if (!regenerate && order.status !== "delivered") return;
+    if (regenerate && order.status !== "invoiced") return;
     setWorkflowError("");
     setWorkflowSuccess("");
     setBillingBusy(true);
@@ -309,9 +391,12 @@ export function AdminOrderDetailPage() {
           markupPercent: billingGlobalMarkup,
           markupByCategory: normalizedCategoryMarkups,
           markupByItem: normalizedItemMarkups,
+          ...(regenerate ? { regenerate: true } : {}),
         });
         await loadOrders();
-        setWorkflowSuccess("Billing invoice generated successfully.");
+        setWorkflowSuccess(
+          regenerate ? "Billing invoice regenerated successfully." : "Billing invoice generated successfully.",
+        );
         navigate(`/admin/billing-invoices/${order.id}`);
         return;
       }
@@ -370,7 +455,7 @@ export function AdminOrderDetailPage() {
     if (!cat || !it) return;
     const exists = order.lines.some((l) => l.categoryId === cat.id && l.itemId === it.id);
     if (exists) {
-      setLineItemError("Same item already exists in line items.");
+      setLineItemError("Same item already exists in items list.");
       return;
     }
     const next = {
@@ -391,7 +476,6 @@ export function AdminOrderDetailPage() {
       ],
     };
     setOrder(next);
-    upsertOrder(next);
     setLineItemError("");
     setAddRowModal(false);
   };
@@ -410,7 +494,9 @@ export function AdminOrderDetailPage() {
       <div className="rounded-3xl border border-border bg-primary p-6 text-primary-foreground shadow-xl sm:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground">Administrator full access</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-primary-foreground">
+              {isMasterAdmin ? "Master administrator" : "Administrator full access"}
+            </p>
             <h1 className="mt-1 font-mono text-2xl font-bold tracking-tight sm:text-3xl">
               {isNew ? "Create user order" : order.orderNo}
             </h1>
@@ -423,7 +509,7 @@ export function AdminOrderDetailPage() {
             <StatusBadge status={order.status} />
             <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-primary-foreground">
               <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-900">
-                {lineCount} line{lineCount !== 1 ? "s" : ""}
+                {lineCount} item{lineCount !== 1 ? "s" : ""}
               </span>
               {order.challanGenerated ? (
                 <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
@@ -435,14 +521,21 @@ export function AdminOrderDetailPage() {
                 <span className="rounded-full bg-blue-800 px-3 py-1 text-white">Billing invoice</span>
               ) : null}
             </div>
-            {!isNew ? (
+            {!isNew && canFullAdmin && !order.deletedAt ? (
               <button
                 type="button"
                 onClick={() => setShowDeleteModal(true)}
-                className="mt-1 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-red-500"
+                disabled={workflowBlocked}
+                title={workflowBlocked ? "Save changes before soft-delete." : undefined}
+                className="mt-1 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Delete order
+                Soft-delete order
               </button>
+            ) : null}
+            {!isNew && order.deletedAt ? (
+              <span className="mt-1 rounded-xl bg-slate-600 px-3.5 py-2 text-xs font-semibold text-white">
+                Soft-deleted (hidden from totals)
+              </span>
             ) : null}
           </div>
         </div>
@@ -451,7 +544,7 @@ export function AdminOrderDetailPage() {
       {/* Quick stats */}
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Lines</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Items</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
         </div>
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
@@ -537,12 +630,12 @@ export function AdminOrderDetailPage() {
         </div>
       </section>
 
-      {/* Line items */}
+      {/* Items */}
       <section className="overflow-hidden rounded-3xl border border-border bg-white shadow-card">
         <div className="border-b border-border bg-muted px-5 py-4">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
-            Line items & pricing
+            Items & pricing
           </h2>
         </div>
         <div className="p-4 sm:p-5">
@@ -573,11 +666,18 @@ export function AdminOrderDetailPage() {
             </button>
           </div>
           {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
+          {canFullAdmin && !isNew && !isDeletedRecord ? (
+            <p className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              You can change items, quantities, and costs even after delivery or billing. <strong>Save changes</strong>{" "}
+              updates the database; the server refreshes the purchase invoice and challan when those already exist.
+              Use <strong>Regenerate billing invoice</strong> if customer totals need to match your edits.
+            </p>
+          ) : null}
           {!hasPurchaseInvoice(order) ? (
             <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
-              <strong>Cost required for purchase invoice:</strong> each line must have a{" "}
+              <strong>Cost required for purchase invoice:</strong> each item must have a{" "}
               <strong>supplier cost (unit) price</strong> greater than zero, valid <strong>quantity</strong>, and a
-              positive <strong>line total</strong>. The server will reject a purchase invoice without these.
+              positive <strong>items total</strong>. The server will reject a purchase invoice without these.
             </p>
           ) : null}
           <OrderLinesEditor
@@ -590,47 +690,88 @@ export function AdminOrderDetailPage() {
             linesLocked={false}
             quantityLocked={quantityLocked}
             pricingLocked={pricingLocked}
-            markupLocked={hasBillingInvoice(order) || order.status === "invoiced"}
+            markupLocked={
+              isDeletedRecord ||
+              (!canFullAdmin && (hasBillingInvoice(order) || order.status === "invoiced"))
+            }
             onChange={(lines) => setOrder((prev) => (prev ? { ...prev, lines } : prev))}
           />
+          {workflowBlocked && !isDeletedRecord ? (
+            <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+              {saveBusy
+                ? "Saving…"
+                : isNew
+                  ? "Create the order to enable challan, invoices, and delivery actions."
+                  : "Save changes to enable challan, invoices, delivery, and soft-delete."}
+            </p>
+          ) : null}
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={save}
-              className="rounded-xl border border-border bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-muted"
+              onClick={() => void save()}
+              disabled={isDeletedRecord || saveBusy}
+              className="rounded-xl border border-border bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isNew ? "Create order" : "Save changes"}
+              {saveBusy ? "Saving…" : isNew ? "Create order" : "Save changes"}
             </button>
             <button
               type="button"
               onClick={() => {
-                void genChallan();
+                void genChallan(false);
               }}
-              disabled={Boolean(challanBusy || order.challanGenerated)}
+              disabled={Boolean(challanBusy || order.challanGenerated || isDeletedRecord || workflowBlocked)}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {challanBusy ? "Generating…" : "Generate challan"}
             </button>
+            {canFullAdmin && order.challanGenerated ? (
+              <button
+                type="button"
+                onClick={() => void genChallan(true)}
+                disabled={Boolean(challanBusy || isDeletedRecord || workflowBlocked)}
+                className="rounded-xl border border-primary bg-white px-4 py-2 text-sm font-semibold text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {challanBusy ? "Updating…" : "Regenerate challan"}
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => void generatePurchaseInvoice()}
+              onClick={() => void generatePurchaseInvoice(false)}
               disabled={Boolean(
                 purchaseBusy ||
                   hasPurchaseInvoice(order) ||
                   !purchaseLinesReady ||
-                  (apiEnabled() && isNew),
+                  (apiEnabled() && isNew) ||
+                  isDeletedRecord ||
+                  workflowBlocked,
               )}
               title={
                 apiEnabled() && isNew
                   ? "Save as a new order first."
                   : !hasPurchaseInvoice(order) && !purchaseLinesReady
-                    ? "Enter cost (unit) price and quantity on every line before purchase invoice."
+                    ? "Enter cost (unit) price and quantity on every item before purchase invoice."
                     : undefined
               }
               className="rounded-xl bg-amber-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {purchaseBusy ? "Generating…" : "Generate purchase invoice"}
             </button>
+            {canFullAdmin && hasPurchaseInvoice(order) ? (
+              <button
+                type="button"
+                onClick={() => void generatePurchaseInvoice(true)}
+                disabled={Boolean(
+                  purchaseBusy ||
+                    !purchaseLinesReady ||
+                    (apiEnabled() && isNew) ||
+                    isDeletedRecord ||
+                    workflowBlocked,
+                )}
+                className="rounded-xl border border-amber-800 bg-white px-4 py-2 text-sm font-semibold text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {purchaseBusy ? "Regenerating…" : "Regenerate purchase invoice"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => void markDeliveryComplete()}
@@ -641,7 +782,9 @@ export function AdminOrderDetailPage() {
                   billingBusy ||
                   order.status === "delivered" ||
                   order.status === "invoiced" ||
-                  (order.status !== "submitted" && order.status !== "under_review"),
+                  (order.status !== "submitted" && order.status !== "under_review") ||
+                  isDeletedRecord ||
+                  workflowBlocked,
               )}
               className="inline-flex items-center gap-2 rounded-xl border border-teal-600 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -650,17 +793,31 @@ export function AdminOrderDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => void finalizeInvoice()}
+              onClick={() => void finalizeInvoice(false)}
               disabled={Boolean(
                 billingBusy ||
                   !hasPurchaseInvoice(order) ||
                   hasBillingInvoice(order) ||
-                  order.status !== "delivered",
+                  order.status !== "delivered" ||
+                  isDeletedRecord ||
+                  workflowBlocked,
               )}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {billingBusy ? "Generating…" : "Generate customer billing invoice"}
             </button>
+            {canFullAdmin && hasBillingInvoice(order) && order.status === "invoiced" ? (
+              <button
+                type="button"
+                onClick={() => void finalizeInvoice(true)}
+                disabled={Boolean(
+                  billingBusy || !hasPurchaseInvoice(order) || isDeletedRecord || workflowBlocked,
+                )}
+                className="rounded-xl border border-primary bg-white px-4 py-2 text-sm font-semibold text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {billingBusy ? "Regenerating…" : "Regenerate billing invoice"}
+              </button>
+            ) : null}
           </div>
           {!hasPurchaseInvoice(order) && purchaseLinesReady ? (
             <p className="mt-2 text-xs font-semibold text-amber-700">
@@ -673,10 +830,9 @@ export function AdminOrderDetailPage() {
               available after that.
             </p>
           ) : null}
-          {!adminCanMarkDelivered ? (
+          {!adminCanMarkDelivered && !canFullAdmin ? (
             <p className="mt-2 text-xs font-semibold text-amber-800">
-              Moderator marks delivery complete for user-owned orders. Admin can mark delivered only on admin-owned
-              orders.
+              Sign in as an administrator to mark delivery complete on any order.
             </p>
           ) : null}
           {workflowSuccess ? <p className="mt-2 text-xs font-semibold text-emerald-700">{workflowSuccess}</p> : null}
@@ -792,10 +948,11 @@ export function AdminOrderDetailPage() {
       {showDeleteModal ? (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Delete Order</h3>
+            <h3 className="text-lg font-bold text-slate-900">Soft-delete order</h3>
             <p className="mt-2 text-sm text-slate-600">
-              Are you sure you want to delete <span className="font-semibold text-slate-900">{order.orderNo}</span>? This
-              action cannot be undone.
+              This will mark <span className="font-semibold text-slate-900">{order.orderNo}</span> as deleted: it
+              disappears from lists and reports, active invoices are voided with ledger reversals, and the row stays in
+              the database for audit. You can still list it with &quot;Show soft-deleted orders&quot; on the order list.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button
@@ -808,13 +965,24 @@ export function AdminOrderDetailPage() {
               <button
                 type="button"
                 onClick={() => {
-                  deleteOrder(order.id);
-                  setShowDeleteModal(false);
-                  navigate("/admin/orders");
+                  void (async () => {
+                    setShowDeleteModal(false);
+                    try {
+                      if (apiEnabled()) {
+                        await apiDeleteOrder(order.id);
+                        await loadOrders();
+                      } else {
+                        deleteOrder(order.id);
+                      }
+                      navigate("/admin/orders");
+                    } catch (e) {
+                      setWorkflowError(e instanceof Error ? e.message : "Soft-delete failed.");
+                    }
+                  })();
                 }}
                 className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
               >
-                Delete
+                Soft-delete
               </button>
             </div>
           </div>

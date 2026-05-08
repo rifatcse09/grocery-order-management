@@ -60,7 +60,9 @@ export function UserInvoicesPage() {
 
   const rows = useMemo<InvoiceRow[]>(() => {
     const visible = orders
-      .filter((o) => (o.ownerId === user?.id || user?.role === "admin"))
+      .filter(
+        (o) => o.ownerId === user?.id || user?.role === "admin" || user?.role === "master_admin",
+      )
       .filter((o) => hasBillingInvoice(o))
       .map((o) => {
         const issue = parseIso(o.orderDate) ?? new Date();

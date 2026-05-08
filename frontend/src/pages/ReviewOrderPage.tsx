@@ -198,7 +198,7 @@ export function ReviewOrderPage() {
         <div className="border-b border-border bg-muted px-5 py-4">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
-            Line items
+            Items
             <span className="ml-2 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-foreground">
               Read-only
             </span>

@@ -36,6 +36,15 @@ const STORAGE_FULL_KEY = "gom_catalog_full";
 const STORAGE_KEY = "gom_custom_catalog";
 const STORAGE_CAT_KEY = "gom_custom_categories";
 
+function slugifyEnglishName(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "category";
+}
+
 function loadMerged(): CategoryDef[] {
   try {
     const rawFull = localStorage.getItem(STORAGE_FULL_KEY);
@@ -146,7 +155,16 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
         return null;
       }
     }
-    const id = `custom-cat-${Date.now()}`;
+    const baseId = `custom-cat-${slugifyEnglishName(en)}`;
+    const existing = new Set(categories.map((c) => c.id));
+    let id = baseId.slice(0, 50);
+    let suffix = 2;
+    while (existing.has(id)) {
+      const suffixText = `-${suffix}`;
+      const trimLen = Math.max(1, 50 - suffixText.length);
+      id = `${baseId.slice(0, trimLen)}${suffixText}`;
+      suffix += 1;
+    }
     const category: CategoryDef = { id, nameBn: bn, nameEn: en, items: [] };
     setCategories((prev) => {
       const next = [...prev, category];

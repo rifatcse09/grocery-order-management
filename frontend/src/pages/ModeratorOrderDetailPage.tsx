@@ -26,12 +26,6 @@ import { hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoice
 import { apiEnabled, apiGenerateChallan, apiGeneratePurchaseInvoice, apiMarkOrderDelivered, apiUpdateOrder } from "../lib/api";
 import type { Order } from "../types";
 
-function applyMarkup(sub: number): { pct: number; grand: number } {
-  const pct = sub <= 125_000 ? 20 : 15;
-  const markup = Math.round(sub * (pct / 100));
-  return { pct, grand: sub + markup };
-}
-
 export function ModeratorOrderDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -121,7 +115,7 @@ export function ModeratorOrderDetailPage() {
     if (purchaseBusy || hasPurchaseInvoice(order)) return;
     if (!linesReadyForPurchaseInvoice(order.lines)) {
       setWorkflowError(
-        "Purchase invoice needs a cost amount on every line: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive line total.",
+        "Purchase invoice needs a cost amount on every item: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive items total.",
       );
       return;
     }
@@ -190,12 +184,6 @@ export function ModeratorOrderDetailPage() {
   // Moderator can keep editing cost prices even after admin billing invoice.
   const pricingLocked = false;
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
-  const previewGrand =
-    order.grandTotal != null
-      ? order.grandTotal
-      : subtotal > 0
-        ? applyMarkup(subtotal).grand
-        : null;
 
   const actionBtn =
     "rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
@@ -207,7 +195,7 @@ export function ModeratorOrderDetailPage() {
     if (!cat || !it) return;
     const exists = order.lines.some((l) => l.categoryId === cat.id && l.itemId === it.id);
     if (exists) {
-      setLineItemError("Same item already exists in line items.");
+      setLineItemError("Same item already exists in items list.");
       return;
     }
     const next = {
@@ -267,7 +255,7 @@ export function ModeratorOrderDetailPage() {
             <StatusBadge status={order.status} />
             <div className="flex flex-wrap justify-end gap-2 text-xs font-medium text-primary-foreground">
               <span className="rounded-full bg-slate-200 px-3 py-1 text-slate-900">
-                {lineCount} line{lineCount !== 1 ? "s" : ""}
+                {lineCount} item{lineCount !== 1 ? "s" : ""}
               </span>
               {order.challanGenerated ? (
                 <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
@@ -281,21 +269,15 @@ export function ModeratorOrderDetailPage() {
       </div>
 
       {/* Quick stats */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Lines</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Items</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{lineCount}</p>
         </div>
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Items total (sum)</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
             {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
-          <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {previewGrand != null ? `৳ ${Math.round(previewGrand).toLocaleString("en-US")}` : "—"}
           </p>
         </div>
       </div>
@@ -342,12 +324,12 @@ export function ModeratorOrderDetailPage() {
         </div>
       </section>
 
-      {/* Line items — editor inside admin-style shell */}
+      {/* Items — editor inside admin-style shell */}
       <section className="overflow-hidden rounded-3xl border border-border bg-white shadow-card">
         <div className="border-b border-border bg-muted px-5 py-4">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
-            Line items &amp; cost pricing
+            Items &amp; cost pricing
           </h2>
         </div>
         <div className="p-4 sm:p-5">
@@ -380,10 +362,10 @@ export function ModeratorOrderDetailPage() {
           {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
           {!hasPurchaseInvoice(order) ? (
             <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
-              <strong>Cost required for purchase invoice:</strong> each line needs a{" "}
+              <strong>Cost required for purchase invoice:</strong> each item needs a{" "}
               <strong>supplier cost (unit) price</strong> greater than zero, valid <strong>quantity</strong>, and a
               positive{" "}
-              <strong>line total</strong>. The API blocks generating a purchase invoice without full cost data.
+              <strong>items total</strong>. The API blocks generating a purchase invoice without full cost data.
             </p>
           ) : null}
           <OrderLinesEditor
@@ -403,7 +385,7 @@ export function ModeratorOrderDetailPage() {
         <h2 className="text-base font-bold text-slate-900">Workflow</h2>
         <p className="mt-1 text-sm text-slate-600">
           Challan can be created without prices; <strong>purchase invoice always requires cost amounts</strong> on
-          every line before it can be generated.
+          every item before it can be generated.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           <button
@@ -428,7 +410,7 @@ export function ModeratorOrderDetailPage() {
             )}
             title={
               !hasPurchaseInvoice(order) && !purchaseLinesReady
-                ? "Complete quantity and cost unit in the table above for each line."
+                ? "Complete quantity and cost unit in the table above for each item."
                 : undefined
             }
             className={actionBtn}

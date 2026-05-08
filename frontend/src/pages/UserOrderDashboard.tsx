@@ -28,7 +28,9 @@ import {
 export function UserOrderDashboard() {
   const { user } = useAuth();
   const { orders, loadOrders, deleteOrder } = useOrders();
-  const mine = orders.filter((o) => o.ownerId === user?.id || user?.role === "admin");
+  const mine = orders.filter(
+    (o) => o.ownerId === user?.id || user?.role === "admin" || user?.role === "master_admin",
+  );
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [page, setPage] = useState(1);

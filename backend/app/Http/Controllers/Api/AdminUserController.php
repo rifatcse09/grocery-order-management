@@ -26,7 +26,7 @@ class AdminUserController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        if ($request->user()->role !== 'admin') {
+        if (! in_array($request->user()->role, ['admin', 'master_admin'], true)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
         $users = User::query()->latest('id')->get()->map(fn (User $u) => $this->toFrontend($u));
@@ -35,10 +35,13 @@ class AdminUserController extends Controller
 
     public function store(AdminUserStoreRequest $request): JsonResponse
     {
-        if ($request->user()->role !== 'admin') {
+        if (! in_array($request->user()->role, ['admin', 'master_admin'], true)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
         $data = $request->validated();
+        if (($data['role'] ?? '') === 'master_admin' && $request->user()->role !== 'master_admin') {
+            return response()->json(['message' => 'Forbidden'], 403);
+        }
 
         $created = User::create([
             'name' => $data['name'],

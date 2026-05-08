@@ -22,7 +22,7 @@ class AdminUserStoreRequest extends FormRequest
             'email' => ['required', 'email', 'max:180', 'unique:users,email'],
             'password' => ['required', 'string', 'min:6'],
             'phone' => ['nullable', 'string', 'max:40'],
-            'role' => ['required', Rule::in(['user', 'moderator', 'admin'])],
+            'role' => ['required', Rule::in(['user', 'moderator', 'admin', 'master_admin'])],
             'billingAddress' => ['nullable', 'string'],
             'deliveryAddress' => ['nullable', 'string'],
         ];

@@ -59,7 +59,7 @@ export function AdminOutstandingBillsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  const canAdjust = user?.role === "admin";
+  const canAdjust = user?.role === "admin" || user?.role === "master_admin";
 
   useEffect(() => {
     if (!user || !apiEnabled()) return;

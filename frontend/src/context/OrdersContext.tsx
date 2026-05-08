@@ -13,7 +13,7 @@ import { useAuth } from "./AuthContext";
 
 interface OrdersState {
   orders: Order[];
-  loadOrders: () => Promise<void>;
+  loadOrders: (opts?: { includeDeleted?: boolean }) => Promise<void>;
   upsertOrder: (o: Order) => void;
   deleteOrder: (id: string) => void;
   getById: (id: string) => Order | undefined;
@@ -41,11 +41,11 @@ export function OrdersProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>(load);
   const { user } = useAuth();
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (opts?: { includeDeleted?: boolean }) => {
     if (!apiEnabled()) return;
     if (!user?.id) return;
     try {
-      const rows = await apiListOrders();
+      const rows = await apiListOrders(opts?.includeDeleted);
       setOrders(rows);
       localStorage.setItem(KEY, JSON.stringify(rows));
     } catch {

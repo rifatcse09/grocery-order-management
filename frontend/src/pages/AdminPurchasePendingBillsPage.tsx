@@ -56,7 +56,7 @@ export function AdminPurchasePendingBillsPage() {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
   const viewingForGenerator = user?.role === "moderator" ? "moderator" : "all";
-  const canAdjust = user?.role === "admin";
+  const canAdjust = user?.role === "admin" || user?.role === "master_admin";
 
   useEffect(() => {
     if (!user || !apiEnabled()) return;

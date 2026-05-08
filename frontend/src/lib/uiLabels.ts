@@ -10,7 +10,7 @@ export const COL = {
   gram: "g (গ্রাম)",
   piece: "Pcs (পিচ)",
   unitPrice: "Unit price",
-  lineTotal: "Line total",
+  lineTotal: "Items total",
 } as const;
 
 /** Quantity string for tables — English units. */

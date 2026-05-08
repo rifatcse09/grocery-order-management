@@ -195,7 +195,10 @@ function normalizeOrder(order: Record<string, unknown>): Order {
     purchaseInvoiceGeneratedBy:
       order.purchaseInvoiceGeneratedBy === "moderator" || order.purchase_invoice_generated_by === "moderator"
         ? "moderator"
-        : order.purchaseInvoiceGeneratedBy === "admin" || order.purchase_invoice_generated_by === "admin"
+        : order.purchaseInvoiceGeneratedBy === "admin" ||
+            order.purchase_invoice_generated_by === "admin" ||
+            order.purchaseInvoiceGeneratedBy === "master_admin" ||
+            order.purchase_invoice_generated_by === "master_admin"
           ? "admin"
           : undefined,
     billingInvoiceGenerated,
@@ -215,6 +218,12 @@ function normalizeOrder(order: Record<string, unknown>): Order {
       optionalMoney(order.subtotal ?? order.purchase_subtotal) ??
       (purchaseSumFromLines > 0 ? purchaseSumFromLines : undefined),
     grandTotal: optionalMoney(order.grandTotal ?? order.grand_total),
+    deletedAt:
+      order.deletedAt != null
+        ? String(order.deletedAt)
+        : order.deleted_at != null
+          ? String(order.deleted_at)
+          : undefined,
     lines,
   };
 }
@@ -293,15 +302,18 @@ export async function apiCreateUser(payload: AdminCreatePayload): Promise<Sessio
   return res.data;
 }
 
-export async function apiListOrders(): Promise<Order[]> {
-  const res = await req<{ data: Record<string, unknown>[] }>("/api/v1/orders");
+export async function apiListOrders(includeDeleted?: boolean): Promise<Order[]> {
+  const q = includeDeleted ? "?includeDeleted=1" : "";
+  const res = await req<{ data: Record<string, unknown>[] }>(`/api/v1/orders${q}`);
   return res.data.map(normalizeOrder);
 }
 
 export async function apiCreateOrder(payload: Partial<Order>): Promise<Order> {
+  const body: Record<string, unknown> = { ...payload };
+  attachSerializedLines(body, payload);
   const res = await req<{ data: Record<string, unknown> }>("/api/v1/orders", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   return normalizeOrder(res.data);
 }
@@ -318,11 +330,44 @@ function mapOrderStatusToApi(status: Order["status"]): string {
   }
 }
 
+/**
+ * JSON.stringify omits `undefined`; PHP then misses keys and may skip unit/line totals.
+ * Send explicit nulls for numeric line fields so the API always receives a stable shape.
+ */
+function serializeOrderLineForApi(line: Order["lines"][number]): Record<string, unknown> {
+  return {
+    id: line.id,
+    serial: line.serial,
+    categoryId: line.categoryId,
+    itemId: line.itemId,
+    itemNameBn: line.itemNameBn,
+    itemNameEn: line.itemNameEn,
+    kg: line.kg,
+    gram: line.gram,
+    piece: line.piece,
+    instructions: line.instructions ?? "",
+    unitPrice: line.unitPrice ?? null,
+    lineTotal: line.lineTotal ?? null,
+    markupPercent: line.markupPercent ?? null,
+    markupAmount: line.markupAmount ?? null,
+    unitPriceAfterMarkup: line.unitPriceAfterMarkup ?? null,
+    lineTotalAfterMarkup: line.lineTotalAfterMarkup ?? null,
+    profitLossAmount: line.profitLossAmount ?? null,
+  };
+}
+
+function attachSerializedLines(body: Record<string, unknown>, payload: Partial<Order>): void {
+  if (Array.isArray(payload.lines)) {
+    body.lines = payload.lines.map(serializeOrderLineForApi);
+  }
+}
+
 export async function apiUpdateOrder(id: string, payload: Partial<Order>): Promise<Order> {
   const body: Record<string, unknown> = { ...payload };
   if (payload.status !== undefined) {
     body.status = mapOrderStatusToApi(payload.status);
   }
+  attachSerializedLines(body, payload);
   const res = await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${id}`, {
     method: "PUT",
     body: JSON.stringify(body),
@@ -374,15 +419,17 @@ export async function apiDeleteOrder(id: string): Promise<void> {
   });
 }
 
-export async function apiGenerateChallan(id: string): Promise<void> {
+export async function apiGenerateChallan(id: string, opts?: { regenerate?: boolean }): Promise<void> {
   await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${id}/challan`, {
     method: "POST",
+    body: JSON.stringify(opts?.regenerate ? { regenerate: true } : {}),
   });
 }
 
-export async function apiGeneratePurchaseInvoice(id: string): Promise<void> {
+export async function apiGeneratePurchaseInvoice(id: string, opts?: { regenerate?: boolean }): Promise<void> {
   await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${id}/purchase-invoice`, {
     method: "POST",
+    body: JSON.stringify(opts?.regenerate ? { regenerate: true } : {}),
   });
 }
 
@@ -392,6 +439,7 @@ export async function apiGenerateBillingInvoice(
     markupPercent?: number;
     markupByCategory?: Record<string, number>;
     markupByItem?: Record<string, number>;
+    regenerate?: boolean;
   },
 ): Promise<void> {
   await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${id}/billing-invoice`, {

@@ -86,6 +86,20 @@ const navFor: Record<
     { to: "/admin/moderators", label: "Moderator list", icon: UserCog },
     { to: "/admin/create", label: "Create user/moderator", icon: UserPlus },
   ],
+  master_admin: [
+    { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
+    { to: "/admin/orders", label: "Order list", icon: ClipboardList },
+    { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
+    { to: "/admin/purchase-statements", label: "Purchase statements", icon: FileText },
+    { to: "/admin/statements", label: "Billing statements", icon: FileText },
+    { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
+    { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
+    { to: "/admin/catalog/categories", label: "Category list", icon: BookText },
+    { to: "/admin/catalog/products", label: "Product list", icon: Package },
+    { to: "/admin/users", label: "User list", icon: Users },
+    { to: "/admin/moderators", label: "Moderator list", icon: UserCog },
+    { to: "/admin/create", label: "Create user/moderator", icon: UserPlus },
+  ],
 };
 
 export function AppShell() {
@@ -147,7 +161,7 @@ export function AppShell() {
   const orderNotifyCount = useMemo(() => {
     void notifTick;
     if (!user) return 0;
-    if (user.role === "admin") return readAdminNotifyOrderIds().length;
+    if (user.role === "admin" || user.role === "master_admin") return readAdminNotifyOrderIds().length;
     if (user.role === "moderator") return moderatorNewSubmittedCount(orders);
     return 0;
   }, [notifTick, user, orders]);
@@ -167,7 +181,11 @@ export function AppShell() {
   }, [dedup, location.pathname]);
 
   const ordersPath =
-    user.role === "admin" ? "/admin/orders" : user.role === "moderator" ? "/moderator/orders" : "/user/orders";
+    user.role === "admin" || user.role === "master_admin"
+      ? "/admin/orders"
+      : user.role === "moderator"
+        ? "/moderator/orders"
+        : "/user/orders";
   const primaryCta =
     user.role === "user"
       ? { to: "/user/orders/new", label: "New order", Icon: Plus }

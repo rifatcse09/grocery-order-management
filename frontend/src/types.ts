@@ -1,4 +1,9 @@
-export type Role = "user" | "moderator" | "admin";
+export type Role = "user" | "moderator" | "admin" | "master_admin";
+
+/** Full admin panel access (admin or master administrator). */
+export function isAdministrationRole(role: Role): boolean {
+  return role === "admin" || role === "master_admin";
+}
 
 export type OrderStatus =
   | "draft"
@@ -80,6 +85,8 @@ export interface Order {
   /** Category-wise billing markup (%) used when admin generated billing invoice. */
   billingCategoryMarkups?: Record<string, number>;
   grandTotal?: number;
+  /** Set when master admin soft-deleted the order on the server. */
+  deletedAt?: string | null;
 }
 
 export interface SessionUser {

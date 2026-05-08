@@ -224,6 +224,98 @@ function table_has_column(string $table, string $column): bool {
     return (bool) $stmt->fetch();
 }
 
+/** SQL fragment: invoice row is active (not voided). */
+function invoice_not_voided_sql(string $tableAlias = ''): string
+{
+    if (! table_has_column('invoices', 'voided_at')) {
+        return '1=1';
+    }
+    $p = $tableAlias !== '' ? $tableAlias.'.' : '';
+
+    return '('.$p.'voided_at IS NULL)';
+}
+
+/** SQL fragment: order is not soft-deleted. */
+function order_not_deleted_sql(string $tableAlias = ''): string
+{
+    if (! table_has_column('orders', 'deleted_at')) {
+        return '1=1';
+    }
+    $p = $tableAlias !== '' ? $tableAlias.'.' : '';
+
+    return '('.$p.'deleted_at IS NULL)';
+}
+
+/**
+ * Mark invoice voided and post opposite ledger entry so totals net out.
+ *
+ * @throws RuntimeException when voided_at column is missing
+ */
+function void_invoice_and_reverse_ledger(int $invoiceId, int $actorUserId): void
+{
+    if (! table_has_column('invoices', 'voided_at')) {
+        throw new RuntimeException(
+            'Regenerating invoices or soft-deleting orders requires the invoices.voided_at column. '
+            .'Run database migrations from the backend folder (e.g. php artisan migrate). '
+            .'Expected migration: 2026_05_08_120000_add_order_soft_delete_and_invoice_void.',
+        );
+    }
+    $stmt = db()->prepare('SELECT * FROM invoices WHERE id = :id LIMIT 1');
+    $stmt->execute(['id' => $invoiceId]);
+    $inv = $stmt->fetch();
+    if (! $inv) {
+        return;
+    }
+    if (! empty($inv['voided_at'])) {
+        return;
+    }
+    $amount = (float) ($inv['grand_total'] ?? 0);
+    $orderId = (int) ($inv['order_id'] ?? 0);
+    $type = (string) ($inv['type'] ?? '');
+    $upd = db()->prepare('UPDATE invoices SET voided_at = NOW(), updated_at = NOW() WHERE id = :id AND voided_at IS NULL');
+    $upd->execute(['id' => $invoiceId]);
+    if ($upd->rowCount() === 0) {
+        return;
+    }
+    if ($type === 'purchase') {
+        add_ledger($orderId, 'purchase_invoice_void', $amount, 'debit', 'invoice', $invoiceId);
+    } elseif ($type === 'billing') {
+        add_ledger($orderId, 'billing_invoice_void', $amount, 'credit', 'invoice', $invoiceId);
+    }
+    log_activity($actorUserId, 'invoice', $invoiceId, 'invoice_voided', null, [
+        'orderId' => $orderId,
+        'type' => $type,
+        'amount' => $amount,
+    ]);
+}
+
+/**
+ * Soft-delete order (master admin): void active invoices + ledger reversal, set deleted_at.
+ *
+ * @throws RuntimeException when deleted_at column is missing
+ */
+function soft_delete_order_master(int $orderId, int $actorUserId): void
+{
+    if (! table_has_column('orders', 'deleted_at')) {
+        throw new RuntimeException(
+            'Soft-delete requires orders.deleted_at (and related columns). '
+            .'Run database migrations from the backend folder (e.g. php artisan migrate). '
+            .'Expected migration: 2026_05_08_120000_add_order_soft_delete_and_invoice_void.',
+        );
+    }
+    foreach (['purchase', 'billing'] as $t) {
+        $inv = order_latest_invoice_row($orderId, $t);
+        if ($inv) {
+            void_invoice_and_reverse_ledger((int) $inv['id'], $actorUserId);
+        }
+    }
+    $upd = db()->prepare('UPDATE orders SET deleted_at = NOW(), deleted_by = :uid, updated_at = NOW() WHERE id = :id AND deleted_at IS NULL');
+    $upd->execute(['id' => $orderId, 'uid' => $actorUserId]);
+    log_activity($actorUserId, 'order', $orderId, 'order_soft_deleted', null, [
+        'orderId' => $orderId,
+    ]);
+}
+
 function persist_signature(mixed $incoming): ?string {
     if ($incoming === null) {
         return null;
@@ -321,17 +413,18 @@ function order_has_challan(int $orderId): bool {
 }
 
 function order_has_invoice_type(int $orderId, string $type): bool {
-    $stmt = db()->prepare('SELECT 1 FROM invoices WHERE order_id = :id AND type = :type LIMIT 1');
+    $stmt = db()->prepare('SELECT 1 FROM invoices WHERE order_id = :id AND type = :type AND '.invoice_not_voided_sql().' LIMIT 1');
     $stmt->execute(['id' => $orderId, 'type' => $type]);
     return (bool)$stmt->fetchColumn();
 }
 
 function order_purchase_generated_by_role(int $orderId): ?string {
+    $invA = invoice_not_voided_sql('i');
     $stmt = db()->prepare("
         SELECT u.role
         FROM invoices i
         LEFT JOIN users u ON u.id = i.generated_by
-        WHERE i.order_id = :id AND i.type = 'purchase'
+        WHERE i.order_id = :id AND i.type = 'purchase' AND {$invA}
         ORDER BY i.id DESC
         LIMIT 1
     ");
@@ -339,11 +432,15 @@ function order_purchase_generated_by_role(int $orderId): ?string {
     $role = $stmt->fetchColumn();
     if ($role === false || $role === null) return null;
     $role = (string)$role;
+    if ($role === 'master_admin') {
+        return 'admin';
+    }
+
     return in_array($role, ['admin', 'moderator'], true) ? $role : null;
 }
 
 function order_latest_invoice_row(int $orderId, string $type): ?array {
-    $stmt = db()->prepare('SELECT * FROM invoices WHERE order_id = :id AND type = :type ORDER BY id DESC LIMIT 1');
+    $stmt = db()->prepare('SELECT * FROM invoices WHERE order_id = :id AND type = :type AND '.invoice_not_voided_sql().' ORDER BY id DESC LIMIT 1');
     $stmt->execute(['id' => $orderId, 'type' => $type]);
     $row = $stmt->fetch();
     return $row ?: null;
@@ -372,7 +469,7 @@ function read_order(array $row): array {
     if (($deliveredAt === null || $deliveredAt === '') && in_array((string)($row['status'] ?? ''), ['completed', 'invoiced'], true)) {
         $deliveredAt = order_delivered_at_from_activity($orderId);
     }
-    return [
+    $out = [
         'id' => (string)$orderId,
         'ownerId' => (string)$row['owner_id'],
         'orderNo' => $row['order_no'],
@@ -399,6 +496,11 @@ function read_order(array $row): array {
         'grandTotal' => $grandTotal,
         'lines' => read_order_lines($orderId),
     ];
+    if (table_has_column('orders', 'deleted_at') && ! empty($row['deleted_at'])) {
+        $out['deletedAt'] = $row['deleted_at'];
+    }
+
+    return $out;
 }
 
 function order_delivered_at_from_activity(int $orderId): ?string
@@ -489,6 +591,7 @@ function payment_rows_for_order_with_invoice_type(int $orderId): array
     $paymentTypeSelect = table_has_column('payments', 'payment_type')
         ? 'p.payment_type'
         : 'NULL';
+    $invActive = invoice_not_voided_sql('i2');
     $stmt = db()->prepare("
         SELECT
             p.*,
@@ -496,7 +599,7 @@ function payment_rows_for_order_with_invoice_type(int $orderId): array
             COALESCE(inv.type, (
                 SELECT i2.type
                 FROM invoices i2
-                WHERE i2.order_id = o.id
+                WHERE i2.order_id = o.id AND {$invActive}
                 ORDER BY i2.id DESC
                 LIMIT 1
             )) AS invoice_type
@@ -532,7 +635,7 @@ function order_net_purchase_paid_applied(int $orderId): float
 
 function order_latest_purchase_invoice_grand(int $orderId): ?float
 {
-    $s = db()->prepare("SELECT grand_total FROM invoices WHERE order_id = :id AND type = 'purchase' ORDER BY id DESC LIMIT 1");
+    $s = db()->prepare("SELECT grand_total FROM invoices WHERE order_id = :id AND type = 'purchase' AND ".invoice_not_voided_sql().' ORDER BY id DESC LIMIT 1');
     $s->execute(['id' => $orderId]);
     $row = $s->fetch();
     if (!$row || !isset($row['grand_total'])) {
@@ -563,7 +666,7 @@ function order_net_billing_paid_applied(int $orderId): float
 
 function order_latest_billing_invoice_grand(int $orderId): ?float
 {
-    $s = db()->prepare("SELECT grand_total FROM invoices WHERE order_id = :id AND type = 'billing' ORDER BY id DESC LIMIT 1");
+    $s = db()->prepare("SELECT grand_total FROM invoices WHERE order_id = :id AND type = 'billing' AND ".invoice_not_voided_sql().' ORDER BY id DESC LIMIT 1');
     $s->execute(['id' => $orderId]);
     $row = $s->fetch();
     if (!$row || !isset($row['grand_total'])) {
@@ -592,7 +695,7 @@ function payment_or_order_type(array $input): string {
 
     $orderId = isset($input['orderId']) ? (int)$input['orderId'] : null;
     if ($orderId) {
-        $stmt = db()->prepare('SELECT type FROM invoices WHERE order_id = :id ORDER BY id DESC LIMIT 1');
+        $stmt = db()->prepare('SELECT type FROM invoices WHERE order_id = :id AND '.invoice_not_voided_sql().' ORDER BY id DESC LIMIT 1');
         $stmt->execute(['id' => $orderId]);
         $row = $stmt->fetch();
         $resolved = (string)($row['type'] ?? '');
@@ -788,7 +891,7 @@ function order_line_purchase_prices(array $line): array
 function upsert_item_price_history(int $orderId, array $line, ?array $actorUser): void {
     if (!$actorUser) return;
     $role = (string)($actorUser['role'] ?? '');
-    if (!in_array($role, ['admin', 'moderator'], true)) return;
+    if (!in_array($role, ['admin', 'moderator', 'master_admin'], true)) return;
     $itemCode = trim((string)($line['itemId'] ?? $line['item_code'] ?? ''));
     if ($itemCode === '') return;
     $pr = order_line_purchase_prices($line);
@@ -848,46 +951,60 @@ function order_line_optional_float(array $line, string $camel, string $snake): ?
 }
 
 function replace_order_lines(int $orderId, array $lines, ?array $actorUser = null): void {
-    db()->prepare('DELETE FROM order_lines WHERE order_id = :id')->execute(['id' => $orderId]);
-    if (!$lines) return;
-    $ins = db()->prepare('INSERT INTO order_lines (order_id, serial, category_code, item_code, item_name_bn, item_name_en, kg, gram, piece, instructions, unit_price, line_total, markup_percent, markup_amount, unit_price_after_markup, line_total_after_markup, profit_loss_amount, created_at, updated_at) VALUES (:order_id, :serial, :category_code, :item_code, :item_name_bn, :item_name_en, :kg, :gram, :piece, :instructions, :unit_price, :line_total, :markup_percent, :markup_amount, :unit_after, :line_after, :profit_loss, NOW(), NOW())');
-    foreach ($lines as $idx => $line) {
-        if (!is_array($line)) continue;
-        $pr = order_line_purchase_prices($line);
-        $cat = (string)($line['categoryId'] ?? $line['category_code'] ?? '');
-        $item = (string)($line['itemId'] ?? $line['item_code'] ?? '');
-        $markupPct = order_line_optional_float($line, 'markupPercent', 'markup_percent');
-        $markupPctIns = $markupPct !== null ? max(0.0, $markupPct) : 0.0;
-        $markupAmt = order_line_optional_float($line, 'markupAmount', 'markup_amount');
-        $unitAfter = order_line_optional_float($line, 'unitPriceAfterMarkup', 'unit_price_after_markup');
-        $lineAfter = order_line_optional_float($line, 'lineTotalAfterMarkup', 'line_total_after_markup');
-        $profitLoss = order_line_optional_float($line, 'profitLossAmount', 'profit_loss_amount');
-        $ins->execute([
-            'order_id' => $orderId,
-            'serial' => (int)($line['serial'] ?? ($idx + 1)),
-            'category_code' => $cat,
-            'item_code' => $item,
-            'item_name_bn' => (string)($line['itemNameBn'] ?? $line['item_name_bn'] ?? ''),
-            'item_name_en' => (string)($line['itemNameEn'] ?? $line['item_name_en'] ?? ''),
-            'kg' => (float)($line['kg'] ?? 0),
-            'gram' => (float)($line['gram'] ?? 0),
-            'piece' => (float)($line['piece'] ?? 0),
-            'instructions' => isset($line['instructions']) ? (string)$line['instructions'] : '',
-            'unit_price' => $pr['unit'],
-            'line_total' => $pr['total'],
-            'markup_percent' => $markupPctIns,
-            'markup_amount' => $markupAmt !== null ? $markupAmt : 0.0,
-            'unit_after' => $unitAfter,
-            'line_after' => $lineAfter,
-            'profit_loss' => $profitLoss !== null ? $profitLoss : 0.0,
-        ]);
-        $normLine = array_merge($line, [
-            'categoryId' => $cat,
-            'itemId' => $item,
-            'unitPrice' => $pr['unit'],
-            'lineTotal' => $pr['total'],
-        ]);
-        upsert_item_price_history($orderId, $normLine, $actorUser);
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        $pdo->prepare('DELETE FROM order_lines WHERE order_id = :id')->execute(['id' => $orderId]);
+        if (!$lines) {
+            $pdo->commit();
+
+            return;
+        }
+        $ins = $pdo->prepare('INSERT INTO order_lines (order_id, serial, category_code, item_code, item_name_bn, item_name_en, kg, gram, piece, instructions, unit_price, line_total, markup_percent, markup_amount, unit_price_after_markup, line_total_after_markup, profit_loss_amount, created_at, updated_at) VALUES (:order_id, :serial, :category_code, :item_code, :item_name_bn, :item_name_en, :kg, :gram, :piece, :instructions, :unit_price, :line_total, :markup_percent, :markup_amount, :unit_after, :line_after, :profit_loss, NOW(), NOW())');
+        foreach ($lines as $idx => $line) {
+            if (!is_array($line)) continue;
+            $pr = order_line_purchase_prices($line);
+            $cat = (string)($line['categoryId'] ?? $line['category_code'] ?? '');
+            $item = (string)($line['itemId'] ?? $line['item_code'] ?? '');
+            $markupPct = order_line_optional_float($line, 'markupPercent', 'markup_percent');
+            $markupPctIns = $markupPct !== null ? max(0.0, $markupPct) : 0.0;
+            $markupAmt = order_line_optional_float($line, 'markupAmount', 'markup_amount');
+            $unitAfter = order_line_optional_float($line, 'unitPriceAfterMarkup', 'unit_price_after_markup');
+            $lineAfter = order_line_optional_float($line, 'lineTotalAfterMarkup', 'line_total_after_markup');
+            $profitLoss = order_line_optional_float($line, 'profitLossAmount', 'profit_loss_amount');
+            $ins->execute([
+                'order_id' => $orderId,
+                'serial' => (int)($line['serial'] ?? ($idx + 1)),
+                'category_code' => $cat,
+                'item_code' => $item,
+                'item_name_bn' => (string)($line['itemNameBn'] ?? $line['item_name_bn'] ?? ''),
+                'item_name_en' => (string)($line['itemNameEn'] ?? $line['item_name_en'] ?? ''),
+                'kg' => (float)($line['kg'] ?? 0),
+                'gram' => (float)($line['gram'] ?? 0),
+                'piece' => (float)($line['piece'] ?? 0),
+                'instructions' => isset($line['instructions']) ? (string)$line['instructions'] : '',
+                'unit_price' => $pr['unit'],
+                'line_total' => $pr['total'],
+                'markup_percent' => $markupPctIns,
+                'markup_amount' => $markupAmt !== null ? $markupAmt : 0.0,
+                'unit_after' => $unitAfter,
+                'line_after' => $lineAfter,
+                'profit_loss' => $profitLoss !== null ? $profitLoss : 0.0,
+            ]);
+            $normLine = array_merge($line, [
+                'categoryId' => $cat,
+                'itemId' => $item,
+                'unitPrice' => $pr['unit'],
+                'lineTotal' => $pr['total'],
+            ]);
+            upsert_item_price_history($orderId, $normLine, $actorUser);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
     }
 }
 
@@ -967,7 +1084,7 @@ function sync_latest_purchase_invoice_from_order_lines(int $orderId): void
     if (!order_has_invoice_type($orderId, 'purchase')) {
         return;
     }
-    $stmt = db()->prepare("SELECT id FROM invoices WHERE order_id = :oid AND type = 'purchase' ORDER BY id DESC LIMIT 1");
+    $stmt = db()->prepare("SELECT id FROM invoices WHERE order_id = :oid AND type = 'purchase' AND ".invoice_not_voided_sql().' ORDER BY id DESC LIMIT 1');
     $stmt->execute(['oid' => $orderId]);
     $inv = $stmt->fetch();
     if (!$inv) {

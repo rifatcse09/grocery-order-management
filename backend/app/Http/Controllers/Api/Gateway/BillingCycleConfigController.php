@@ -14,7 +14,7 @@ final class BillingCycleConfigController
     public function show(): void
     {
         $user = require_auth();
-        require_role($user, ['admin', 'moderator']);
+        require_role($user, ['admin', 'master_admin', 'moderator']);
         json_response(200, ['data' => (new BillingCycleConfigService())->toArray()]);
     }
 }

@@ -128,7 +128,7 @@ export function OrderFormPage() {
       (l) => l.categoryId === cat.id && l.itemId === it.id,
     );
     if (alreadyExists) {
-      setLineItemError("Same item already exists in line items.");
+      setLineItemError("Same item already exists in items list.");
       return;
     }
     setOrder((prev) => {
@@ -158,7 +158,7 @@ export function OrderFormPage() {
         (l) => l.categoryId === created.categoryId && l.itemId === created.id,
       );
       if (alreadyExists) {
-        setLineItemError("Same item already exists in line items.");
+        setLineItemError("Same item already exists in items list.");
         setAddItemModal(false);
         return;
       }
@@ -180,6 +180,8 @@ export function OrderFormPage() {
         return { ...prev, lines: [...prev.lines, line] };
       });
       setLineItemError("");
+    } else {
+      setLineItemError("Could not save item. Duplicate Bangla/English name may already exist in this category.");
     }
     setCustomBn("");
     setCustomEn("");
@@ -195,8 +197,8 @@ export function OrderFormPage() {
         <h1 className="mt-2 text-2xl font-extrabold text-brand-dark sm:text-3xl">{isNew ? "Create order" : "Edit order"}</h1>
         <p className="mt-1 text-base font-medium text-slate-700">
           {isNew
-            ? "Add item items and details, then save. Open Review from your order list to sign and submit."
-            : "Add basic details, line items, and signature before review."}
+            ? "Add items and details, then save. Open Review from your order list to sign and submit."
+            : "Add basic details, items, and signature before review."}
         </p>
       </div>
 
@@ -303,7 +305,7 @@ export function OrderFormPage() {
       <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-7">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-xl font-bold text-slate-900">Line items</h2>
+            <h2 className="text-xl font-bold text-slate-900">Items</h2>
             <p className="mt-1 text-sm text-slate-600">Add products to this order.</p>
           </div>
           <div className="flex gap-2">

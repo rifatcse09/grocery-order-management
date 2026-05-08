@@ -98,7 +98,7 @@ if ($path === '/api/v1/auth/profile' && $method === 'PUT') {
 
 if ($path === '/api/v1/catalog/items' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'user', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'user', 'moderator']);
     $query = strtolower(trim((string)($_GET['query'] ?? '')));
     $page = max(1, (int)($_GET['page'] ?? 1));
     $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 10)));
@@ -166,7 +166,7 @@ if ($path === '/api/v1/catalog/items' && $method === 'GET') {
 
 if ($path === '/api/v1/catalog/categories' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'user', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'user', 'moderator']);
     $query = strtolower(trim((string)($_GET['query'] ?? '')));
     $page = max(1, (int)($_GET['page'] ?? 1));
     $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 10)));
@@ -226,7 +226,7 @@ if ($path === '/api/v1/catalog/categories' && $method === 'GET') {
 
 if ($path === '/api/v1/catalog/category-markups' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
 
     $catsStmt = db()->query('
         SELECT code, name_bn, name_en, COALESCE(markup_percent, 0) AS markup_percent
@@ -280,14 +280,42 @@ if ($path === '/api/v1/catalog/category-markups' && $method === 'GET') {
 
 if ($path === '/api/v1/catalog/categories' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     $in = json_input();
     $nameBn = trim((string)($in['nameBn'] ?? ''));
     $nameEn = trim((string)($in['nameEn'] ?? ''));
     if ($nameBn === '' || $nameEn === '') {
         json_response(422, ['message' => 'Category Bangla and English names are required.']);
     }
-    $code = 'custom-cat-' . time() . '-' . random_int(100, 999);
+    $dupStmt = db()->prepare('
+        SELECT 1
+        FROM categories
+        WHERE is_active = true
+          AND (LOWER(name_bn) = LOWER(:bn) OR LOWER(name_en) = LOWER(:en))
+        LIMIT 1
+    ');
+    $dupStmt->execute(['bn' => $nameBn, 'en' => $nameEn]);
+    if ($dupStmt->fetch()) {
+        json_response(409, ['message' => 'Duplicate category name found for Bangla or English.']);
+    }
+    $slug = strtolower(trim(preg_replace('/[^a-z0-9]+/i', '-', $nameEn), '-'));
+    if ($slug === '') {
+        $slug = 'category';
+    }
+    $baseCode = substr('custom-cat-' . $slug, 0, 50);
+    $code = $baseCode;
+    $suffix = 2;
+    $codeExists = db()->prepare('SELECT 1 FROM categories WHERE code = :code LIMIT 1');
+    while (true) {
+        $codeExists->execute(['code' => $code]);
+        if (!$codeExists->fetch()) {
+            break;
+        }
+        $suffixText = '-' . $suffix;
+        $trimLen = max(1, 50 - strlen($suffixText));
+        $code = substr($baseCode, 0, $trimLen) . $suffixText;
+        $suffix++;
+    }
     $stmt = db()->prepare('INSERT INTO categories (code, name_bn, name_en, markup_percent, is_active, created_at, updated_at) VALUES (:code, :bn, :en, 0, true, NOW(), NOW())');
     $stmt->execute(['code' => $code, 'bn' => $nameBn, 'en' => $nameEn]);
     $sel = db()->prepare('SELECT code, name_bn, name_en FROM categories WHERE code = :code LIMIT 1');
@@ -304,13 +332,25 @@ if ($path === '/api/v1/catalog/categories' && $method === 'POST') {
 
 if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $method === 'PUT') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $categoryCode = urldecode($m[1]);
     $in = json_input();
     $nameBn = trim((string)($in['nameBn'] ?? ''));
     $nameEn = trim((string)($in['nameEn'] ?? ''));
     if ($nameBn === '' || $nameEn === '') {
         json_response(422, ['message' => 'Category Bangla and English names are required.']);
+    }
+    $dupStmt = db()->prepare('
+        SELECT 1
+        FROM categories
+        WHERE is_active = true
+          AND code <> :code
+          AND (LOWER(name_bn) = LOWER(:bn) OR LOWER(name_en) = LOWER(:en))
+        LIMIT 1
+    ');
+    $dupStmt->execute(['code' => $categoryCode, 'bn' => $nameBn, 'en' => $nameEn]);
+    if ($dupStmt->fetch()) {
+        json_response(409, ['message' => 'Duplicate category name found for Bangla or English.']);
     }
     $stmt = db()->prepare('UPDATE categories SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true');
     $stmt->execute(['bn' => $nameBn, 'en' => $nameEn, 'code' => $categoryCode]);
@@ -329,7 +369,7 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $me
 
 if (preg_match('#^/api/v1/catalog/categories/([^/]+)/markup$#', $path, $m) === 1 && $method === 'PUT') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $categoryCode = urldecode($m[1]);
     $in = json_input();
     $markupPercent = (float)($in['markupPercent'] ?? 0);
@@ -382,7 +422,7 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)/markup$#', $path, $m) === 1
 
 if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $method === 'DELETE') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $categoryCode = urldecode($m[1]);
     $usedStmt = db()->prepare('SELECT 1 FROM order_lines WHERE category_code = :code LIMIT 1');
     $usedStmt->execute(['code' => $categoryCode]);
@@ -397,7 +437,7 @@ if (preg_match('#^/api/v1/catalog/categories/([^/]+)$#', $path, $m) === 1 && $me
 
 if ($path === '/api/v1/catalog/items' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator', 'user']);
     $in = json_input();
     $categoryCode = trim((string)($in['categoryId'] ?? ''));
     $nameBn = trim((string)($in['nameBn'] ?? ''));
@@ -409,6 +449,22 @@ if ($path === '/api/v1/catalog/items' && $method === 'POST') {
     $catStmt->execute(['code' => $categoryCode]);
     $cat = $catStmt->fetch();
     if (!$cat) json_response(404, ['message' => 'Category not found']);
+    $dupStmt = db()->prepare('
+        SELECT 1
+        FROM catalog_items
+        WHERE category_id = :cid
+          AND is_active = true
+          AND (LOWER(name_bn) = LOWER(:bn) OR LOWER(name_en) = LOWER(:en))
+        LIMIT 1
+    ');
+    $dupStmt->execute([
+        'cid' => (int)$cat['id'],
+        'bn' => $nameBn,
+        'en' => $nameEn,
+    ]);
+    if ($dupStmt->fetch()) {
+        json_response(409, ['message' => 'Duplicate item name found in this category for Bangla or English.']);
+    }
     $code = 'custom-' . $categoryCode . '-' . time() . '-' . random_int(100, 999);
     $stmt = db()->prepare('INSERT INTO catalog_items (category_id, code, name_bn, name_en, is_active, created_at, updated_at) VALUES (:cid, :code, :bn, :en, true, NOW(), NOW())');
     $stmt->execute(['cid' => $cat['id'], 'code' => $code, 'bn' => $nameBn, 'en' => $nameEn]);
@@ -425,13 +481,31 @@ if ($path === '/api/v1/catalog/items' && $method === 'POST') {
 
 if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method === 'PUT') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $itemCode = urldecode($m[1]);
     $in = json_input();
     $nameBn = trim((string)($in['nameBn'] ?? ''));
     $nameEn = trim((string)($in['nameEn'] ?? ''));
     if ($nameBn === '' || $nameEn === '') {
         json_response(422, ['message' => 'Item Bangla and English names are required.']);
+    }
+    $dupStmt = db()->prepare('
+        SELECT 1
+        FROM catalog_items ci
+        JOIN catalog_items t ON t.code = :code
+        WHERE ci.is_active = true
+          AND ci.category_id = t.category_id
+          AND ci.code <> t.code
+          AND (LOWER(ci.name_bn) = LOWER(:bn) OR LOWER(ci.name_en) = LOWER(:en))
+        LIMIT 1
+    ');
+    $dupStmt->execute([
+        'code' => $itemCode,
+        'bn' => $nameBn,
+        'en' => $nameEn,
+    ]);
+    if ($dupStmt->fetch()) {
+        json_response(409, ['message' => 'Duplicate item name found in this category for Bangla or English.']);
     }
     $stmt = db()->prepare('UPDATE catalog_items SET name_bn = :bn, name_en = :en, updated_at = NOW() WHERE code = :code AND is_active = true');
     $stmt->execute(['bn' => $nameBn, 'en' => $nameEn, 'code' => $itemCode]);
@@ -452,7 +526,7 @@ if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method 
 
 if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method === 'DELETE') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $itemCode = urldecode($m[1]);
     $usedStmt = db()->prepare('SELECT 1 FROM order_lines WHERE item_code = :code LIMIT 1');
     $usedStmt->execute(['code' => $itemCode]);
@@ -467,21 +541,24 @@ if (preg_match('#^/api/v1/catalog/items/([^/]+)$#', $path, $m) === 1 && $method 
 
 if ($path === '/api/v1/admin/users' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $rows = db()->query('SELECT * FROM users ORDER BY id DESC')->fetchAll();
     json_response(200, ['data' => array_map('public_user', $rows)]);
 }
 
 if ($path === '/api/v1/admin/users' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $name = trim((string)($in['name'] ?? ''));
     $email = strtolower(trim((string)($in['email'] ?? '')));
     $password = (string)($in['password'] ?? '');
     $role = (string)($in['role'] ?? 'user');
-    if (!in_array($role, ['user', 'moderator', 'admin'], true)) {
+    if (!in_array($role, ['user', 'moderator', 'admin', 'master_admin'], true)) {
         json_response(422, ['message' => 'Invalid role']);
+    }
+    if ($role === 'master_admin' && (string)$user['role'] !== 'master_admin') {
+        json_response(403, ['message' => 'Only a master administrator can assign the master administrator role.']);
     }
     if ($name === '' || $email === '' || strlen($password) < 6) {
         json_response(422, ['message' => 'Name, email and password (6+) are required.']);
@@ -515,10 +592,17 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
 if ($path === '/api/v1/orders' && $method === 'GET') {
     $user = require_auth();
     if ($user['role'] === 'user') {
-        $stmt = db()->prepare('SELECT * FROM orders WHERE owner_id = :uid AND is_active = true ORDER BY id DESC');
+        $del = order_not_deleted_sql();
+        $stmt = db()->prepare("SELECT * FROM orders WHERE owner_id = :uid AND is_active = true AND {$del} ORDER BY id DESC");
         $stmt->execute(['uid' => $user['id']]);
     } else {
-        $stmt = db()->query('SELECT * FROM orders WHERE is_active = true ORDER BY id DESC');
+        $incDeleted = isset($_GET['includeDeleted']) && (string) $_GET['includeDeleted'] === '1' && in_array($user['role'], ['admin', 'master_admin'], true);
+        if ($incDeleted) {
+            $stmt = db()->query('SELECT * FROM orders WHERE is_active = true ORDER BY id DESC');
+        } else {
+            $del = order_not_deleted_sql();
+            $stmt = db()->query("SELECT * FROM orders WHERE is_active = true AND {$del} ORDER BY id DESC");
+        }
     }
     $rows = $stmt->fetchAll();
     json_response(200, ['data' => array_map('read_order', $rows)]);
@@ -562,7 +646,8 @@ if ($path === '/api/v1/orders' && $method === 'POST') {
 if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'PUT') {
     $user = require_auth();
     $orderId = (int)$m[1];
-    $get = db()->prepare('SELECT * FROM orders WHERE id = :id AND is_active = true LIMIT 1');
+    $delPut = order_not_deleted_sql();
+    $get = db()->prepare("SELECT * FROM orders WHERE id = :id AND is_active = true AND {$delPut} LIMIT 1");
     $get->execute(['id' => $orderId]);
     $order = $get->fetch();
     if (!$order) {
@@ -596,15 +681,21 @@ if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'PUT'
         'phone' => (string)($in['phone'] ?? $order['phone']),
         'signature' => $signature,
     ]);
-    if (array_key_exists('lines', $in) && is_array($in['lines']) && count($in['lines']) > 0) {
-        replace_order_lines($orderId, $in['lines'], $user);
+    if (array_key_exists('lines', $in) && is_array($in['lines'])) {
+        try {
+            replace_order_lines($orderId, $in['lines'], $user);
+        } catch (Throwable $e) {
+            $em = $e->getMessage();
+            $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not save order lines.';
+            json_response(500, ['message' => $public]);
+        }
     }
     $get->execute(['id' => $orderId]);
     $after = $get->fetch();
     if (
         $after
-        && in_array((string)($user['role'] ?? ''), ['admin', 'moderator'], true)
-        && array_key_exists('lines', $in) && is_array($in['lines']) && count($in['lines']) > 0
+        && in_array((string)($user['role'] ?? ''), ['admin', 'moderator', 'master_admin'], true)
+        && array_key_exists('lines', $in) && is_array($in['lines'])
     ) {
         if (order_has_invoice_type($orderId, 'purchase')) {
             sync_latest_purchase_invoice_from_order_lines($orderId);
@@ -623,8 +714,38 @@ if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'PUT'
 
 if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'DELETE') {
     $user = require_auth();
-    require_role($user, ['user']);
     $orderId = (int)$m[1];
+    if (in_array($user['role'], ['admin', 'master_admin'], true)) {
+        $get = db()->prepare('SELECT * FROM orders WHERE id = :id AND is_active = true LIMIT 1');
+        $get->execute(['id' => $orderId]);
+        $order = $get->fetch();
+        if (!$order) {
+            json_response(404, ['message' => 'Order not found']);
+        }
+        if (table_has_column('orders', 'deleted_at') && ! empty($order['deleted_at'])) {
+            json_response(409, ['message' => 'Order is already removed from active records.']);
+        }
+        $pdo = db();
+        try {
+            $pdo->beginTransaction();
+            soft_delete_order_master($orderId, (int)$user['id']);
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $em = $e->getMessage();
+            $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Soft delete failed.';
+            json_response(500, ['message' => $public]);
+        }
+        $get->execute(['id' => $orderId]);
+        $after = $get->fetch();
+        if (!$after) {
+            json_response(404, ['message' => 'Order not found']);
+        }
+        json_response(200, ['data' => read_order($after)]);
+    }
+    require_role($user, ['user']);
     $stmt = db()->prepare('UPDATE orders SET is_active = false, updated_at = NOW() WHERE id = :id AND owner_id = :uid AND status = :status');
     $stmt->execute([
         'id' => $orderId,
@@ -658,7 +779,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/confirm$#', $path, $m) === 1 && $method =
     if (!$order) {
         json_response(404, ['message' => 'Order not found']);
     }
-    $mods = db()->query("SELECT id FROM users WHERE role IN ('moderator','admin') AND is_active = true")->fetchAll();
+    $mods = db()->query("SELECT id FROM users WHERE role IN ('moderator','admin','master_admin') AND is_active = true")->fetchAll();
     $n = db()->prepare('INSERT INTO notifications (user_id, type, title, body, data_json) VALUES (:uid, :type, :title, :body, :data)');
     foreach ($mods as $row) {
         $n->execute([
@@ -682,15 +803,32 @@ if ($path === '/api/v1/notifications' && $method === 'GET') {
 
 if (preg_match('#^/api/v1/orders/(\d+)/challan$#', $path, $m) === 1 && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['moderator', 'admin']);
+    require_role($user, ['moderator', 'admin', 'master_admin']);
     $orderId = (int)$m[1];
     $get = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
     $get->execute(['id' => $orderId]);
     $order = $get->fetch();
     if (!$order) json_response(404, ['message' => 'Order not found']);
+    $inCh = json_input();
+    $regenChallan = !empty($inCh['regenerate']);
     $existingStmt = db()->prepare('SELECT id FROM challans WHERE order_id = :order ORDER BY id DESC LIMIT 1');
     $existingStmt->execute(['order' => $orderId]);
-    if ($existingStmt->fetch()) {
+    $existingCh = $existingStmt->fetch();
+    if ($existingCh) {
+        if ($regenChallan && in_array($user['role'], ['admin', 'master_admin'], true)) {
+            sync_latest_challan_snapshot_from_order($orderId);
+            $chSel = db()->prepare('SELECT * FROM challans WHERE id = :id LIMIT 1');
+            $chSel->execute(['id' => (int)$existingCh['id']]);
+            $chRow = $chSel->fetch();
+            if (!$chRow) {
+                json_response(500, ['message' => 'Challan was not updated.']);
+            }
+            log_activity((int)$user['id'], 'order', $orderId, 'challan_regenerated', null, [
+                'orderNo' => (string)($order['order_no'] ?? ''),
+                'challanId' => (int)$existingCh['id'],
+            ]);
+            json_response(200, ['data' => $chRow]);
+        }
         json_response(409, ['message' => 'Challan already exists for this order.']);
     }
     $snapshot = read_order($order);
@@ -724,16 +862,29 @@ if (preg_match('#^/api/v1/orders/(\d+)/challan$#', $path, $m) === 1 && $method =
 
 if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['moderator', 'admin']);
+    require_role($user, ['moderator', 'admin', 'master_admin']);
     $orderId = (int)$m[1];
     $get = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
     $get->execute(['id' => $orderId]);
     $order = $get->fetch();
     if (!$order) json_response(404, ['message' => 'Order not found']);
-    $existingStmt = db()->prepare("SELECT id FROM invoices WHERE order_id = :order AND type = 'purchase' ORDER BY id DESC LIMIT 1");
-    $existingStmt->execute(['order' => $orderId]);
-    if ($existingStmt->fetch()) {
-        json_response(409, ['message' => 'Purchase invoice already exists for this order.']);
+    $inPur = json_input();
+    $regenPur = !empty($inPur['regenerate']);
+    if (order_has_invoice_type($orderId, 'purchase')) {
+        if ($regenPur && in_array($user['role'], ['admin', 'master_admin'], true)) {
+            $latestPur = order_latest_invoice_row($orderId, 'purchase');
+            if ($latestPur) {
+                try {
+                    void_invoice_and_reverse_ledger((int)$latestPur['id'], (int)$user['id']);
+                } catch (Throwable $e) {
+                    $em = $e->getMessage();
+                    $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous purchase invoice.';
+                    json_response(500, ['message' => $public]);
+                }
+            }
+        } else {
+            json_response(409, ['message' => 'Purchase invoice already exists for this order.']);
+        }
     }
     $lines = read_order_lines($orderId);
     if ($lines === []) {
@@ -782,7 +933,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
 
 if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $orderId = (int)$m[1];
     $stRow = db()->prepare('SELECT status, order_no FROM orders WHERE id = :id AND is_active = true LIMIT 1');
     $stRow->execute(['id' => $orderId]);
@@ -790,18 +941,34 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
     if (!$orderMetaRow) {
         json_response(404, ['message' => 'Order not found']);
     }
-    if ((string)$orderMetaRow['status'] !== 'completed') {
-        json_response(422, ['message' => 'Mark delivery complete before generating the customer billing invoice.']);
-    }
     $orderNoForLog = (string)($orderMetaRow['order_no'] ?? '');
     $in = json_input();
+    $regenBill = !empty($in['regenerate']);
+    $orderStatusForBill = (string)$orderMetaRow['status'];
+    if (
+        $orderStatusForBill !== 'completed'
+        && !($regenBill && in_array($user['role'], ['admin', 'master_admin'], true) && $orderStatusForBill === 'invoiced')
+    ) {
+        json_response(422, ['message' => 'Mark delivery complete before generating the customer billing invoice.']);
+    }
     $markupPercent = (float)($in['markupPercent'] ?? 0);
     $markupByCategory = is_array($in['markupByCategory'] ?? null) ? $in['markupByCategory'] : [];
     $markupByItem = is_array($in['markupByItem'] ?? null) ? $in['markupByItem'] : [];
-    $existingStmt = db()->prepare("SELECT id FROM invoices WHERE order_id = :order AND type = 'billing' ORDER BY id DESC LIMIT 1");
-    $existingStmt->execute(['order' => $orderId]);
-    if ($existingStmt->fetch()) {
-        json_response(409, ['message' => 'Billing invoice already exists for this order.']);
+    if (order_has_invoice_type($orderId, 'billing')) {
+        if ($regenBill && in_array($user['role'], ['admin', 'master_admin'], true)) {
+            $latestBill = order_latest_invoice_row($orderId, 'billing');
+            if ($latestBill) {
+                try {
+                    void_invoice_and_reverse_ledger((int)$latestBill['id'], (int)$user['id']);
+                } catch (Throwable $e) {
+                    $em = $e->getMessage();
+                    $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous billing invoice.';
+                    json_response(500, ['message' => $public]);
+                }
+            }
+        } else {
+            json_response(409, ['message' => 'Billing invoice already exists for this order.']);
+        }
     }
     $lines = read_order_lines($orderId);
     $lineUpd = db()->prepare('
@@ -928,7 +1095,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
 
 if (preg_match('#^/api/v1/orders/(\d+)/mark-delivered$#', $path, $m) === 1 && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     $orderId = (int)$m[1];
     $get = db()->prepare('SELECT * FROM orders WHERE id = :id AND is_active = true LIMIT 1');
     $get->execute(['id' => $orderId]);
@@ -936,10 +1103,10 @@ if (preg_match('#^/api/v1/orders/(\d+)/mark-delivered$#', $path, $m) === 1 && $m
     if (!$order) {
         json_response(404, ['message' => 'Order not found']);
     }
-    // Business rule: moderators handle delivery marking. Admin can mark delivered only for admin-owned orders.
-    if ((string)$user['role'] === 'admin' && (int)$order['owner_id'] !== (int)$user['id']) {
-        json_response(403, ['message' => 'Only moderators can mark this order as delivered.']);
+    if (table_has_column('orders', 'deleted_at') && ! empty($order['deleted_at'])) {
+        json_response(404, ['message' => 'Order not found']);
     }
+    // Administrators and moderators may mark any order delivered (workflow).
     $st = (string)$order['status'];
     if ($st === 'invoiced') {
         json_response(409, ['message' => 'Order is already invoiced; delivery is already recorded in the workflow.']);
@@ -973,6 +1140,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/invoices$#', $path, $m) === 1 && $method 
     $stmt = db()->prepare("SELECT * FROM invoices WHERE order_id = :id ORDER BY id DESC");
     $stmt->execute(['id' => $orderId]);
     $rows = $stmt->fetchAll();
+    $rows = array_values(array_filter($rows, static fn(array $r) => empty($r['voided_at'])));
     if ($user['role'] === 'user') {
         // End users can access only final customer billing invoices.
         $rows = array_values(array_filter($rows, static fn(array $r) => (string)$r['type'] === 'billing'));
@@ -990,7 +1158,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/invoices$#', $path, $m) === 1 && $method 
 
 if (preg_match('#^/api/v1/catalog/items/([^/]+)/price-history$#', $path, $m) === 1 && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     $itemCode = urldecode($m[1]);
     $stmt = db()->prepare("
         SELECT iph.*, o.order_no, o.order_date
@@ -1006,7 +1174,7 @@ if (preg_match('#^/api/v1/catalog/items/([^/]+)/price-history$#', $path, $m) ===
 
 if ($path === '/api/v1/statements/generate' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $type = (string)($in['type'] ?? 'billing');
     if (!in_array($type, ['purchase', 'billing'], true)) json_response(422, ['message' => 'Invalid statement type']);
@@ -1029,7 +1197,7 @@ if ($path === '/api/v1/statements/generate' && $method === 'POST') {
 
 if ($path === '/api/v1/statements' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     $type = $_GET['type'] ?? null;
     if ($type && in_array($type, ['purchase', 'billing'], true)) {
         $stmt = db()->prepare('SELECT * FROM statement_cycles WHERE type = :type ORDER BY id DESC');
@@ -1050,7 +1218,7 @@ if ($path === '/api/v1/statements' && $method === 'GET') {
  */
 if ($path === '/api/v1/statement-bookings' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $paymentType = (string)($in['type'] ?? '');
     if (!in_array($paymentType, ['purchase', 'billing'], true)) {
@@ -1130,7 +1298,7 @@ if ($path === '/api/v1/statement-bookings' && $method === 'POST') {
 
 if ($path === '/api/v1/payments/batch' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $paymentType = (string)($in['type'] ?? '');
     if (!in_array($paymentType, ['purchase', 'billing'], true)) {
@@ -1176,7 +1344,7 @@ if ($path === '/api/v1/payments/batch' && $method === 'POST') {
 
 if ($path === '/api/v1/payments' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $orderId = isset($in['orderId']) && is_numeric($in['orderId']) ? (int)$in['orderId'] : null;
     $invoiceId = isset($in['invoiceId']) && is_numeric($in['invoiceId']) ? (int)$in['invoiceId'] : null;
@@ -1204,13 +1372,14 @@ if ($path === '/api/v1/payments' && $method === 'POST') {
 
 if ($path === '/api/v1/payments' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     header('Cache-Control: no-store, no-cache, must-revalidate');
     header('Pragma: no-cache');
     ensure_table_exists('payments', 'Payments');
     $paymentTypeSelect = table_has_column('payments', 'payment_type')
         ? 'p.payment_type'
         : "NULL";
+    $invActivePay = invoice_not_voided_sql('i2');
     $rows = db()->query("
         SELECT
             p.*,
@@ -1221,7 +1390,7 @@ if ($path === '/api/v1/payments' && $method === 'GET') {
             COALESCE(inv.type, (
                 SELECT i2.type
                 FROM invoices i2
-                WHERE i2.order_id = o.id
+                WHERE i2.order_id = o.id AND {$invActivePay}
                 ORDER BY i2.id DESC
                 LIMIT 1
             )) AS invoice_type
@@ -1243,7 +1412,7 @@ if ($path === '/api/v1/payments' && $method === 'GET') {
 
 if ($path === '/api/v1/adjustments/batch' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $type = (string)($in['type'] ?? '');
     if (!in_array($type, ['purchase', 'billing'], true)) {
@@ -1289,7 +1458,7 @@ if ($path === '/api/v1/adjustments/batch' && $method === 'POST') {
 
 if ($path === '/api/v1/adjustments' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $in = json_input();
     $orderId = isset($in['orderId']) && is_numeric($in['orderId']) ? (int)$in['orderId'] : null;
     if ($orderId === null) {
@@ -1319,7 +1488,7 @@ if ($path === '/api/v1/adjustments' && $method === 'POST') {
 
 if ($path === '/api/v1/adjustments' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin', 'moderator']);
+    require_role($user, ['admin', 'master_admin', 'moderator']);
     header('Cache-Control: no-store, no-cache, must-revalidate');
     header('Pragma: no-cache');
     // Explicit columns so joined order_date / contact_person are never lost to a.* key collisions in PDO.
@@ -1349,7 +1518,7 @@ if ($path === '/api/v1/adjustments' && $method === 'GET') {
 
 if ($path === '/api/v1/ledger' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     header('Cache-Control: no-store, no-cache, must-revalidate');
     header('Pragma: no-cache');
     $rows = db()->query("
@@ -1368,7 +1537,7 @@ if ($path === '/api/v1/ledger' && $method === 'GET') {
 
 if ($path === '/api/v1/admin/activity-logs' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin']);
+    require_role($user, ['admin', 'master_admin']);
     $from = trim((string)($_GET['from'] ?? ''));
     $to = trim((string)($_GET['to'] ?? ''));
     if ($from === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) {
@@ -1432,10 +1601,11 @@ if ($path === '/api/v1/admin/activity-logs' && $method === 'GET') {
 
 if ($path === '/api/v1/admin/reports/summary' && $method === 'GET') {
     $user = require_auth();
-    require_role($user, ['admin']);
-    $invoicesCount = (int)db()->query('SELECT COUNT(*) AS c FROM invoices')->fetch()['c'];
-    $billingSum = (float)db()->query("SELECT COALESCE(SUM(grand_total),0) AS s FROM invoices WHERE type = 'billing'")->fetch()['s'];
-    $purchaseSum = (float)db()->query("SELECT COALESCE(SUM(grand_total),0) AS s FROM invoices WHERE type = 'purchase'")->fetch()['s'];
+    require_role($user, ['admin', 'master_admin']);
+    $invAct = invoice_not_voided_sql();
+    $invoicesCount = (int)db()->query("SELECT COUNT(*) AS c FROM invoices WHERE {$invAct}")->fetch()['c'];
+    $billingSum = (float)db()->query("SELECT COALESCE(SUM(grand_total),0) AS s FROM invoices WHERE type = 'billing' AND {$invAct}")->fetch()['s'];
+    $purchaseSum = (float)db()->query("SELECT COALESCE(SUM(grand_total),0) AS s FROM invoices WHERE type = 'purchase' AND {$invAct}")->fetch()['s'];
     $outstanding = $billingSum - (float)db()->query('SELECT COALESCE(SUM(amount),0) AS s FROM payments')->fetch()['s'];
     json_response(200, [
         'data' => [

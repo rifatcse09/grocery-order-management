@@ -56,7 +56,7 @@ interface AdminCreatePayload {
   phone: string;
   email: string;
   password: string;
-  role: Exclude<Role, "admin">;
+  role: Role;
   billingAddress?: string;
   deliveryAddress?: string;
 }
@@ -92,6 +92,16 @@ const demoProfiles: Record<Role, Account> = {
     billingAddress: "—",
     deliveryAddress: "—",
   },
+  master_admin: {
+    id: "ma1",
+    name: "Demo Master Admin",
+    email: "master@demo.local",
+    password: "demo123",
+    phone: "+8801911000001",
+    role: "master_admin",
+    billingAddress: "—",
+    deliveryAddress: "—",
+  },
 };
 
 function toSession(account: Account): SessionUser {
@@ -100,7 +110,7 @@ function toSession(account: Account): SessionUser {
 }
 
 function loadAccounts(): Account[] {
-  const defaults = [demoProfiles.user, demoProfiles.moderator, demoProfiles.admin];
+  const defaults = [demoProfiles.user, demoProfiles.moderator, demoProfiles.admin, demoProfiles.master_admin];
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
     if (raw) {
@@ -155,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [accounts]);
 
   useEffect(() => {
-    if (!apiEnabled() || !user || user.role !== "admin") return;
+    if (!apiEnabled() || !user || (user.role !== "admin" && user.role !== "master_admin")) return;
     void apiListUsers()
       .then((rows) => {
         setAccounts(
@@ -265,8 +275,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
         }
       }
-      if (!user || user.role !== "admin") {
-        return { ok: false, message: "Only admin can create accounts." };
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can create accounts." };
       }
       const emailNorm = payload.email.trim().toLowerCase();
       if (!emailNorm || !payload.password.trim() || !payload.name.trim()) {

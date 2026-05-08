@@ -1,14 +1,15 @@
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Eye, MoreVertical, Search, Truck } from "lucide-react";
+import { Eye, MoreVertical, Search, Trash2, Truck } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
-import { apiEnabled, apiMarkOrderDelivered } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
+import { apiDeleteOrder, apiEnabled, apiMarkOrderDelivered } from "../lib/api";
 import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
 import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
 import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
 import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
-import type { Order, OrderStatus } from "../types";
+import { type Order, type OrderStatus, isAdministrationRole } from "../types";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,6 +44,7 @@ function AdminDocCell({ children }: { children: ReactNode }) {
 }
 
 export function AdminOrdersPage() {
+  const { user } = useAuth();
   const { orders, loadOrders } = useOrders();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
@@ -62,6 +64,7 @@ export function AdminOrdersPage() {
   const location = useLocation();
   const [deliverBusyId, setDeliverBusyId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [showDeletedOrders, setShowDeletedOrders] = useState(false);
 
   const mode = useMemo<"orders" | "purchase" | "billing">(() => {
     if (location.pathname.startsWith("/admin/purchase-invoices")) return "purchase";
@@ -69,9 +72,30 @@ export function AdminOrdersPage() {
     return "orders";
   }, [location.pathname]);
 
+  const canAdminPanel = !!(user && isAdministrationRole(user.role));
+  const listLoadOpts = useMemo(
+    () => (canAdminPanel && showDeletedOrders ? { includeDeleted: true as const } : undefined),
+    [canAdminPanel, showDeletedOrders],
+  );
+
   useEffect(() => {
-    void loadOrders();
-  }, [loadOrders]);
+    void loadOrders(listLoadOpts);
+  }, [loadOrders, listLoadOpts]);
+
+  async function softDeleteOrderFromList(o: Order) {
+    if (!apiEnabled() || o.deletedAt) return;
+    const ok = window.confirm(
+      `Soft-delete order ${o.orderNo}? It will be hidden from normal lists and totals; active invoices are voided with ledger adjustments. You can still find it with “Show soft-deleted orders”.`,
+    );
+    if (!ok) return;
+    setListError(null);
+    try {
+      await apiDeleteOrder(o.id);
+      await loadOrders(listLoadOpts);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "Soft-delete failed.");
+    }
+  }
 
   useEffect(() => {
     const sync = () => setAdminNewIds(readAdminNotifyOrderIds());
@@ -92,7 +116,7 @@ export function AdminOrdersPage() {
     setDeliverBusyId(o.id);
     try {
       await apiMarkOrderDelivered(o.id);
-      await loadOrders();
+      await loadOrders(listLoadOpts);
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Could not mark order as delivered.");
     } finally {
@@ -190,6 +214,20 @@ export function AdminOrdersPage() {
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {canAdminPanel ? (
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700 sm:col-span-2 lg:col-span-3">
+                <input
+                  type="checkbox"
+                  checked={showDeletedOrders}
+                  onChange={(e) => {
+                    setShowDeletedOrders(e.target.checked);
+                    setPage(1);
+                  }}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                Show soft-deleted orders (removed from totals and normal lists)
+              </label>
+            ) : null}
             <label className="text-xs font-semibold uppercase tracking-wide text-foreground sm:col-span-2 lg:col-span-1">
               <span className="mb-1 flex items-center gap-1.5 text-slate-600">
                 <Search className="h-3.5 w-3.5" />
@@ -274,6 +312,11 @@ export function AdminOrdersPage() {
                           New
                         </span>
                       ) : null}
+                      {o.deletedAt ? (
+                        <span className="rounded-full bg-slate-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                          Deleted
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-4 py-3 align-middle text-base font-semibold text-slate-800">{o.contactPerson}</td>
@@ -332,7 +375,7 @@ export function AdminOrdersPage() {
                     </AdminDocCell>
                   </td>
                   <td className="px-4 py-3 align-middle text-right">
-                    <div className={tableActionsWideSingle()}>
+                    <div className={`${tableActionsWideSingle()} flex flex-wrap items-center gap-1`}>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -344,6 +387,19 @@ export function AdminOrdersPage() {
                           <Eye className="h-4 w-4" />
                         </Link>
                       </Button>
+                      {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-red-600 hover:text-red-700"
+                          title="Soft-delete order"
+                          aria-label="Soft-delete order"
+                          onClick={() => void softDeleteOrderFromList(o)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : null}
                     </div>
                     <div className={tableActionsTightSingle()}>
                       <DropdownMenu>
@@ -388,6 +444,18 @@ export function AdminOrdersPage() {
                               Mark delivery complete
                             </DropdownMenuItem>
                           ) : null}
+                          {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                            <DropdownMenuItem
+                              className="cursor-pointer gap-2 text-red-600 focus:text-red-600"
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                void softDeleteOrderFromList(o);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Soft-delete order
+                            </DropdownMenuItem>
+                          ) : null}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -410,6 +478,11 @@ export function AdminOrdersPage() {
                   {adminNewIds.includes(o.id) ? (
                     <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-950">
                       New
+                    </span>
+                  ) : null}
+                  {o.deletedAt ? (
+                    <span className="rounded-full bg-slate-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                      Deleted
                     </span>
                   ) : null}
                 </div>
@@ -466,6 +539,17 @@ export function AdminOrdersPage() {
                 >
                   Edit
                 </Link>
+                {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                  <button
+                    type="button"
+                    onClick={() => void softDeleteOrderFromList(o)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm font-semibold text-red-800"
+                    title="Soft-delete order"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                ) : null}
                 {mode === "orders" && apiEnabled() && canMarkDelivered(o) ? (
                   <button
                     type="button"
