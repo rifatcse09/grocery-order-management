@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 
 const PAYMENTS_KEY = "gom_statement_payments";
 type InvoiceFilter = "all" | "paid" | "pending" | "overdue";
@@ -23,8 +24,15 @@ type InvoiceRow = {
   orderNo: string;
   customer: string;
   customerEmail: string;
-  issueDate: string;
+  /** Display `dd-mm-yyyy` from order row. */
+  orderDate: string;
+  /** Display `dd-mm-yyyy` from order row. */
+  deliveryDate: string;
+  /** Display `dd-mm-yyyy`. */
   dueDate: string;
+  /** Calendar `yyyy-mm-dd` for sorting and overdue checks (same as order date in this list). */
+  issueDateIso: string;
+  dueDateIso: string;
   amount: number;
   remaining: number;
   paymentStatus: Exclude<InvoiceFilter, "all">;
@@ -64,10 +72,13 @@ export function UserInvoicesPage() {
         (o) => o.ownerId === user?.id || user?.role === "admin" || user?.role === "master_admin",
       )
       .filter((o) => hasBillingInvoice(o))
+      .sort((a, b) => (a.orderDate || "").localeCompare(b.orderDate || ""))
       .map((o) => {
         const issue = parseIso(o.orderDate) ?? new Date();
         const due = new Date(issue);
         due.setDate(due.getDate() + 7);
+        const issueIso = formatIso(issue);
+        const dueIso = formatIso(due);
         const amount = Math.max(
           0,
           o.grandTotal ??
@@ -86,16 +97,18 @@ export function UserInvoicesPage() {
           orderNo: o.orderNo,
           customer,
           customerEmail,
-          issueDate: formatIso(issue),
-          dueDate: formatIso(due),
+          orderDate: formatDateDdMmYyyyOrDash(o.orderDate),
+          deliveryDate: formatDateDdMmYyyyOrDash(o.deliveryDate),
+          dueDate: formatDateDdMmYyyy(dueIso),
+          issueDateIso: issueIso,
+          dueDateIso: dueIso,
           amount,
           remaining: amount,
           paymentStatus: "pending" as const,
           challanGenerated: Boolean(o.challanGenerated),
           invoiceAvailable: hasBillingInvoice(o),
         };
-      })
-      .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+      });
 
     const paymentsByCustomer = new Map<string, number>();
     try {
@@ -137,7 +150,7 @@ export function UserInvoicesPage() {
     today.setHours(0, 0, 0, 0);
     return visible
       .map((r) => {
-        const due = parseIso(r.dueDate);
+        const due = parseIso(r.dueDateIso);
         const overdue = Boolean(due && due.getTime() < today.getTime() && r.remaining > 0);
         const paymentStatus: InvoiceRow["paymentStatus"] = r.remaining <= 0 ? "paid" : overdue ? "overdue" : "pending";
         return {
@@ -145,7 +158,7 @@ export function UserInvoicesPage() {
           paymentStatus,
         };
       })
-      .sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+      .sort((a, b) => b.issueDateIso.localeCompare(a.issueDateIso));
   }, [orders, user, accountEmailByName]);
 
   const filtered = useMemo(() => {
@@ -157,7 +170,9 @@ export function UserInvoicesPage() {
         r.invoiceNo.toLowerCase().includes(q) ||
         r.orderNo.toLowerCase().includes(q) ||
         r.customer.toLowerCase().includes(q) ||
-        r.customerEmail.toLowerCase().includes(q)
+        r.customerEmail.toLowerCase().includes(q) ||
+        r.orderDate.toLowerCase().includes(q) ||
+        r.deliveryDate.toLowerCase().includes(q)
       );
     });
   }, [rows, filter, query]);
@@ -234,7 +249,7 @@ export function UserInvoicesPage() {
 
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
         <div className="hidden table-scroll md:block">
-          <table className="min-w-[980px] w-full text-left text-sm">
+          <table className="min-w-[1040px] w-full text-left text-sm">
             <thead className="bg-muted text-xs font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="w-10 px-3 py-3">
@@ -242,9 +257,10 @@ export function UserInvoicesPage() {
                 </th>
                 <th className="px-3 py-3">Invoice</th>
                 <th className="px-3 py-3">Customer</th>
+                <th className="px-3 py-3 whitespace-nowrap">Order date</th>
+                <th className="px-3 py-3 whitespace-nowrap">Delivery date</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">Due date</th>
-                <th className="px-3 py-3">Issued</th>
                 <th className="px-3 py-3 text-right">Amount</th>
                 <th className="w-12 px-3 py-3 text-right">Action</th>
               </tr>
@@ -263,13 +279,14 @@ export function UserInvoicesPage() {
                     <p className="font-medium text-slate-900">{r.customer}</p>
                     <p className="text-xs text-slate-500">{r.customerEmail}</p>
                   </td>
+                  <td className="px-3 py-3 whitespace-nowrap text-slate-700">{r.orderDate}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-slate-700">{r.deliveryDate}</td>
                   <td className="px-3 py-3">
                     <InvoiceStatusChip status={r.paymentStatus} />
                   </td>
                   <td className="px-3 py-3 text-slate-700">{r.dueDate}</td>
-                  <td className="px-3 py-3 text-slate-700">{r.issueDate}</td>
                   <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                    ${Math.round(r.amount).toLocaleString("en-US")}
+                    {`৳ ${Math.round(r.amount).toLocaleString("en-US")}`}
                   </td>
                   <td className="px-3 py-3 text-right">
                     <DropdownMenu>
@@ -314,19 +331,23 @@ export function UserInvoicesPage() {
               </div>
               <p className="mt-2 text-sm font-medium text-slate-900">{r.customer}</p>
               <p className="text-xs text-slate-500">{r.customerEmail}</p>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-600">
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                <div>
+                  <p className="font-semibold">Order date</p>
+                  <p>{r.orderDate}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Delivery date</p>
+                  <p>{r.deliveryDate}</p>
+                </div>
                 <div>
                   <p className="font-semibold">Due</p>
                   <p>{r.dueDate}</p>
                 </div>
-                <div>
-                  <p className="font-semibold">Issued</p>
-                  <p>{r.issueDate}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">Amount</p>
-                  <p className="font-bold text-slate-900">${Math.round(r.amount).toLocaleString("en-US")}</p>
-                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-600">Amount</span>
+                <span className="font-bold text-slate-900">{`৳ ${Math.round(r.amount).toLocaleString("en-US")}`}</span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link to={`/user/invoices/${r.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900">

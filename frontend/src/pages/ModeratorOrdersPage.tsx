@@ -1,10 +1,12 @@
 import { Link, useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { useEffect, useMemo, useState } from "react";
 import { PaginationControls } from "../components/PaginationControls";
-import { ClipboardCheck, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
+import { ClipboardCheck, Calendar, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
 import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
+import { formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import { NOTIFICATIONS_EVENT, readModeratorSeenOrderIds } from "../lib/orderNotifications";
 import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
@@ -21,8 +23,10 @@ import {
   tableActionsWideSingle,
 } from "@/lib/tableActionsLayout";
 import { StatMetricCard } from "../components/StatMetricCard";
+import { apiEnabled } from "../lib/api";
 
 export function ModeratorOrdersPage() {
+  const { user } = useAuth();
   const { orders, loadOrders } = useOrders();
   const location = useLocation();
   const [query, setQuery] = useState("");
@@ -107,10 +111,12 @@ export function ModeratorOrdersPage() {
 
   function savePurchaseAdjustment() {
     if (!adjustOrder) return;
-    const amount = Number(adjustInput);
+    const raw = adjustInput.trim().replace(",", ".");
+    const amount = parseFloat(raw);
     if (!Number.isFinite(amount) || amount < 0) return;
+    const rounded = Math.round(amount * 100) / 100;
     const total = purchaseAmountOf(adjustOrder.id);
-    setPurchasePayments((prev) => ({ ...prev, [adjustOrder.id]: Math.min(total, amount) }));
+    setPurchasePayments((prev) => ({ ...prev, [adjustOrder.id]: Math.min(total, rounded) }));
     setAdjustOrderId(null);
     setAdjustInput("");
   }
@@ -125,8 +131,13 @@ export function ModeratorOrdersPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const staffId = user?.id ? String(user.id) : "";
     return orders.filter((o) => {
-      if (o.status === "draft") return false;
+      if (mode === "purchase" && o.status === "draft") return false;
+      if (mode === "orders" && o.status === "draft") {
+        const creator = String(o.createdById ?? "");
+        if (!staffId || creator !== staffId) return false;
+      }
       if (status !== "all" && o.status !== status) return false;
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
@@ -141,7 +152,7 @@ export function ModeratorOrdersPage() {
         o.deliveryAddress.toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter, mode, purchasePayments]);
+  }, [orders, query, status, customer, docFilter, mode, purchasePayments, user?.id]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -248,11 +259,13 @@ export function ModeratorOrdersPage() {
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
-          <table className="min-w-[1040px] w-full text-left text-sm lg:text-base">
+          <table className="min-w-[1180px] w-full text-left text-sm lg:text-base">
           <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
             <tr>
               <th className="px-4 py-3">Order</th>
               <th className="px-4 py-3">Customer</th>
+              <th className="px-4 py-3 whitespace-nowrap">Order date</th>
+              <th className="px-4 py-3 whitespace-nowrap">Delivery date</th>
               <th className="px-4 py-3 min-w-[160px]">Delivery</th>
               <th className="px-4 py-3 min-w-[160px]">Delivered</th>
               <th className="px-4 py-3">Status</th>
@@ -276,6 +289,8 @@ export function ModeratorOrdersPage() {
                   </div>
                 </td>
                 <td className="px-4 py-4 text-base font-semibold text-slate-800">{o.contactPerson}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">{formatDateDdMmYyyyOrDash(o.orderDate)}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">{formatDateDdMmYyyyOrDash(o.deliveryDate)}</td>
                 <td className="px-4 py-3 text-sm text-slate-800">
                   <OrderScheduledDeliveryCell order={o} />
                 </td>
@@ -388,6 +403,11 @@ export function ModeratorOrdersPage() {
                 <StatusBadge status={o.status} />
               </div>
               <p className="mt-2 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-1 text-xs text-slate-600">
+                Order date: <span className="font-medium text-slate-800">{formatDateDdMmYyyyOrDash(o.orderDate)}</span>
+                {" · "}
+                Delivery date: <span className="font-medium text-slate-800">{formatDateDdMmYyyyOrDash(o.deliveryDate)}</span>
+              </p>
               <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
               <div className="text-sm text-slate-800">
                 <OrderScheduledDeliveryCell order={o} />
@@ -436,6 +456,15 @@ export function ModeratorOrdersPage() {
                   <FileBadge2 className="h-4 w-4" />
                   Open
                 </Link>
+                {apiEnabled() ? (
+                  <Link
+                    to={`/moderator/orders/${o.id}/bookkeeping`}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-800"
+                  >
+                    <Calendar className="h-4 w-4" />
+                    Dates
+                  </Link>
+                ) : null}
                 {hasPurchaseInvoice(o) ? (
                   <button
                     type="button"
@@ -499,13 +528,13 @@ export function ModeratorOrdersPage() {
             <label className="mt-5 block text-sm font-semibold text-slate-600">
               Set paid amount
               <input
-                type="number"
-                min={0}
-                max={Math.round(purchaseAmountOf(adjustOrder.id))}
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
                 value={adjustInput}
                 onChange={(e) => setAdjustInput(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg"
-                placeholder="Enter total paid amount"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg tabular-nums"
+                placeholder="Enter total paid amount (decimals allowed)"
               />
             </label>
             <div className="mt-5 flex justify-end gap-2">

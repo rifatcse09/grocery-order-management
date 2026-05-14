@@ -30,3 +30,16 @@ export function formatMoneyBn(
   });
   return toBanglaDigits(formatted);
 }
+
+/** Western digits for admin/order tables (no Bengali digit map). Matches invoice-style decimals when min/max set. */
+export function formatDecimalEn(
+  n: number,
+  options?: { minimumFractionDigits?: number; maximumFractionDigits?: number },
+): string {
+  const min = options?.minimumFractionDigits ?? 0;
+  const max = options?.maximumFractionDigits ?? 2;
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: min,
+    maximumFractionDigits: max,
+  });
+}

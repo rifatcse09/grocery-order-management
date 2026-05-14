@@ -14,10 +14,10 @@ export function validateLineQuantity(kg: string, gram: string, piece: string): s
   const hasWeight = k > 0 || g > 0;
   const hasPiece = p > 0;
   if (!hasWeight && !hasPiece) {
-    return "Enter kg and/or grams, or pieces only (কেজি/গ্রাম অথবা শুধু পিচ).";
+    return "Enter kg and/or grams, or pieces only (কেজি/গ্রাম অথবা শুধু পিস).";
   }
   if (hasWeight && hasPiece) {
-    return "Cannot mix weight and pieces (ওজন ও পিচ একসাথে নয়).";
+    return "Cannot mix weight and pieces (ওজন ও পিস একসাথে নয়).";
   }
   return null;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle } from "lucide-react";
 import { OrderLinesEditor } from "../components/OrderLinesEditor";
@@ -7,27 +7,15 @@ import { useAuth } from "../context/AuthContext";
 import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
 import type { Order, OrderLine } from "../types";
+import { toTimeInputValue } from "../lib/deliveryWindow";
 import { nextOrderNo, todayIsoDate } from "../lib/orderNo";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
-
-function toDisplayDate(value: string): string {
-  if (!value) return "";
-  const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString("en-GB");
-}
-
-function toTimeValue(value?: string): string {
-  const raw = (value ?? "").trim();
-  if (!raw) return "";
-  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
-  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/);
-  if (isoMatch) return isoMatch[2];
-  const rangeStartMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})\s*(?:to|–|—|-)\s*/i);
-  if (rangeStartMatch) return rangeStartMatch[2];
-  const anyTime = raw.match(/(\d{2}:\d{2})/);
-  return anyTime ? anyTime[1] : "";
-}
+import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
+import {
+  SearchableSelect,
+  categoryOptionsFromCatalog,
+  itemOptionsFromCatalogItems,
+} from "../components/SearchableSelect";
 
 export function OrderFormPage() {
   const { id } = useParams();
@@ -45,6 +33,12 @@ export function OrderFormPage() {
   const [customBn, setCustomBn] = useState("");
   const [customEn, setCustomEn] = useState("");
   const [lineItemError, setLineItemError] = useState("");
+  /** Category for “Add new item to category” only (searchable); avoids sharing state with “Add item”. */
+  const [newItemCategoryId, setNewItemCategoryId] = useState("");
+  const [catalogModalHost, setCatalogModalHost] = useState<HTMLElement | null>(null);
+  const setCatalogModalHostCb = useCallback((el: HTMLElement | null) => {
+    setCatalogModalHost((prev) => (prev === el ? prev : el));
+  }, []);
 
   useEffect(() => {
     if (!user || !isNew) return;
@@ -81,6 +75,8 @@ export function OrderFormPage() {
     const c = categories.find((x) => x.id === pickCat);
     return c?.items ?? [];
   }, [categories, pickCat]);
+  const categorySelectOptions = useMemo(() => categoryOptionsFromCatalog(categories), [categories]);
+  const itemSelectOptions = useMemo(() => itemOptionsFromCatalogItems(itemsOf), [itemsOf]);
 
   if (!order) {
     return (
@@ -99,7 +95,7 @@ export function OrderFormPage() {
   const linesOk =
     order.lines.length > 0 &&
     order.lines.every((l) => validateLineQuantity(l.kg, l.gram, l.piece) == null);
-  const deliveryTimeValue = toTimeValue(order.deliveryTime);
+  const deliveryTimeValue = toTimeInputValue(order.deliveryTime);
   const requiredFieldIssues: string[] = [];
   if (!order.deliveryDate?.trim()) requiredFieldIssues.push("Delivery date");
   if (!deliveryTimeValue) requiredFieldIssues.push("Delivery time");
@@ -151,8 +147,8 @@ export function OrderFormPage() {
   };
 
   const saveNewItemOnly = async () => {
-    if (!pickCat || !customBn.trim() || !customEn.trim()) return;
-    const created = await addCustomItem(pickCat, customBn.trim(), customEn.trim());
+    if (!newItemCategoryId || !customBn.trim() || !customEn.trim()) return;
+    const created = await addCustomItem(newItemCategoryId, customBn.trim(), customEn.trim());
     if (created) {
       const alreadyExists = order.lines.some(
         (l) => l.categoryId === created.categoryId && l.itemId === created.id,
@@ -227,7 +223,7 @@ export function OrderFormPage() {
             <input
               type="text"
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-base font-mono font-semibold text-slate-900"
-              value={toDisplayDate(order.orderDate)}
+              value={formatDateDdMmYyyy(order.orderDate)}
               readOnly
             />
           </div>
@@ -314,6 +310,7 @@ export function OrderFormPage() {
               disabled={!editWindowOk}
               onClick={async () => {
                 const loaded = await loadCatalog();
+                setNewItemCategoryId(loaded[0]?.id ?? "");
                 setPickCat(loaded[0]?.id ?? "");
                 setPickItem(loaded[0]?.items[0]?.id ?? "");
                 setLineItemError("");
@@ -345,7 +342,7 @@ export function OrderFormPage() {
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>
               Some rows break quantity rules: use kg and/or g, or pieces only
-              (কেজি/গ্রাম অথবা শুধু পিচ).
+              (কেজি/গ্রাম অথবা শুধু পিস).
             </p>
           </div>
         ) : null}
@@ -410,40 +407,44 @@ export function OrderFormPage() {
 
       {addRowModal ? (
         <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div
+            ref={setCatalogModalHostCb}
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
             <h3 className="text-lg font-bold text-slate-900">Add item</h3>
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category (ধরন)</label>
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={pickCat}
-                  onChange={(e) => {
-                    setPickCat(e.target.value);
-                    const c = categories.find((x) => x.id === e.target.value);
-                    setPickItem(c?.items[0]?.id ?? "");
-                  }}
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nameEn} ({c.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    aria-label="Category"
+                    options={categorySelectOptions}
+                    value={pickCat}
+                    placeholder="Select category"
+                    searchPlaceholder="Search categories…"
+                    portalContainer={catalogModalHost}
+                    onChange={(id) => {
+                      setPickCat(id);
+                      const c = categories.find((x) => x.id === id);
+                      setPickItem(c?.items[0]?.id ?? "");
+                    }}
+                  />
+                </div>
               </div>
               <div>
                 <label className="text-xs text-slate-600">Item (বস্তু)</label>
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={pickItem}
-                  onChange={(e) => setPickItem(e.target.value)}
-                >
-                  {itemsOf.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.nameEn} ({i.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    aria-label="Item"
+                    options={itemSelectOptions}
+                    value={pickItem}
+                    placeholder="Select item"
+                    searchPlaceholder="Search items…"
+                    emptyText={pickCat ? "No items in this category." : "Pick a category first."}
+                    portalContainer={catalogModalHost}
+                    onChange={setPickItem}
+                  />
+                </div>
               </div>
               <button
                 type="button"
@@ -466,25 +467,29 @@ export function OrderFormPage() {
 
       {addItemModal ? (
         <div className="fixed left-0 top-0 z-[250] flex h-screen w-screen items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+          <div
+            ref={setCatalogModalHostCb}
+            className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
+          >
             <h3 className="text-lg font-bold text-slate-900">Add new item to category</h3>
             <p className="mt-1 text-xs text-slate-600">
               This saves the item and adds it to current order.
             </p>
             <div className="mt-4 space-y-3">
               <div>
-                <label className="text-xs text-slate-600">Category</label>
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={pickCat}
-                  onChange={(e) => setPickCat(e.target.value)}
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nameEn} ({c.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <label className="text-xs text-slate-600">Category (ধরন)</label>
+                <p className="mt-0.5 text-[11px] text-slate-500">Type to search English or Bangla names, then pick a category.</p>
+                <div className="mt-1">
+                  <SearchableSelect
+                    aria-label="Category for new custom item"
+                    options={categorySelectOptions}
+                    value={newItemCategoryId}
+                    placeholder="Search or select category"
+                    searchPlaceholder="Search categories…"
+                    portalContainer={catalogModalHost}
+                    onChange={setNewItemCategoryId}
+                  />
+                </div>
               </div>
               <input
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bn"

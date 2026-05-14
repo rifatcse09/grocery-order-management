@@ -1,5 +1,6 @@
 import type { Order, OrderLine } from "../types";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
 
 /** বাংলা ডেলিভারি চালান — শুধু বস্তু ও পরিমাণ, মূল্য ছাড়া। */
 export function DeliveryChallanTemplate({ order }: { order: Order }) {
@@ -145,7 +146,7 @@ function formatQtyBangla(line: OrderLine): string {
   const piece = parseFloat(line.piece || "0");
   const kg = parseFloat(line.kg || "0");
   const gram = parseFloat(line.gram || "0");
-  if (piece > 0) return `${toBanglaNum(format2(piece))} পিচ`;
+  if (piece > 0) return `${toBanglaNum(format2(piece))} পিস`;
   const parts: string[] = [];
   if (kg > 0) parts.push(`${toBanglaNum(format2(kg))} কেজি`);
   if (gram > 0) parts.push(`${toBanglaNum(format2(gram))} গ্রাম`);
@@ -160,5 +161,5 @@ function format2(value: number): string {
 }
 
 function toBanglaDate(iso: string): string {
-  return toBanglaNum(iso);
+  return toBanglaNum(formatDateDdMmYyyy(iso));
 }

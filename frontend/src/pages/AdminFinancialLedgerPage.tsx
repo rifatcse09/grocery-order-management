@@ -4,6 +4,7 @@ import { useLocation } from "react-router-dom";
 import { StatMetricCard } from "../components/StatMetricCard";
 import { PaginationControls } from "../components/PaginationControls";
 import { apiListLedger, type LedgerEntry } from "../lib/api";
+import { formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import { humanLedgerEntryType, ledgerBookFromEntryType, ledgerBookLabel, type LedgerBook } from "../lib/ledgerDisplay";
 
 type RowType = "Invoice" | "Payment" | "Adjustment";
@@ -64,9 +65,10 @@ export function AdminFinancialLedgerPage() {
       const orderNo = entry.order_no?.trim() || "";
       const createdSlice = String(entry.created_at ?? "").trim().slice(0, 10);
       const orderDateSlice = String(entry.order_date ?? "").trim().slice(0, 10);
+      const rawDate = createdSlice || orderDateSlice;
       out.push({
         id: entry.id ?? 0,
-        date: createdSlice || orderDateSlice || "—",
+        date: rawDate ? formatDateDdMmYyyyOrDash(rawDate) : "—",
         customer: entry.contact_person?.trim() || "—",
         orderNo,
         book,

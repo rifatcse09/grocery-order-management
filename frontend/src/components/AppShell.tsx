@@ -53,18 +53,25 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
+/** Sidebar “order list” links should not stay active on `/orders/new`, detail, or bookkeeping URLs. */
+function navItemActive(path: string, to: string): boolean {
+  if (to.endsWith("/orders")) return path === to;
+  return path === to || path.startsWith(`${to}/`);
+}
+
 const navFor: Record<
   Role,
   { to: string; label: string; icon: typeof LayoutDashboard }[]
 > = {
   user: [
-    { to: "/user/orders", label: "Orders", icon: ClipboardList },
     { to: "/user/orders/new", label: "New order", icon: Package },
+    { to: "/user/orders", label: "Orders", icon: ClipboardList },
     { to: "/user/invoices", label: "Invoices", icon: FileText },
     { to: "/user/catalog/categories", label: "Category list", icon: BookText },
     { to: "/user/catalog/products", label: "Product list", icon: Package },
   ],
   moderator: [
+    { to: "/moderator/orders/new", label: "New order", icon: Plus },
     { to: "/moderator/dashboard", label: "Dashboard", icon: BarChart3 },
     { to: "/moderator/orders", label: "Order list", icon: ClipboardList },
     { to: "/moderator/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
@@ -73,6 +80,7 @@ const navFor: Record<
     { to: "/moderator/catalog/products", label: "Product list", icon: Package },
   ],
   admin: [
+    { to: "/admin/orders/new", label: "New order (bookkeeping)", icon: Plus },
     { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
     { to: "/admin/orders", label: "Order list", icon: ClipboardList },
     { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
@@ -87,6 +95,7 @@ const navFor: Record<
     { to: "/admin/create", label: "Create user/moderator", icon: UserPlus },
   ],
   master_admin: [
+    { to: "/admin/orders/new", label: "New order (bookkeeping)", icon: Plus },
     { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
     { to: "/admin/orders", label: "Order list", icon: ClipboardList },
     { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
@@ -175,7 +184,7 @@ export function AppShell() {
   const activeNavTo = useMemo(() => {
     const path = location.pathname;
     const matches = dedup
-      .filter(({ to }) => path === to || path.startsWith(`${to}/`))
+      .filter(({ to }) => navItemActive(path, to))
       .sort((a, b) => b.to.length - a.to.length);
     return matches[0]?.to ?? null;
   }, [dedup, location.pathname]);
@@ -190,7 +199,7 @@ export function AppShell() {
     user.role === "user"
       ? { to: "/user/orders/new", label: "New order", Icon: Plus }
       : user.role === "moderator"
-        ? { to: "/moderator/orders", label: "Orders", Icon: ClipboardList }
+        ? { to: "/moderator/orders/new", label: "New order", Icon: Plus }
         : { to: "/admin/orders", label: "Orders", Icon: ClipboardList };
   const PrimaryIcon = primaryCta.Icon;
   const initials = user.name

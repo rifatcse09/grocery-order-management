@@ -21,6 +21,7 @@ import {
   resolveStatementTxnBucketMeta,
   statementBucketKeyForTxn,
 } from "../lib/statementPaymentAllocation";
+import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
 
 interface StatementRow {
   key: string;
@@ -444,8 +445,8 @@ export function AdminBillingStatementsPage() {
                 >
                   <td className="px-3 py-3.5 font-semibold">{r.customer}</td>
                   <td className="px-3 py-3.5">
-                    {formatIso(r.start)} to {formatIso(r.end)}
-                    <span className="ml-1 text-xs text-slate-500">· Due {formatIso(r.dueDate)}</span>
+                    {formatDateDdMmYyyy(formatIso(r.start))} to {formatDateDdMmYyyy(formatIso(r.end))}
+                    <span className="ml-1 text-xs text-slate-500">· Due {formatDateDdMmYyyy(formatIso(r.dueDate))}</span>
                   </td>
                   <td className="px-3 py-3.5">{r.invoiceCount}</td>
                   <td className="px-3 py-3.5 text-right font-semibold">
@@ -525,8 +526,8 @@ export function AdminBillingStatementsPage() {
           <h2 className="text-sm font-semibold">Billing statement details</h2>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 flex-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800">
-              {selected.customer} · {formatIso(selected.start)} to {formatIso(selected.end)} · Due{" "}
-              {formatIso(selected.dueDate)}
+              {selected.customer} · {formatDateDdMmYyyy(formatIso(selected.start))} to{" "}
+              {formatDateDdMmYyyy(formatIso(selected.end))} · Due {formatDateDdMmYyyy(formatIso(selected.dueDate))}
             </div>
             <button
               type="button"
@@ -581,7 +582,7 @@ export function AdminBillingStatementsPage() {
                       {row.orderNo}
                       {!row.hasOrder ? <span className="ml-1 text-xs font-normal text-amber-700">(order not in list)</span> : null}
                     </td>
-                    <td className="px-3 py-3 whitespace-nowrap text-slate-700">{row.orderDate}</td>
+                    <td className="px-3 py-3 whitespace-nowrap text-slate-700">{formatDateDdMmYyyy(row.orderDate)}</td>
                     <td className="px-3 py-3 text-right">৳ {Math.round(row.cap).toLocaleString("en-US")}</td>
                     <td className="px-3 py-3 text-right">৳ {Math.round(row.net).toLocaleString("en-US")}</td>
                     <td className="px-3 py-3 text-right font-semibold">৳ {Math.round(row.due).toLocaleString("en-US")}</td>
@@ -621,7 +622,8 @@ export function AdminBillingStatementsPage() {
                   selected cycle.
                 </p>
                 <p className="mt-1 text-sm font-semibold text-slate-800">
-                  {selected.customer} · {formatIso(selected.start)} to {formatIso(selected.end)}
+                  {selected.customer} · {formatDateDdMmYyyy(formatIso(selected.start))} to{" "}
+                  {formatDateDdMmYyyy(formatIso(selected.end))}
                 </p>
               </div>
               <button

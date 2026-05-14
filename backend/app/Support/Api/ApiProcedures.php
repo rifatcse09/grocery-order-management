@@ -287,6 +287,9 @@ function void_invoice_and_reverse_ledger(int $invoiceId, int $actorUserId): void
         'type' => $type,
         'amount' => $amount,
     ]);
+    if ($orderId > 0) {
+        sync_order_invoice_generated_at_columns($orderId);
+    }
 }
 
 /**
@@ -406,6 +409,45 @@ function read_order_lines(int $orderId): array {
     ], $rows);
 }
 
+/** Positive qty from kg/gram/piece string (comma as decimal). */
+function parse_qty_for_challan(string $s): float
+{
+    $t = str_replace(',', '.', trim($s));
+    if ($t === '' || $t === '.') {
+        return 0.0;
+    }
+    $n = (float) $t;
+
+    return (is_finite($n) && $n > 0.0) ? $n : 0.0;
+}
+
+/**
+ * Same rules as frontend validateLineQuantity: weight OR pieces, not both; every line must have quantity.
+ *
+ * @param  array<int, array<string, mixed>>  $lines
+ */
+function order_lines_ready_for_challan(array $lines): bool
+{
+    if ($lines === []) {
+        return false;
+    }
+    foreach ($lines as $line) {
+        $kg = parse_qty_for_challan((string) ($line['kg'] ?? ''));
+        $g = parse_qty_for_challan((string) ($line['gram'] ?? ''));
+        $p = parse_qty_for_challan((string) ($line['piece'] ?? ''));
+        $hasWeight = $kg > 0.0 || $g > 0.0;
+        $hasPiece = $p > 0.0;
+        if (! $hasWeight && ! $hasPiece) {
+            return false;
+        }
+        if ($hasWeight && $hasPiece) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function order_has_challan(int $orderId): bool {
     $stmt = db()->prepare('SELECT 1 FROM challans WHERE order_id = :id LIMIT 1');
     $stmt->execute(['id' => $orderId]);
@@ -446,7 +488,47 @@ function order_latest_invoice_row(int $orderId, string $type): ?array {
     return $row ?: null;
 }
 
+/**
+ * Denormalize latest active invoice timestamps onto orders (updated on each generate / void / regenerate).
+ */
+function sync_order_invoice_generated_at_columns(int $orderId): void
+{
+    if ($orderId < 1) {
+        return;
+    }
+    $hasPur = table_has_column('orders', 'purchase_invoice_generated_at');
+    $hasBill = table_has_column('orders', 'billing_invoice_generated_at');
+    if (! $hasPur && ! $hasBill) {
+        return;
+    }
+    $p = order_has_invoice_type($orderId, 'purchase') ? order_latest_invoice_row($orderId, 'purchase') : null;
+    $b = order_has_invoice_type($orderId, 'billing') ? order_latest_invoice_row($orderId, 'billing') : null;
+    $pAt = $p && ! empty($p['created_at']) ? (string) $p['created_at'] : null;
+    $bAt = $b && ! empty($b['created_at']) ? (string) $b['created_at'] : null;
+    $sets = ['updated_at = NOW()'];
+    $params = ['id' => $orderId];
+    if ($hasPur) {
+        $sets[] = 'purchase_invoice_generated_at = :p_at';
+        $params['p_at'] = $pAt;
+    }
+    if ($hasBill) {
+        $sets[] = 'billing_invoice_generated_at = :b_at';
+        $params['b_at'] = $bAt;
+    }
+    $sql = 'UPDATE orders SET '.implode(', ', $sets).' WHERE id = :id';
+    db()->prepare($sql)->execute($params);
+}
+
 function read_order(array $row): array {
+    if (table_has_column('orders', 'created_by') && ! empty($row['created_by']) && ! array_key_exists('created_by_user_name', $row)) {
+        $st = db()->prepare('SELECT name, role FROM users WHERE id = :id LIMIT 1');
+        $st->execute(['id' => (int) $row['created_by']]);
+        $u = $st->fetch();
+        if ($u) {
+            $row['created_by_user_name'] = $u['name'] ?? null;
+            $row['created_by_user_role'] = $u['role'] ?? null;
+        }
+    }
     $deliveryWindow = trim((string)($row['delivery_time_window'] ?? ''));
     $orderId = (int)$row['id'];
     $challanGenerated = (bool)($row['challan_generated'] ?? false) || order_has_challan($orderId);
@@ -469,6 +551,18 @@ function read_order(array $row): array {
     if (($deliveredAt === null || $deliveredAt === '') && in_array((string)($row['status'] ?? ''), ['completed', 'invoiced'], true)) {
         $deliveredAt = order_delivered_at_from_activity($orderId);
     }
+    $purchaseInvoiceCreatedAt = null;
+    if ($purchaseInvoice && ! empty($purchaseInvoice['created_at'])) {
+        $purchaseInvoiceCreatedAt = (string) $purchaseInvoice['created_at'];
+    } elseif (! empty($row['purchase_invoice_generated_at'])) {
+        $purchaseInvoiceCreatedAt = (string) $row['purchase_invoice_generated_at'];
+    }
+    $billingInvoiceCreatedAt = null;
+    if ($billingInvoice && ! empty($billingInvoice['created_at'])) {
+        $billingInvoiceCreatedAt = (string) $billingInvoice['created_at'];
+    } elseif (! empty($row['billing_invoice_generated_at'])) {
+        $billingInvoiceCreatedAt = (string) $row['billing_invoice_generated_at'];
+    }
     $out = [
         'id' => (string)$orderId,
         'ownerId' => (string)$row['owner_id'],
@@ -489,6 +583,8 @@ function read_order(array $row): array {
         'purchaseInvoiceGenerated' => $purchaseInvoiceGenerated,
         'purchaseInvoiceGeneratedBy' => $purchaseInvoiceGeneratedBy,
         'billingInvoiceGenerated' => $billingInvoiceGenerated,
+        'purchaseInvoiceCreatedAt' => $purchaseInvoiceCreatedAt,
+        'billingInvoiceCreatedAt' => $billingInvoiceCreatedAt,
         'purchaseSubtotal' => $purchaseSubtotal,
         'billingSubtotal' => $billingSubtotal,
         'markupPercent' => $billingMarkupPercent,
@@ -496,6 +592,16 @@ function read_order(array $row): array {
         'grandTotal' => $grandTotal,
         'lines' => read_order_lines($orderId),
     ];
+    if (table_has_column('orders', 'created_by')) {
+        $cb = $row['created_by'] ?? null;
+        $out['createdById'] = $cb !== null && $cb !== '' ? (string) $cb : null;
+        $out['createdByName'] = isset($row['created_by_user_name']) && (string) $row['created_by_user_name'] !== ''
+            ? (string) $row['created_by_user_name']
+            : null;
+        $out['createdByRole'] = isset($row['created_by_user_role']) && (string) $row['created_by_user_role'] !== ''
+            ? (string) $row['created_by_user_role']
+            : null;
+    }
     if (table_has_column('orders', 'deleted_at') && ! empty($row['deleted_at'])) {
         $out['deletedAt'] = $row['deleted_at'];
     }
@@ -546,6 +652,15 @@ function log_activity(int $actorId, string $entityType, int $entityId, string $a
 }
 
 function add_ledger(?int $orderId, string $entryType, float $amount, string $direction, string $refType, ?int $refId): void {
+    // Guard: prevent duplicate ledger entry for the same invoice/ref.
+    // This makes the function idempotent when ref_id is present (e.g. purchase_invoice, billing_invoice).
+    if ($refId !== null) {
+        $dup = db()->prepare('SELECT 1 FROM ledger_entries WHERE entry_type = :et AND ref_type = :rt AND ref_id = :rid LIMIT 1');
+        $dup->execute(['et' => $entryType, 'rt' => $refType, 'rid' => $refId]);
+        if ($dup->fetch()) {
+            return;
+        }
+    }
     $ts = date('Y-m-d H:i:s');
     $stmt = db()->prepare('INSERT INTO ledger_entries (order_id, entry_type, amount, direction, ref_type, ref_id, created_at, updated_at) VALUES (:order_id, :entry_type, :amount, :direction, :ref_type, :ref_id, :ts, :ts2)');
     $stmt->execute([
@@ -715,6 +830,7 @@ function payment_or_order_type(array $input): string {
 function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoiceId, string $paymentType, float $payAmount, string $note): array
 {
     ensure_table_exists('payments', 'Payments');
+    [$orderId, $invoiceId] = resolve_payment_order_and_invoice_ids($orderId, $invoiceId, $paymentType);
     if (($orderId === null || $orderId <= 0) && ($invoiceId === null || $invoiceId <= 0)) {
         throw new InvalidArgumentException('orderId or invoiceId is required for payment entry.');
     }
@@ -746,7 +862,11 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
         }
     }
     if (table_has_column('payments', 'payment_type')) {
-        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, payment_type, amount, note, created_by) VALUES (:order, :invoice, :ptype, :amount, :note, :uid)');
+        $payTs = table_has_column('payments', 'created_at') && table_has_column('payments', 'updated_at');
+        $sql = $payTs
+            ? 'INSERT INTO payments (order_id, invoice_id, payment_type, amount, note, created_by, created_at, updated_at) VALUES (:order, :invoice, :ptype, :amount, :note, :uid, NOW(), NOW())'
+            : 'INSERT INTO payments (order_id, invoice_id, payment_type, amount, note, created_by) VALUES (:order, :invoice, :ptype, :amount, :note, :uid)';
+        $stmt = db()->prepare($sql);
         $stmt->execute([
             'order' => $orderId,
             'invoice' => $invoiceId,
@@ -756,7 +876,11 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
             'uid' => $userId,
         ]);
     } else {
-        $stmt = db()->prepare('INSERT INTO payments (order_id, invoice_id, amount, note, created_by) VALUES (:order, :invoice, :amount, :note, :uid)');
+        $payTs = table_has_column('payments', 'created_at') && table_has_column('payments', 'updated_at');
+        $sql = $payTs
+            ? 'INSERT INTO payments (order_id, invoice_id, amount, note, created_by, created_at, updated_at) VALUES (:order, :invoice, :amount, :note, :uid, NOW(), NOW())'
+            : 'INSERT INTO payments (order_id, invoice_id, amount, note, created_by) VALUES (:order, :invoice, :amount, :note, :uid)';
+        $stmt = db()->prepare($sql);
         $stmt->execute([
             'order' => $orderId,
             'invoice' => $invoiceId,
@@ -765,7 +889,14 @@ function insert_payment_and_ledger_row(int $userId, ?int $orderId, ?int $invoice
             'uid' => $userId,
         ]);
     }
-    $payId = (int)db()->lastInsertId();
+    $payId = (int) db()->lastInsertId();
+    if ($payId <= 0 && legacy_db_driver() === 'mysql') {
+        $lid = db()->query('SELECT LAST_INSERT_ID()')->fetchColumn();
+        $payId = is_numeric($lid) ? (int) $lid : 0;
+    } elseif ($payId <= 0 && legacy_db_driver() === 'sqlite') {
+        $lid = db()->query('SELECT last_insert_rowid()')->fetchColumn();
+        $payId = is_numeric($lid) ? (int) $lid : 0;
+    }
     $sel = db()->prepare('SELECT * FROM payments WHERE id = :id LIMIT 1');
     $sel->execute(['id' => $payId]);
     $payment = $sel->fetch();
@@ -815,7 +946,11 @@ function insert_adjustment_and_ledger_row(int $userId, int $orderId, string $typ
             );
         }
     }
-    $stmt = db()->prepare('INSERT INTO adjustments (order_id, type, amount, reason, created_by) VALUES (:order, :type, :amount, :reason, :uid)');
+    $adjTs = table_has_column('adjustments', 'created_at') && table_has_column('adjustments', 'updated_at');
+    $adjSql = $adjTs
+        ? 'INSERT INTO adjustments (order_id, type, amount, reason, created_by, created_at, updated_at) VALUES (:order, :type, :amount, :reason, :uid, NOW(), NOW())'
+        : 'INSERT INTO adjustments (order_id, type, amount, reason, created_by) VALUES (:order, :type, :amount, :reason, :uid)';
+    $stmt = db()->prepare($adjSql);
     $stmt->execute([
         'order' => $orderId,
         'type' => $type,
@@ -1076,6 +1211,89 @@ function purchase_invoice_totals_snapshot(array $lines): array
     ];
 
     return ['subtotal' => $subtotal, 'snapshotJson' => json_encode($snap)];
+}
+
+/** Compare invoice totals for regenerate no-op (two decimals, small tolerance). */
+function invoice_totals_effectively_equal(float $a, float $b): bool
+{
+    return abs($a - $b) < 0.02;
+}
+
+/**
+ * Preview billing grand total from lines + markup inputs (same rules as POST …/billing-invoice; read-only).
+ *
+ * @param array<int, array<string, mixed>> $lines
+ * @param array<string, mixed>            $markupByCategory
+ * @param array<string, mixed>            $markupByItem
+ */
+function billing_invoice_preview_grand_total(array $lines, float $markupPercent, array $markupByCategory, array $markupByItem): float
+{
+    $lineCategoryCodes = [];
+    foreach ($lines as $line) {
+        $lineCategory = (string) ($line['categoryId'] ?? '');
+        if ($lineCategory !== '') {
+            $lineCategoryCodes[$lineCategory] = true;
+        }
+    }
+    $dbMarkupByCategory = [];
+    if ($lineCategoryCodes !== []) {
+        $codes = array_keys($lineCategoryCodes);
+        $placeholders = implode(',', array_fill(0, count($codes), '?'));
+        $catMarkupStmt = db()->prepare("SELECT code, COALESCE(markup_percent, 0) AS markup_percent FROM categories WHERE code IN ($placeholders)");
+        $catMarkupStmt->execute($codes);
+        foreach ($catMarkupStmt->fetchAll() as $catMarkupRow) {
+            $dbMarkupByCategory[(string) $catMarkupRow['code']] = (float) $catMarkupRow['markup_percent'];
+        }
+    }
+    $subtotal = 0.0;
+    foreach ($lines as $line) {
+        $base = (float) ($line['lineTotal'] ?? 0);
+        $lineCategory = (string) ($line['categoryId'] ?? '');
+        $lineIdKey = (string) ($line['id'] ?? '');
+        $lineMarkupPercent = $lineCategory !== '' && array_key_exists($lineCategory, $dbMarkupByCategory)
+            ? $dbMarkupByCategory[$lineCategory]
+            : $markupPercent;
+        if ($lineCategory !== '' && array_key_exists($lineCategory, $markupByCategory)) {
+            $lineMarkupPercent = (float) $markupByCategory[$lineCategory];
+        }
+        if ($lineIdKey !== '' && array_key_exists($lineIdKey, $markupByItem)) {
+            $lineMarkupPercent = (float) $markupByItem[$lineIdKey];
+        }
+        $markupAmount = round($base * ($lineMarkupPercent / 100), 2);
+        $billedTotal = $base + $markupAmount;
+        $subtotal += $billedTotal;
+    }
+
+    return $subtotal;
+}
+
+/**
+ * Fill missing order_id (from invoice) and invoice_id (latest non-void invoice for type) so payment rows join correctly.
+ *
+ * @return array{0: ?int, 1: ?int}
+ */
+function resolve_payment_order_and_invoice_ids(?int $orderId, ?int $invoiceId, string $paymentType): array
+{
+    $invoiceId = ($invoiceId !== null && $invoiceId > 0) ? $invoiceId : null;
+    $orderId = ($orderId !== null && $orderId > 0) ? $orderId : null;
+
+    if ($orderId === null && $invoiceId !== null) {
+        $st = db()->prepare('SELECT order_id FROM invoices WHERE id = :id LIMIT 1');
+        $st->execute(['id' => $invoiceId]);
+        $row = $st->fetch();
+        if ($row && isset($row['order_id'])) {
+            $orderId = (int) $row['order_id'];
+        }
+    }
+
+    if ($invoiceId === null && $orderId !== null && in_array($paymentType, ['purchase', 'billing'], true)) {
+        $inv = order_latest_invoice_row($orderId, $paymentType);
+        if ($inv) {
+            $invoiceId = (int) $inv['id'];
+        }
+    }
+
+    return [$orderId, $invoiceId];
 }
 
 /** Refresh latest purchase invoice totals/snapshot after order line cost edits (before billing). */

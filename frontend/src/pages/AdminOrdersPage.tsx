@@ -36,6 +36,30 @@ function canMarkDelivered(o: Order): boolean {
   return o.status === "submitted" || o.status === "under_review";
 }
 
+function formatCreatorRoleLabel(role: string): string {
+  const map: Record<string, string> = {
+    user: "Customer",
+    moderator: "Moderator",
+    admin: "Admin",
+    master_admin: "Master admin",
+  };
+  return map[role] ?? role.replace(/_/g, " ");
+}
+
+function OrderCreatedByCell({ order }: { order: Order }) {
+  const name = order.createdByName?.trim();
+  const role = order.createdByRole?.trim();
+  if (!name && !role) {
+    return <span className="text-xs text-slate-400">—</span>;
+  }
+  return (
+    <div className="text-sm leading-snug text-slate-800">
+      <span className="font-semibold">{name || "Unknown"}</span>
+      {role ? <span className="text-slate-500"> · {formatCreatorRoleLabel(role)}</span> : null}
+    </div>
+  );
+}
+
 const adminDocLinkClass =
   "inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-semibold leading-none";
 
@@ -134,8 +158,14 @@ export function AdminOrdersPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const staffId = user?.id ? String(user.id) : "";
+
     return orders.filter((o) => {
-      if (o.status === "draft") return false;
+      /* New bookkeeping orders are draft until submitted; hide others' drafts, show your own. */
+      if (o.status === "draft") {
+        const creator = String(o.createdById ?? "");
+        if (!staffId || creator !== staffId) return false;
+      }
       if (status !== "all" && o.status !== status) return false;
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
@@ -149,10 +179,13 @@ export function AdminOrdersPage() {
         o.orderNo.toLowerCase().includes(q) ||
         o.contactPerson.toLowerCase().includes(q) ||
         (o.phone || "").toLowerCase().includes(q) ||
-        o.deliveryAddress.toLowerCase().includes(q)
+        o.deliveryAddress.toLowerCase().includes(q) ||
+        (o.createdByName || "").toLowerCase().includes(q) ||
+        (o.createdByRole || "").toLowerCase().includes(q) ||
+        formatCreatorRoleLabel(o.createdByRole || "").toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter, mode]);
+  }, [orders, query, status, customer, docFilter, mode, user?.id]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -287,11 +320,12 @@ export function AdminOrdersPage() {
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
-          <table className="min-w-[1180px] w-full text-left text-base">
+          <table className="min-w-[1280px] w-full text-left text-base">
             <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="px-4 py-3">Order</th>
                 <th className="px-4 py-3">Customer</th>
+                <th className="px-4 py-3 min-w-[140px]">Created by</th>
                 <th className="px-4 py-3 min-w-[160px]">Delivery</th>
                 <th className="px-4 py-3 min-w-[160px]">Delivered</th>
                 <th className="px-4 py-3">Status</th>
@@ -320,6 +354,9 @@ export function AdminOrdersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 align-middle text-base font-semibold text-slate-800">{o.contactPerson}</td>
+                  <td className="px-4 py-3 align-middle">
+                    <OrderCreatedByCell order={o} />
+                  </td>
                   <td className="px-4 py-3 align-middle text-sm text-slate-800">
                     <OrderScheduledDeliveryCell order={o} />
                   </td>
@@ -489,6 +526,8 @@ export function AdminOrdersPage() {
                 <StatusBadge status={o.status} />
               </div>
               <p className="mt-2 text-sm font-medium text-slate-700">Customer: {o.contactPerson}</p>
+              <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Created by</p>
+              <OrderCreatedByCell order={o} />
               <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
               <div className="text-sm text-slate-800">
                 <OrderScheduledDeliveryCell order={o} />

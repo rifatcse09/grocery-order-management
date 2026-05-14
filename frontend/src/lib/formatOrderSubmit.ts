@@ -1,15 +1,14 @@
 import type { Order } from "../types";
+import { formatDateDdMmYyyyOrDash, formatDateTimeDdMmYyyy } from "./formatDisplayDate";
 
 /** Shown in admin/moderator lists when the customer submitted the order (not draft). */
 export function formatOrderSubmittedAt(order: Order): string {
   if (order.status === "draft") return "—";
-  if (order.submittedAt) {
-    const d = new Date(order.submittedAt);
-    if (!Number.isNaN(d.getTime())) {
-      return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-    }
+  if (order.submittedAt?.trim()) {
+    const t = formatDateTimeDdMmYyyy(order.submittedAt);
+    if (t) return t;
   }
-  return order.orderDate || "—";
+  return formatDateDdMmYyyyOrDash(order.orderDate);
 }
 
 /** Saved timestamp shown in lists; falls back to orderDate on old rows. */
@@ -17,6 +16,6 @@ export function formatOrderSavedAt(order: Order): string {
   const source = order.createdAt || order.orderDate;
   if (!source) return "—";
   const d = new Date(source);
-  if (Number.isNaN(d.getTime())) return source;
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (Number.isNaN(d.getTime())) return formatDateDdMmYyyyOrDash(source);
+  return formatDateTimeDdMmYyyy(source);
 }

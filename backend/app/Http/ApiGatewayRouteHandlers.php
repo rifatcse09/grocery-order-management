@@ -591,47 +591,114 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
 
 if ($path === '/api/v1/orders' && $method === 'GET') {
     $user = require_auth();
+    $joinCreator = table_has_column('orders', 'created_by');
+    if ($joinCreator) {
+        $selectCols = 'o.*, cu.name AS created_by_user_name, cu.role AS created_by_user_role';
+        $from = 'orders o LEFT JOIN users cu ON cu.id = o.created_by';
+        $p = 'o.';
+        $del = order_not_deleted_sql('o');
+    } else {
+        $selectCols = '*';
+        $from = 'orders';
+        $p = '';
+        $del = order_not_deleted_sql('');
+    }
     if ($user['role'] === 'user') {
-        $del = order_not_deleted_sql();
-        $stmt = db()->prepare("SELECT * FROM orders WHERE owner_id = :uid AND is_active = true AND {$del} ORDER BY id DESC");
+        $stmt = db()->prepare("SELECT {$selectCols} FROM {$from} WHERE {$p}owner_id = :uid AND {$p}is_active = true AND {$del} ORDER BY {$p}id DESC");
         $stmt->execute(['uid' => $user['id']]);
     } else {
         $incDeleted = isset($_GET['includeDeleted']) && (string) $_GET['includeDeleted'] === '1' && in_array($user['role'], ['admin', 'master_admin'], true);
         if ($incDeleted) {
-            $stmt = db()->query('SELECT * FROM orders WHERE is_active = true ORDER BY id DESC');
+            $stmt = db()->query("SELECT {$selectCols} FROM {$from} WHERE {$p}is_active = true ORDER BY {$p}id DESC");
         } else {
-            $del = order_not_deleted_sql();
-            $stmt = db()->query("SELECT * FROM orders WHERE is_active = true AND {$del} ORDER BY id DESC");
+            $stmt = db()->query("SELECT {$selectCols} FROM {$from} WHERE {$p}is_active = true AND {$del} ORDER BY {$p}id DESC");
         }
     }
     $rows = $stmt->fetchAll();
     json_response(200, ['data' => array_map('read_order', $rows)]);
 }
 
+if ($path === '/api/v1/staff/customer-accounts' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['moderator', 'admin', 'master_admin']);
+    $rows = db()->query("SELECT * FROM users WHERE role = 'user' AND is_active = true ORDER BY name ASC")->fetchAll();
+    json_response(200, ['data' => array_map('public_user', $rows)]);
+}
+
 if ($path === '/api/v1/orders' && $method === 'POST') {
     $user = require_auth();
-    require_role($user, ['user']);
     $in = json_input();
+    $role = (string) ($user['role'] ?? '');
+    if (in_array($role, ['moderator', 'admin', 'master_admin'], true)) {
+        $ownerRaw = $in['ownerId'] ?? $in['owner_id'] ?? null;
+        $ownerId = is_numeric($ownerRaw) ? (int) $ownerRaw : 0;
+        if ($ownerId <= 0) {
+            json_response(422, ['message' => 'ownerId is required when staff create an order for a customer.']);
+        }
+        $ou = db()->prepare("SELECT id, role FROM users WHERE id = :id AND is_active = true LIMIT 1");
+        $ou->execute(['id' => $ownerId]);
+        $ownerRow = $ou->fetch();
+        if (! $ownerRow || (string) ($ownerRow['role'] ?? '') !== 'user') {
+            json_response(422, ['message' => 'ownerId must be an active customer (user) account.']);
+        }
+        $ownerUserId = $ownerId;
+        $orderNoIn = trim((string) ($in['orderNo'] ?? $in['order_no'] ?? ''));
+        if ($orderNoIn !== '') {
+            if (strlen($orderNoIn) > 80) {
+                json_response(422, ['message' => 'orderNo is too long.']);
+            }
+            $dup = db()->prepare('SELECT 1 FROM orders WHERE order_no = :n LIMIT 1');
+            $dup->execute(['n' => $orderNoIn]);
+            if ($dup->fetch()) {
+                json_response(409, ['message' => 'An order with this order number already exists.']);
+            }
+            $orderNo = $orderNoIn;
+        } else {
+            $orderNo = 'ORD-' . date('Ymd') . '-' . random_int(1000, 9999);
+        }
+    } else {
+        require_role($user, ['user']);
+        $ownerUserId = (int) $user['id'];
+        $orderNo = 'ORD-' . date('Ymd') . '-' . random_int(1000, 9999);
+    }
     $deliveryDate = (string)($in['deliveryDate'] ?? date('Y-m-d'));
     [$startDate, $startTime, $window] = delivery_start_parts($deliveryDate, (string)($in['deliveryTime'] ?? ''));
     $deliveryTs = date('c', strtotime($startDate . ' ' . $startTime));
-    $orderNo = 'ORD-' . date('Ymd') . '-' . random_int(1000, 9999);
 
     $signature = array_key_exists('signatureDataUrl', $in) ? persist_signature($in['signatureDataUrl']) : null;
-    $q = db()->prepare('INSERT INTO orders (owner_id, order_no, order_date, delivery_datetime, delivery_time_window, status, billing_address, delivery_address, contact_person, phone, signature_data_url) VALUES (:owner, :order_no, :order_date, :delivery, :delivery_window, :status, :billing, :delivery_addr, :contact, :phone, :signature)');
-    $q->execute([
-        'owner' => $user['id'],
-        'order_no' => $orderNo,
-        'order_date' => (string)($in['orderDate'] ?? date('Y-m-d')),
-        'delivery' => $deliveryTs,
-        'delivery_window' => $window,
-        'status' => (string)($in['status'] ?? 'draft'),
-        'billing' => (string)($in['billingAddress'] ?? ''),
-        'delivery_addr' => (string)($in['deliveryAddress'] ?? ''),
-        'contact' => (string)($in['contactPerson'] ?? $user['name']),
-        'phone' => (string)($in['phone'] ?? $user['phone']),
-        'signature' => $signature,
-    ]);
+    $creatorId = (int) $user['id'];
+    if (table_has_column('orders', 'created_by')) {
+        $q = db()->prepare('INSERT INTO orders (owner_id, created_by, order_no, order_date, delivery_datetime, delivery_time_window, status, billing_address, delivery_address, contact_person, phone, signature_data_url) VALUES (:owner, :cby, :order_no, :order_date, :delivery, :delivery_window, :status, :billing, :delivery_addr, :contact, :phone, :signature)');
+        $q->execute([
+            'owner' => $ownerUserId,
+            'cby' => $creatorId,
+            'order_no' => $orderNo,
+            'order_date' => (string)($in['orderDate'] ?? date('Y-m-d')),
+            'delivery' => $deliveryTs,
+            'delivery_window' => $window,
+            'status' => (string)($in['status'] ?? 'draft'),
+            'billing' => (string)($in['billingAddress'] ?? ''),
+            'delivery_addr' => (string)($in['deliveryAddress'] ?? ''),
+            'contact' => (string)($in['contactPerson'] ?? $user['name']),
+            'phone' => (string)($in['phone'] ?? $user['phone']),
+            'signature' => $signature,
+        ]);
+    } else {
+        $q = db()->prepare('INSERT INTO orders (owner_id, order_no, order_date, delivery_datetime, delivery_time_window, status, billing_address, delivery_address, contact_person, phone, signature_data_url) VALUES (:owner, :order_no, :order_date, :delivery, :delivery_window, :status, :billing, :delivery_addr, :contact, :phone, :signature)');
+        $q->execute([
+            'owner' => $ownerUserId,
+            'order_no' => $orderNo,
+            'order_date' => (string)($in['orderDate'] ?? date('Y-m-d')),
+            'delivery' => $deliveryTs,
+            'delivery_window' => $window,
+            'status' => (string)($in['status'] ?? 'draft'),
+            'billing' => (string)($in['billingAddress'] ?? ''),
+            'delivery_addr' => (string)($in['deliveryAddress'] ?? ''),
+            'contact' => (string)($in['contactPerson'] ?? $user['name']),
+            'phone' => (string)($in['phone'] ?? $user['phone']),
+            'signature' => $signature,
+        ]);
+    }
     $newOrderId = (int)db()->lastInsertId();
     replace_order_lines($newOrderId, is_array($in['lines'] ?? null) ? $in['lines'] : [], $user);
     $getCreated = db()->prepare('SELECT * FROM orders WHERE id = :id LIMIT 1');
@@ -682,20 +749,30 @@ if (preg_match('#^/api/v1/orders/(\d+)$#', $path, $m) === 1 && $method === 'PUT'
         'signature' => $signature,
     ]);
     if (array_key_exists('lines', $in) && is_array($in['lines'])) {
-        try {
-            replace_order_lines($orderId, $in['lines'], $user);
-        } catch (Throwable $e) {
-            $em = $e->getMessage();
-            $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not save order lines.';
-            json_response(500, ['message' => $public]);
+        $linesReplaced = false;
+        $roleForLines = (string)($user['role'] ?? '');
+        $billingFinal = order_has_invoice_type($orderId, 'billing');
+        if ($roleForLines === 'moderator' && $billingFinal) {
+            // Moderators may adjust purchase costs only before customer billing is issued.
+        } else {
+            try {
+                replace_order_lines($orderId, $in['lines'], $user);
+                $linesReplaced = true;
+            } catch (Throwable $e) {
+                $em = $e->getMessage();
+                $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not save order lines.';
+                json_response(500, ['message' => $public]);
+            }
         }
+    } else {
+        $linesReplaced = false;
     }
     $get->execute(['id' => $orderId]);
     $after = $get->fetch();
     if (
         $after
+        && !empty($linesReplaced)
         && in_array((string)($user['role'] ?? ''), ['admin', 'moderator', 'master_admin'], true)
-        && array_key_exists('lines', $in) && is_array($in['lines'])
     ) {
         if (order_has_invoice_type($orderId, 'purchase')) {
             sync_latest_purchase_invoice_from_order_lines($orderId);
@@ -809,6 +886,10 @@ if (preg_match('#^/api/v1/orders/(\d+)/challan$#', $path, $m) === 1 && $method =
     $get->execute(['id' => $orderId]);
     $order = $get->fetch();
     if (!$order) json_response(404, ['message' => 'Order not found']);
+    $lines = read_order_lines($orderId);
+    if (! order_lines_ready_for_challan($lines)) {
+        json_response(422, ['message' => 'Challan requires a valid quantity on every line (kg and/or grams, or pieces only — not both). Add at least one line item.']);
+    }
     $inCh = json_input();
     $regenChallan = !empty($inCh['regenerate']);
     $existingStmt = db()->prepare('SELECT id FROM challans WHERE order_id = :order ORDER BY id DESC LIMIT 1');
@@ -870,21 +951,20 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
     if (!$order) json_response(404, ['message' => 'Order not found']);
     $inPur = json_input();
     $regenPur = !empty($inPur['regenerate']);
-    if (order_has_invoice_type($orderId, 'purchase')) {
-        if ($regenPur && in_array($user['role'], ['admin', 'master_admin'], true)) {
-            $latestPur = order_latest_invoice_row($orderId, 'purchase');
-            if ($latestPur) {
-                try {
-                    void_invoice_and_reverse_ledger((int)$latestPur['id'], (int)$user['id']);
-                } catch (Throwable $e) {
-                    $em = $e->getMessage();
-                    $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous purchase invoice.';
-                    json_response(500, ['message' => $public]);
-                }
-            }
-        } else {
+    $hadActivePurchase = order_has_invoice_type($orderId, 'purchase');
+    $mayRegeneratePurchase = false;
+    $latestPurBefore = null;
+    if ($hadActivePurchase) {
+        $role = (string)($user['role'] ?? '');
+        $billingLocksPurchase = order_has_invoice_type($orderId, 'billing');
+        $mayRegeneratePurchase = $regenPur && (
+            in_array($role, ['admin', 'master_admin'], true)
+            || ($role === 'moderator' && ! $billingLocksPurchase)
+        );
+        if (! $mayRegeneratePurchase) {
             json_response(409, ['message' => 'Purchase invoice already exists for this order.']);
         }
+        $latestPurBefore = order_latest_invoice_row($orderId, 'purchase');
     }
     $lines = read_order_lines($orderId);
     if ($lines === []) {
@@ -901,6 +981,22 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
     }
     $pack = purchase_invoice_totals_snapshot($lines);
     $subtotal = $pack['subtotal'];
+    if ($hadActivePurchase && $mayRegeneratePurchase && $latestPurBefore !== null
+        && invoice_totals_effectively_equal((float) ($latestPurBefore['grand_total'] ?? 0), $subtotal)) {
+        json_response(200, [
+            'data' => $latestPurBefore,
+            'message' => 'Purchase invoice total unchanged; existing invoice kept (no void or duplicate ledger entries).',
+        ]);
+    }
+    if ($hadActivePurchase && $mayRegeneratePurchase && $latestPurBefore !== null) {
+        try {
+            void_invoice_and_reverse_ledger((int) $latestPurBefore['id'], (int) $user['id']);
+        } catch (Throwable $e) {
+            $em = $e->getMessage();
+            $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous purchase invoice.';
+            json_response(500, ['message' => $public]);
+        }
+    }
     $verStmt = db()->prepare("SELECT COALESCE(MAX(version_no), 0) AS v FROM invoices WHERE order_id = :order AND type = 'purchase'");
     $verStmt->execute(['order' => $orderId]);
     $version = (int)$verStmt->fetch()['v'] + 1;
@@ -928,6 +1024,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/purchase-invoice$#', $path, $m) === 1 && 
         'orderNo' => (string)($order['order_no'] ?? ''),
         'invoiceId' => (int)$invoice['id'],
     ]);
+    sync_order_invoice_generated_at_columns($orderId);
     json_response(201, ['data' => $invoice]);
 }
 
@@ -945,28 +1042,19 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
     $in = json_input();
     $regenBill = !empty($in['regenerate']);
     $orderStatusForBill = (string)$orderMetaRow['status'];
-    if (
-        $orderStatusForBill !== 'completed'
-        && !($regenBill && in_array($user['role'], ['admin', 'master_admin'], true) && $orderStatusForBill === 'invoiced')
-    ) {
-        json_response(422, ['message' => 'Mark delivery complete before generating the customer billing invoice.']);
+    if (!$regenBill) {
+        if (!in_array($orderStatusForBill, ['submitted', 'processing', 'completed'], true)) {
+            json_response(422, ['message' => 'Customer billing invoice can only be generated for submitted, in-progress, or delivered orders.']);
+        }
+    } elseif ($orderStatusForBill !== 'invoiced') {
+        json_response(422, ['message' => 'Regenerate billing invoice is only available when the order is in invoiced status.']);
     }
     $markupPercent = (float)($in['markupPercent'] ?? 0);
     $markupByCategory = is_array($in['markupByCategory'] ?? null) ? $in['markupByCategory'] : [];
     $markupByItem = is_array($in['markupByItem'] ?? null) ? $in['markupByItem'] : [];
-    if (order_has_invoice_type($orderId, 'billing')) {
-        if ($regenBill && in_array($user['role'], ['admin', 'master_admin'], true)) {
-            $latestBill = order_latest_invoice_row($orderId, 'billing');
-            if ($latestBill) {
-                try {
-                    void_invoice_and_reverse_ledger((int)$latestBill['id'], (int)$user['id']);
-                } catch (Throwable $e) {
-                    $em = $e->getMessage();
-                    $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous billing invoice.';
-                    json_response(500, ['message' => $public]);
-                }
-            }
-        } else {
+    $hadActiveBilling = order_has_invoice_type($orderId, 'billing');
+    if ($hadActiveBilling) {
+        if (! ($regenBill && in_array($user['role'], ['admin', 'master_admin'], true))) {
             json_response(409, ['message' => 'Billing invoice already exists for this order.']);
         }
     }
@@ -981,6 +1069,25 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
             updated_at = NOW()
         WHERE id = :id AND order_id = :order_id
     ');
+    if ($hadActiveBilling && $regenBill && in_array($user['role'], ['admin', 'master_admin'], true)) {
+        $latestBillBefore = order_latest_invoice_row($orderId, 'billing');
+        if ($latestBillBefore) {
+            $previewGrand = billing_invoice_preview_grand_total($lines, $markupPercent, $markupByCategory, $markupByItem);
+            if (invoice_totals_effectively_equal((float) ($latestBillBefore['grand_total'] ?? 0), $previewGrand)) {
+                json_response(200, [
+                    'data' => $latestBillBefore,
+                    'message' => 'Billing invoice total unchanged; existing invoice kept (no void or duplicate ledger entries).',
+                ]);
+            }
+            try {
+                void_invoice_and_reverse_ledger((int) $latestBillBefore['id'], (int) $user['id']);
+            } catch (Throwable $e) {
+                $em = $e->getMessage();
+                $public = (app_debug() || str_contains($em, 'Run database migrations')) ? $em : 'Could not void previous billing invoice.';
+                json_response(500, ['message' => $public]);
+            }
+        }
+    }
     $lineCategoryCodes = [];
     foreach ($lines as $line) {
         $lineCategory = (string)($line['categoryId'] ?? '');
@@ -1090,6 +1197,7 @@ if (preg_match('#^/api/v1/orders/(\d+)/billing-invoice$#', $path, $m) === 1 && $
         'orderNo' => $orderNoForLog,
         'invoiceId' => (int)$invoice['id'],
     ]);
+    sync_order_invoice_generated_at_columns($orderId);
     json_response(201, ['data' => $invoice]);
 }
 

@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { ArrowLeft } from "lucide-react";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { toBanglaDigits } from "../lib/banglaNumerals";
+import { formatDateTimeDdMmYyyy } from "../lib/formatDisplayDate";
 import { useOrders } from "../context/OrdersContext";
 import { hasPurchaseInvoice } from "../lib/invoiceFlow";
 
@@ -14,9 +15,7 @@ export function PurchaseInvoiceDetailPage() {
   const isAdmin = location.pathname.startsWith("/admin/");
   const backTo = isAdmin ? "/admin/purchase-invoices" : "/moderator/orders";
   const deliveredAtText = order?.deliveredAt
-    ? toBanglaDigits(
-        new Date(order.deliveredAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
-      )
+    ? toBanglaDigits(formatDateTimeDdMmYyyy(order.deliveredAt))
     : "Not marked delivered yet";
 
   useEffect(() => {

@@ -21,6 +21,7 @@ import {
   planPaymentIncreaseChunks,
   totalPaymentRoomOnOrders,
 } from "../lib/statementPaymentAllocation";
+import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import type { Order } from "../types";
 
 type Range = "all" | "7d" | "30d" | "90d";
@@ -97,11 +98,13 @@ export function AdminPurchasePendingBillsPage() {
       .filter((o) => {
         if (customer !== "all" && o.contactPerson !== customer) return false;
         if (range === "all") return true;
-        const d = parseIso(o.orderDate);
+        const rangeAnchor = (o.purchaseInvoiceCreatedAt ?? "").trim() || o.orderDate;
+        const d = parseIso(rangeAnchor);
         return Boolean(d && d.getTime() >= from.getTime());
       })
       .map((o) => {
-        const issue = parseIso(o.orderDate) ?? new Date();
+        const invoiceAt = (o.purchaseInvoiceCreatedAt ?? "").trim();
+        const issue = parseIso(invoiceAt || o.orderDate) ?? new Date();
         const due = new Date(issue);
         due.setDate(due.getDate() + 7);
         const diff = Math.floor((now.getTime() - due.getTime()) / 86400000);
@@ -116,6 +119,7 @@ export function AdminPurchasePendingBillsPage() {
           order: o,
           orderNo: o.orderNo,
           customer: o.contactPerson || "Unknown",
+          invoiceDateDisplay: formatDateDdMmYyyyOrDash(invoiceAt || ""),
           issue,
           due,
           cap,
@@ -365,12 +369,14 @@ export function AdminPurchasePendingBillsPage() {
         </div>
 
         <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
-          <table className="min-w-[860px] w-full text-left text-base">
+          <table className="min-w-[1040px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
                 <th className="px-3 py-2">Invoice / Order</th>
                 <th className="px-3 py-2">Customer</th>
-                <th className="px-3 py-2">Issue date</th>
+                <th className="px-3 py-2 whitespace-nowrap">Invoice date</th>
+                <th className="px-3 py-2 whitespace-nowrap">Order date</th>
+                <th className="px-3 py-2 whitespace-nowrap">Delivery date</th>
                 <th className="px-3 py-2">Due date</th>
                 <th className="px-3 py-2 text-right">Invoice</th>
                 <th className="px-3 py-2 text-right">Net paid</th>
@@ -384,8 +390,10 @@ export function AdminPurchasePendingBillsPage() {
                 <tr key={r.id} className={`border-t border-border ${r.isOverdue ? "bg-red-50" : "bg-card"}`}>
                   <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>
                   <td className="px-3 py-3.5 font-medium">{r.customer}</td>
-                  <td className="px-3 py-3.5">{formatIso(r.issue)}</td>
-                  <td className="px-3 py-3.5">{formatIso(r.due)}</td>
+                  <td className="px-3 py-3.5 whitespace-nowrap">{r.invoiceDateDisplay}</td>
+                  <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.orderDate)}</td>
+                  <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.deliveryDate)}</td>
+                  <td className="px-3 py-3.5">{formatDateDdMmYyyy(formatIso(r.due))}</td>
                   <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.cap).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.netPaid).toLocaleString("en-US")}</td>
                   <td className="px-3 py-3.5 text-right font-semibold tabular-nums">

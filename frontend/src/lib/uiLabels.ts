@@ -8,10 +8,16 @@ export const COL = {
   item: "Item (বস্তু)",
   kg: "Kg (কেজি)",
   gram: "g (গ্রাম)",
-  piece: "Pcs (পিচ)",
+  piece: "Pcs (পিস)",
   unitPrice: "Unit price",
   lineTotal: "Items total",
 } as const;
+
+/** Presentation only — never show DB `categories.code` / `catalog_items.code` to users. */
+export const UNKNOWN_CATEGORY_LABEL = "Unknown category";
+export const UNKNOWN_ITEM_LABEL = "Unknown item";
+export const UNCATEGORIZED_LABEL = "Uncategorized";
+export const UNNAMED_CATEGORY_LABEL = "Unnamed category";
 
 /** Quantity string for tables — English units. */
 export function formatQtyLine(kg: string, gram: string, piece: string): string {

@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -10,7 +10,12 @@ import {
   Truck,
   User,
 } from "lucide-react";
-import { OrderLinesEditor } from "../components/OrderLinesEditor";
+import { OrderLinesEditor, type OrderLinesEditorHandle } from "../components/OrderLinesEditor";
+import {
+  SearchableSelect,
+  categoryOptionsFromCatalog,
+  itemOptionsFromCatalogItems,
+} from "../components/SearchableSelect";
 import { StatusBadge } from "../components/StatusBadge";
 import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
@@ -21,8 +26,14 @@ import {
   orderHasPricingData,
 } from "../lib/orderNotifications";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
-import { hasPurchaseInvoice, linesReadyForPurchaseInvoice } from "../lib/invoiceFlow";
+import {
+  hasBillingInvoice,
+  hasPurchaseInvoice,
+  linesReadyForChallan,
+  linesReadyForPurchaseInvoice,
+} from "../lib/invoiceFlow";
 import { apiEnabled, apiGenerateChallan, apiGeneratePurchaseInvoice, apiMarkOrderDelivered, apiUpdateOrder } from "../lib/api";
 import type { Order } from "../types";
 
@@ -47,10 +58,18 @@ export function ModeratorOrderDetailPage() {
   const [purchaseBusy, setPurchaseBusy] = useState(false);
   const [markDeliverBusy, setMarkDeliverBusy] = useState(false);
   const [lineItemError, setLineItemError] = useState("");
+  const linesEditorRef = useRef<OrderLinesEditorHandle>(null);
+  const [purchaseLinesReady, setPurchaseLinesReady] = useState(false);
+  const onPurchaseLinesReadyChange = useCallback((ready: boolean) => {
+    setPurchaseLinesReady(ready);
+  }, []);
+  const challanLinesReady = useMemo(() => linesReadyForChallan(order?.lines ?? []), [order?.lines]);
   const itemsOf = useMemo(() => {
     const c = categories.find((x) => x.id === itemCat);
     return c?.items ?? [];
   }, [categories, itemCat]);
+  const categorySelectOptions = useMemo(() => categoryOptionsFromCatalog(categories), [categories]);
+  const itemSelectOptions = useMemo(() => itemOptionsFromCatalogItems(itemsOf), [itemsOf]);
   useEffect(() => {
     if (base) setOrder(base);
   }, [base]);
@@ -58,11 +77,6 @@ export function ModeratorOrderDetailPage() {
   useEffect(() => {
     if (order?.id) markModeratorSeenOrder(order.id);
   }, [order?.id]);
-
-  const purchaseLinesReady = useMemo(
-    () => linesReadyForPurchaseInvoice(order?.lines ?? []),
-    [order?.lines],
-  );
 
   if (!base || !order) {
     return (
@@ -88,6 +102,12 @@ export function ModeratorOrderDetailPage() {
 
   const genChallan = async () => {
     if (challanBusy || order.challanGenerated) return;
+    if (!challanLinesReady) {
+      setWorkflowError(
+        "Challan needs a valid quantity on every line: kg and/or grams, or pieces only (not both). Add line items if the list is empty.",
+      );
+      return;
+    }
     setWorkflowError("");
     setWorkflowSuccess("");
     setChallanBusy(true);
@@ -111,9 +131,15 @@ export function ModeratorOrderDetailPage() {
     }
   };
 
-  const markDelivered = async () => {
-    if (purchaseBusy || hasPurchaseInvoice(order)) return;
-    if (!linesReadyForPurchaseInvoice(order.lines)) {
+  const moderatorCanRegeneratePurchaseInvoice =
+    hasPurchaseInvoice(order) && !hasBillingInvoice(order) && order.status !== "invoiced";
+
+  const generatePurchaseInvoice = async () => {
+    if (purchaseBusy) return;
+    if (hasPurchaseInvoice(order) && !moderatorCanRegeneratePurchaseInvoice) return;
+    const mergedLines = linesEditorRef.current?.mergeCostUnitDraftsIntoLines() ?? order.lines;
+    const orderForInvoice = { ...order, lines: mergedLines };
+    if (!linesReadyForPurchaseInvoice(mergedLines)) {
       setWorkflowError(
         "Purchase invoice needs a cost amount on every item: valid quantity (kg/g or pcs), cost unit price greater than zero, and a positive items total.",
       );
@@ -122,19 +148,22 @@ export function ModeratorOrderDetailPage() {
     setWorkflowError("");
     setWorkflowSuccess("");
     setPurchaseBusy(true);
+    const regen = moderatorCanRegeneratePurchaseInvoice;
     try {
       if (apiEnabled()) {
-        const saved = await apiUpdateOrder(order.id, order);
+        const saved = await apiUpdateOrder(orderForInvoice.id, orderForInvoice);
         setOrder(saved);
-        await apiGeneratePurchaseInvoice(saved.id);
+        await apiGeneratePurchaseInvoice(saved.id, regen ? { regenerate: true } : undefined);
         await loadOrders();
         flagOrderForAdminReview(saved.id);
-        setWorkflowSuccess("Purchase invoice generated successfully.");
+        setWorkflowSuccess(
+          regen ? "Purchase invoice regenerated with your updated costs." : "Purchase invoice generated successfully.",
+        );
         navigate(`/moderator/purchase-invoices/${saved.id}`);
         return;
       }
       const next: Order = {
-        ...order,
+        ...orderForInvoice,
         status: "under_review",
         purchaseInvoiceGenerated: true,
         purchaseInvoiceGeneratedBy: "moderator" as const,
@@ -142,8 +171,10 @@ export function ModeratorOrderDetailPage() {
       setOrder(next);
       upsertOrder(next);
       flagOrderForAdminReview(order.id);
-      setWorkflowSuccess("Purchase invoice generated successfully.");
-      navigate(`/moderator/purchase-invoices/${order.id}`);
+      setWorkflowSuccess(
+        regen ? "Purchase invoice regenerated with your updated costs." : "Purchase invoice generated successfully.",
+      );
+      navigate(`/moderator/purchase-invoices/${orderForInvoice.id}`);
     } catch (e) {
       setWorkflowError(e instanceof Error ? e.message : "Failed to generate purchase invoice.");
     } finally {
@@ -181,8 +212,8 @@ export function ModeratorOrderDetailPage() {
   const lineCount = order.lines.length;
   const deliveredOrInvoiced = order.status === "delivered" || order.status === "invoiced";
   const quantityLocked = deliveredOrInvoiced;
-  // Moderator can keep editing cost prices even after admin billing invoice.
-  const pricingLocked = false;
+  /** Supplier cost prices stay editable until admin issues the customer billing invoice. */
+  const pricingLocked = hasBillingInvoice(order) || order.status === "invoiced";
   const subtotal = order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0);
 
   const actionBtn =
@@ -231,13 +262,23 @@ export function ModeratorOrderDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           Order list
         </Link>
-        <button
-          type="button"
-          onClick={save}
-          className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900"
-        >
-          Save changes
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {apiEnabled() ? (
+            <Link
+              to={`/moderator/orders/${order.id}/bookkeeping`}
+              className="rounded-xl border border-primary/30 bg-white px-3 py-2 text-sm font-semibold text-primary hover:bg-slate-50"
+            >
+              Bookkeeping (dates & full form)
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            onClick={save}
+            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900"
+          >
+            Save changes
+          </button>
+        </div>
       </div>
 
       {/* Hero — aligned with admin order review */}
@@ -260,7 +301,7 @@ export function ModeratorOrderDetailPage() {
               {order.challanGenerated ? (
                 <span className="rounded-full bg-emerald-800 px-3 py-1 text-white">Challan</span>
               ) : null}
-              {order.status === "delivered" ? (
+              {order.status === "delivered" && hasPurchaseInvoice(order) ? (
                 <span className="rounded-full bg-amber-800 px-3 py-1 text-amber-50">Purchase invoice sent to admin</span>
               ) : null}
             </div>
@@ -291,9 +332,9 @@ export function ModeratorOrderDetailPage() {
           Order details
         </h2>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <DetailTile icon={Calendar} label="Order date" value={order.orderDate} />
+          <DetailTile icon={Calendar} label="Order date" value={formatDateDdMmYyyyOrDash(order.orderDate)} />
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
-          <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
+          <DetailTile icon={Calendar} label="Delivery date" value={formatDateDdMmYyyyOrDash(order.deliveryDate)} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
           {order.status === "delivered" || order.status === "invoiced" ? (
@@ -360,6 +401,17 @@ export function ModeratorOrderDetailPage() {
             </button>
           </div>
           {lineItemError ? <p className="mb-3 text-xs font-semibold text-red-700">{lineItemError}</p> : null}
+          {pricingLocked ? (
+            <p className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800">
+              Purchase (supplier) costs are <strong>locked</strong> because the customer billing invoice has been
+              generated. Contact an administrator if a correction is required.
+            </p>
+          ) : (
+            <p className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-950">
+              You can <strong>update supplier cost prices</strong> here until an administrator generates the customer
+              billing invoice{hasPurchaseInvoice(order) ? " (purchase invoice totals will stay in sync when you save)" : ""}.
+            </p>
+          )}
           {!hasPurchaseInvoice(order) ? (
             <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
               <strong>Cost required for purchase invoice:</strong> each item needs a{" "}
@@ -367,15 +419,23 @@ export function ModeratorOrderDetailPage() {
               positive{" "}
               <strong>items total</strong>. The API blocks generating a purchase invoice without full cost data.
             </p>
+          ) : !hasBillingInvoice(order) ? (
+            <p className="mb-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-950">
+              A purchase invoice already exists. After you change supplier costs, use{" "}
+              <strong>Regenerate purchase invoice</strong> so admin sees updated totals (not available after a customer
+              billing invoice is created).
+            </p>
           ) : null}
           <OrderLinesEditor
+            ref={linesEditorRef}
             lines={order.lines}
             categories={categories}
             showPricing
             linesLocked={false}
             quantityLocked={quantityLocked}
             pricingLocked={pricingLocked}
-            onChange={(lines) => setOrder({ ...order, lines })}
+            onPurchaseLinesReadyChange={onPurchaseLinesReadyChange}
+            onChange={(nextLines) => setOrder((o) => (o ? { ...o, lines: nextLines } : o))}
           />
         </div>
       </section>
@@ -384,8 +444,9 @@ export function ModeratorOrderDetailPage() {
       <section className="rounded-3xl border border-border bg-card p-5 shadow-card sm:p-6">
         <h2 className="text-base font-bold text-slate-900">Workflow</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Challan can be created without prices; <strong>purchase invoice always requires cost amounts</strong> on
-          every item before it can be generated.
+          Challan can be created <strong>without cost prices</strong>, but every line needs a valid quantity (kg/g or
+          pieces only). <strong>Purchase invoice always requires cost amounts</strong> on every item. You may generate
+          the purchase invoice before or after marking delivery (not after the order is fully invoiced to the customer).
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           <button
@@ -393,29 +454,41 @@ export function ModeratorOrderDetailPage() {
             onClick={() => {
               void genChallan();
             }}
-            disabled={Boolean(challanBusy || order.challanGenerated)}
+            disabled={Boolean(challanBusy || order.challanGenerated || !challanLinesReady)}
+            title={
+              !challanLinesReady
+                ? "Enter kg/g or pieces on every line before generating a challan."
+                : undefined
+            }
             className={actionBtn}
           >
             {challanBusy ? "Generating…" : "Generate challan (no prices)"}
           </button>
           <button
             type="button"
-            onClick={() => void markDelivered()}
+            onClick={() => void generatePurchaseInvoice()}
             disabled={Boolean(
               purchaseBusy ||
-                hasPurchaseInvoice(order) ||
+                (hasPurchaseInvoice(order) && !moderatorCanRegeneratePurchaseInvoice) ||
                 !purchaseLinesReady ||
-                order.status === "delivered" ||
                 order.status === "invoiced",
             )}
             title={
-              !hasPurchaseInvoice(order) && !purchaseLinesReady
+              !purchaseLinesReady
                 ? "Complete quantity and cost unit in the table above for each item."
-                : undefined
+                : hasPurchaseInvoice(order) && !moderatorCanRegeneratePurchaseInvoice
+                  ? "Purchase invoice cannot be changed after a customer billing invoice exists. Contact an administrator."
+                  : undefined
             }
             className={actionBtn}
           >
-            {purchaseBusy ? "Generating…" : "Generate purchase invoice"}
+            {purchaseBusy
+              ? moderatorCanRegeneratePurchaseInvoice
+                ? "Regenerating…"
+                : "Generating…"
+              : moderatorCanRegeneratePurchaseInvoice
+                ? "Regenerate purchase invoice"
+                : "Generate purchase invoice"}
           </button>
           <button
             type="button"
@@ -460,13 +533,16 @@ export function ModeratorOrderDetailPage() {
               </div>
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase text-slate-500">Add item</p>
-                <select className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" value={itemCat} onChange={(e) => setItemCat(e.target.value)}>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nameEn} ({c.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <SearchableSelect
+                    aria-label="Category for new catalog item"
+                    options={categorySelectOptions}
+                    value={itemCat}
+                    placeholder="Select category"
+                    searchPlaceholder="Search categories…"
+                    onChange={setItemCat}
+                  />
+                </div>
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Item name (Bangla)" value={itemBn} onChange={(e) => setItemBn(e.target.value)} />
                 <input className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Item name (English)" value={itemEn} onChange={(e) => setItemEn(e.target.value)} />
                 <button type="button" className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white" onClick={async () => {
@@ -494,35 +570,34 @@ export function ModeratorOrderDetailPage() {
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-xs text-slate-600">Category</label>
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={itemCat}
-                  onChange={(e) => {
-                    setItemCat(e.target.value);
-                    const c = categories.find((x) => x.id === e.target.value);
-                    setPickItem(c?.items[0]?.id ?? "");
-                  }}
-                >
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nameEn} ({c.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    aria-label="Category"
+                    options={categorySelectOptions}
+                    value={itemCat}
+                    placeholder="Select category"
+                    searchPlaceholder="Search categories…"
+                    onChange={(id) => {
+                      setItemCat(id);
+                      const c = categories.find((x) => x.id === id);
+                      setPickItem(c?.items[0]?.id ?? "");
+                    }}
+                  />
+                </div>
               </div>
               <div>
                 <label className="text-xs text-slate-600">Item</label>
-                <select
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
-                  value={pickItem}
-                  onChange={(e) => setPickItem(e.target.value)}
-                >
-                  {itemsOf.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.nameEn} ({i.nameBn})
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1">
+                  <SearchableSelect
+                    aria-label="Item"
+                    options={itemSelectOptions}
+                    value={pickItem}
+                    placeholder="Select item"
+                    searchPlaceholder="Search items…"
+                    emptyText={itemCat ? "No items in this category." : "Pick a category first."}
+                    onChange={setPickItem}
+                  />
+                </div>
               </div>
               <button
                 type="button"

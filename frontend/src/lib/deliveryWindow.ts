@@ -1,3 +1,5 @@
+import { formatDateDdMmYyyy } from "./formatDisplayDate";
+
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
@@ -6,7 +8,7 @@ function isIsoDateOrDateTime(value: string): boolean {
 }
 
 function formatDateLong(date: Date): string {
-  return date.toLocaleDateString(undefined, { dateStyle: "medium" });
+  return formatDateDdMmYyyy(date);
 }
 
 function formatTimeShort(rawTime: string): string {
@@ -97,4 +99,17 @@ export function formatDeliveryTimeOnly(input?: string): string {
   if (startDate && endDate) return startDate === endDate ? toTime(startDate) : `${toTime(startDate)} to ${toTime(endDate)}`;
   if (startDate || endDate) return toTime(startDate || endDate);
   return value;
+}
+
+/** Normalize stored `deliveryTime` to `HH:mm` for `<input type="time" />`. */
+export function toTimeInputValue(value?: string): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{2}:\d{2}$/.test(raw)) return raw;
+  const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (isoMatch) return isoMatch[2];
+  const rangeStartMatch = raw.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})\s*(?:to|–|—|-)\s*/i);
+  if (rangeStartMatch) return rangeStartMatch[2];
+  const anyTime = raw.match(/(\d{2}:\d{2})/);
+  return anyTime ? anyTime[1] : "";
 }

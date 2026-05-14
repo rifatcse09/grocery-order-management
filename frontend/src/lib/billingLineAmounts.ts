@@ -3,11 +3,15 @@ import type { OrderLine } from "../types";
 /**
  * Customer billing row: use persisted after-markup from DB when present,
  * otherwise purchase cost + category/global markup % (same as admin pricing table).
+ *
+ * @param opts.ignorePersistedBilling — When true (e.g. admin order line editor while markup is editable),
+ *   always derive unit/total from purchase cost × markup so changing markup % updates both columns together.
  */
 export function billedAmountsForLine(
   line: OrderLine,
   billingCategoryMarkups: Record<string, number>,
   globalMarkupPercent: number,
+  opts?: { ignorePersistedBilling?: boolean },
 ): { billedUnit: number; billedLine: number; pct: number } {
   const linePctRaw = line.markupPercent;
   const hasLinePct = linePctRaw != null && Number.isFinite(Number(linePctRaw));
@@ -18,7 +22,9 @@ export function billedAmountsForLine(
   const pct = linePct ?? fallbackPct;
 
   const storedLine = line.lineTotalAfterMarkup;
-  if (storedLine != null && Number.isFinite(Number(storedLine))) {
+  const usePersisted =
+    !opts?.ignorePersistedBilling && storedLine != null && Number.isFinite(Number(storedLine));
+  if (usePersisted) {
     const billedLine = Number(storedLine);
     const storedUnit = line.unitPriceAfterMarkup;
     const billedUnit =

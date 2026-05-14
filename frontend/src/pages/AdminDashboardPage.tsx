@@ -36,6 +36,12 @@ import { useOrders } from "../context/OrdersContext";
 import type { OrderStatus } from "../types";
 import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
 import { getCategoryColor } from "../lib/categoryColors";
+import {
+  UNCATEGORIZED_LABEL,
+  UNNAMED_CATEGORY_LABEL,
+  UNKNOWN_CATEGORY_LABEL,
+  UNKNOWN_ITEM_LABEL,
+} from "../lib/uiLabels";
 
 export function AdminDashboardPage() {
   const { orders } = useOrders();
@@ -62,7 +68,7 @@ export function AdminDashboardPage() {
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
     categories.forEach((c) => {
-      const label = c.nameEn || c.nameBn || prettifyCatalogCode(c.id, "category");
+      const label = c.nameEn || c.nameBn || UNNAMED_CATEGORY_LABEL;
       map.set(c.id, label);
     });
     return map;
@@ -219,7 +225,7 @@ export function AdminDashboardPage() {
           (parseFloat(l.gram || "0") || 0) / 1000 +
           (parseFloat(l.piece || "0") || 0);
         const prev = map.get(key) ?? {
-          name: l.itemNameEn || l.itemNameBn || prettifyCatalogCode(l.itemId, "Unknown item"),
+          name: l.itemNameEn || l.itemNameBn || UNKNOWN_ITEM_LABEL,
           orders: 0,
           qtyScore: 0,
           sales: 0,
@@ -305,7 +311,7 @@ export function AdminDashboardPage() {
 
     filteredOrders.forEach((o) => {
       o.lines.forEach((l) => {
-        const itemName = l.itemNameEn || l.itemNameBn || prettifyCatalogCode(l.itemId, "Unknown item");
+        const itemName = l.itemNameEn || l.itemNameBn || UNKNOWN_ITEM_LABEL;
         const categoryCode = l.categoryId || "uncategorized";
         const category = categoryDisplayName(categoryCode, categoryNameById);
         const key = `${categoryCode}::${itemName}`;
@@ -833,18 +839,9 @@ function startOfWeek(date: Date): Date {
 }
 
 function categoryDisplayName(code: string, categoryNameById: Map<string, string>): string {
-  if (!code) return "Uncategorized";
-  return categoryNameById.get(code) ?? prettifyCatalogCode(code, "category");
-}
-
-function prettifyCatalogCode(code: string, fallback: string): string {
-  const cleaned = code
-    .replace(/^custom-cat-/, "")
-    .replace(/^custom-/, "")
-    .replace(/-/g, " ")
-    .trim();
-  if (!cleaned) return fallback;
-  return cleaned.replace(/\b\w/g, (ch) => ch.toUpperCase());
+  if (!code) return UNCATEGORIZED_LABEL;
+  if (code === "uncategorized") return UNCATEGORIZED_LABEL;
+  return categoryNameById.get(code) ?? UNKNOWN_CATEGORY_LABEL;
 }
 
 function Filter({ label, children }: { label: string; children: ReactNode }) {

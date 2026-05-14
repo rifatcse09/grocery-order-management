@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
+import {
+  SearchableSelect,
+  categoryOptionsFromCatalog,
+} from "../components/SearchableSelect";
 import { useCatalog } from "../context/CatalogContext";
 import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
@@ -14,6 +18,12 @@ import {
   type CategoryMarkupHistoryEntry,
 } from "../lib/api";
 import { getCategoryColor } from "../lib/categoryColors";
+import {
+  markupPercentToInputString,
+  parseMarkupPercentInput,
+  roundMarkupPercent,
+} from "../lib/markupPercentInput";
+import { UNKNOWN_CATEGORY_LABEL } from "../lib/uiLabels";
 import { type CategoryDef, isAdministrationRole } from "../types";
 
 type CatalogView = "all" | "categories" | "products";
@@ -67,6 +77,8 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     { type: "category"; id: string; name: string } | { type: "item"; id: string; name: string } | null
   >(null);
   const [categoryMarkups, setCategoryMarkups] = useState<Record<string, number>>({});
+  /** Controlled text so users can type decimals (e.g. 7.25) without number-input quirks. */
+  const [categoryMarkupDrafts, setCategoryMarkupDrafts] = useState<Record<string, string>>({});
   const [markupHistory, setMarkupHistory] = useState<CategoryMarkupHistoryEntry[]>([]);
 
   useEffect(() => {
@@ -77,6 +89,7 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     () => [...categories].sort((a, b) => `${a.nameEn}${a.nameBn}`.localeCompare(`${b.nameEn}${b.nameBn}`)),
     [categories],
   );
+  const categoryOptionsForAddProduct = useMemo(() => categoryOptionsFromCatalog(sorted), [sorted]);
   const role = user?.role ?? "user";
   const canAddCategory = isAdministrationRole(role) || role === "moderator";
   const canAddItem = isAdministrationRole(role) || role === "moderator";
@@ -193,10 +206,22 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
       .then((res) => {
         setCategoryMarkups(res.settings);
         setMarkupHistory(res.history);
+        const drafts: Record<string, string> = {};
+        if (res.categories.length > 0) {
+          res.categories.forEach((row) => {
+            drafts[row.categoryId] = markupPercentToInputString(row.markupPercent);
+          });
+        } else {
+          Object.entries(res.settings).forEach(([id, pct]) => {
+            drafts[id] = markupPercentToInputString(pct);
+          });
+        }
+        setCategoryMarkupDrafts(drafts);
       })
       .catch(() => {
         setCategoryMarkups({});
         setMarkupHistory([]);
+        setCategoryMarkupDrafts({});
       });
   }, [role, categories]);
 
@@ -269,10 +294,11 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
     setPendingDelete({ type: "item", id, name: item?.nameEn ?? "this item" });
   };
 
-  const setCategoryMarkup = async (categoryId: string, value: string) => {
-    const pct = Number(value);
-    const safe = Number.isFinite(pct) && pct >= 0 ? pct : 0;
-    const prevPct = Number(categoryMarkups[categoryId] ?? 0);
+  const commitCategoryMarkup = async (categoryId: string) => {
+    const raw = categoryMarkupDrafts[categoryId] ?? "";
+    const safe = roundMarkupPercent(parseMarkupPercentInput(raw));
+    const prevPct = roundMarkupPercent(Number(categoryMarkups[categoryId] ?? 0));
+    setCategoryMarkupDrafts((prev) => ({ ...prev, [categoryId]: markupPercentToInputString(safe) }));
     if (prevPct === safe) return;
     if (!apiEnabled()) {
       setCategoryMarkups((prev) => ({ ...prev, [categoryId]: safe }));
@@ -284,8 +310,20 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
       const updated = await apiGetCategoryMarkupSettings();
       setCategoryMarkups(updated.settings);
       setMarkupHistory(updated.history);
+      const drafts: Record<string, string> = {};
+      if (updated.categories.length > 0) {
+        updated.categories.forEach((row) => {
+          drafts[row.categoryId] = markupPercentToInputString(row.markupPercent);
+        });
+      } else {
+        Object.entries(updated.settings).forEach(([id, pct]) => {
+          drafts[id] = markupPercentToInputString(pct);
+        });
+      }
+      setCategoryMarkupDrafts(drafts);
     } catch {
       setCategoryMarkups((prev) => ({ ...prev, [categoryId]: prevPct }));
+      setCategoryMarkupDrafts((prev) => ({ ...prev, [categoryId]: markupPercentToInputString(prevPct) }));
       setMessage("Could not save markup setting. Please try again.");
     }
   };
@@ -338,18 +376,16 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
         <section className="rounded-3xl border border-border bg-card p-5 shadow-card">
           <h2 className="text-base font-semibold text-slate-900">Add product/item</h2>
           <div className="mt-3 grid gap-3 sm:grid-cols-3">
-            <select
-              value={itemCat}
-              onChange={(e) => setItemCat(e.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            >
-              <option value="">Select category</option>
-              {sorted.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nameEn} ({c.nameBn})
-                </option>
-              ))}
-            </select>
+            <div>
+              <SearchableSelect
+                aria-label="Category for new product"
+                options={categoryOptionsForAddProduct}
+                value={itemCat}
+                placeholder="Select category"
+                searchPlaceholder="Search categories…"
+                onChange={setItemCat}
+              />
+            </div>
             <input
               value={itemBn}
               onChange={(e) => setItemBn(e.target.value)}
@@ -383,7 +419,8 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
         <section className="rounded-3xl border border-border bg-card p-5 shadow-card">
           <h2 className="text-base font-semibold text-slate-900">Billing markup settings (category-wise)</h2>
           <p className="mt-1 text-sm text-slate-600">
-            This markup % is added to purchase item prices when admin generates customer billing invoice.
+            This markup % is added to purchase item prices when admin generates customer billing invoice. You can use
+            decimals (for example 7.25); the server rounds to two decimal places, matching the database column type.
           </p>
           <div className="table-scroll mt-3 rounded-2xl border border-border">
             <table className="min-w-[640px] w-full text-left text-sm">
@@ -410,12 +447,23 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                     <td className="px-3 py-2.5 font-bn text-slate-700">{c.nameBn}</td>
                     <td className="px-3 py-2.5 text-right">
                       <input
-                        type="number"
-                        min={0}
-                        step="0.5"
-                        value={categoryMarkups[c.id] ?? 0}
-                        onChange={(e) => setCategoryMarkup(c.id, e.target.value)}
-                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm"
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        aria-label={`Markup percent for ${c.nameEn}`}
+                        value={categoryMarkupDrafts[c.id] ?? markupPercentToInputString(Number(categoryMarkups[c.id] ?? 0))}
+                        onChange={(e) =>
+                          setCategoryMarkupDrafts((prev) => ({ ...prev, [c.id]: e.target.value }))
+                        }
+                        onBlur={() => {
+                          void commitCategoryMarkup(c.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm tabular-nums"
                       />
                     </td>
                   </tr>
@@ -445,10 +493,14 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                   return (
                     <tr key={h.id} className="border-t border-border bg-card">
                       <td className="px-3 py-2.5 font-medium text-slate-800">
-                        {cat ? `${cat.nameEn} (${cat.nameBn})` : h.categoryId}
+                        {cat ? `${cat.nameEn} (${cat.nameBn})` : UNKNOWN_CATEGORY_LABEL}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-slate-600">{h.previousPercent}%</td>
-                      <td className="px-3 py-2.5 text-right font-semibold text-slate-900">{h.nextPercent}%</td>
+                      <td className="px-3 py-2.5 text-right text-slate-600 tabular-nums">
+                        {markupPercentToInputString(h.previousPercent)}%
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-semibold text-slate-900 tabular-nums">
+                        {markupPercentToInputString(h.nextPercent)}%
+                      </td>
                       <td className="px-3 py-2.5 text-slate-600">
                         {new Date(h.changedAt).toLocaleString()}
                       </td>
@@ -665,7 +717,13 @@ export function AdminCatalogPage({ view = "all" }: { view?: CatalogView }) {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-slate-700">
-                      {i.categoryNameEn} ({i.categoryNameBn})
+                      {(() => {
+                        const en = (i.categoryNameEn ?? "").trim();
+                        const bn = (i.categoryNameBn ?? "").trim();
+                        if (!en && !bn) return "—";
+                        if (en && bn) return `${en} (${bn})`;
+                        return en || bn;
+                      })()}
                     </td>
                     <td className="px-3 py-2.5">{usedItemIds.has(i.id) ? "Yes" : "No"}</td>
                     {canManageItemActions ? (

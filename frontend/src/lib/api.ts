@@ -1,5 +1,6 @@
 import type { CategoryDef, Order, Role, SessionUser } from "../types";
 import { type BillingCycleConfig, parseBillingCycleConfig } from "./billingCycle";
+import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "./formatDisplayDate";
 import { resolvePaymentTxnEffectiveType } from "./paymentTxnType";
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/+$/, "");
@@ -169,9 +170,29 @@ function normalizeOrder(order: Record<string, unknown>): Order {
     : [];
   const purchaseSumFromLines = lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
 
+  const createdByIdRaw = order.createdById ?? order.created_by_id;
+  const createdByNameRaw = order.createdByName ?? order.created_by_user_name;
+  const createdByRoleRaw = order.createdByRole ?? order.created_by_user_role;
+
   return {
     id: String(order.id ?? ""),
     ownerId: String(order.ownerId ?? order.owner_id ?? ""),
+    createdById:
+      createdByIdRaw === null || createdByIdRaw === undefined || String(createdByIdRaw).trim() === ""
+        ? null
+        : String(createdByIdRaw),
+    createdByName:
+      createdByNameRaw === null || createdByNameRaw === undefined
+        ? null
+        : String(createdByNameRaw).trim() === ""
+          ? null
+          : String(createdByNameRaw),
+    createdByRole:
+      createdByRoleRaw === null || createdByRoleRaw === undefined
+        ? null
+        : String(createdByRoleRaw).trim() === ""
+          ? null
+          : String(createdByRoleRaw),
     orderNo: String(order.orderNo ?? order.order_no ?? ""),
     orderDate: String(order.orderDate ?? order.order_date ?? ""),
     createdAt: (order.createdAt as string | undefined) ?? (order.created_at as string | undefined),
@@ -202,6 +223,16 @@ function normalizeOrder(order: Record<string, unknown>): Order {
           ? "admin"
           : undefined,
     billingInvoiceGenerated,
+    billingInvoiceCreatedAt:
+      (order.billingInvoiceCreatedAt as string | undefined) ??
+      (order.billing_invoice_created_at as string | undefined) ??
+      (order.billing_invoice_generated_at as string | undefined) ??
+      null,
+    purchaseInvoiceCreatedAt:
+      (order.purchaseInvoiceCreatedAt as string | undefined) ??
+      (order.purchase_invoice_created_at as string | undefined) ??
+      (order.purchase_invoice_generated_at as string | undefined) ??
+      null,
     invoiceGenerated: billingInvoiceGenerated,
     purchaseSubtotal:
       optionalMoney(order.purchaseSubtotal ?? order.purchase_subtotal) ??
@@ -291,6 +322,12 @@ export async function apiUpdateProfile(payload: ProfileUpdatePayload): Promise<S
 
 export async function apiListUsers(): Promise<SessionUser[]> {
   const res = await req<{ data: SessionUser[] }>("/api/v1/admin/users");
+  return res.data;
+}
+
+/** Moderators and admins: list active customer accounts for on-behalf order entry. */
+export async function apiListStaffCustomerAccounts(): Promise<SessionUser[]> {
+  const res = await req<{ data: SessionUser[] }>("/api/v1/staff/customer-accounts");
   return res.data;
 }
 
@@ -389,7 +426,7 @@ export type ActivityLogEntry = {
   actorRole: string;
 };
 
-/** Admin only. Sets DB status to `completed` (shown as Delivered). Call after goods are delivered; required before billing invoice. */
+/** Admin only. Sets DB status to `completed` (shown as Delivered). Call when goods are delivered. */
 export async function apiMarkOrderDelivered(orderId: string): Promise<Order> {
   const res = await req<{ data: Record<string, unknown> }>(`/api/v1/orders/${orderId}/mark-delivered`, {
     method: "POST",
@@ -525,13 +562,16 @@ function pickRowTimestamp(row: Record<string, unknown>): string {
 
 /** When column for history tables: show recorded time, else order date, else em dash. */
 export function formatPaymentHistoryWhen(txn: { created_at: string; order_date?: string | null }): string {
-  let c = String(txn.created_at ?? "").trim();
+  const c = String(txn.created_at ?? "").trim();
   if (c) {
-    if (c.includes("T") && c.length >= 10) return c.replace("T", " ").slice(0, 19);
-    return c;
+    if (c.includes("T") && c.length >= 10) return formatDateTimeDdMmYyyy(c);
+    return formatDateDdMmYyyy(c) || c;
   }
   const o = String(txn.order_date ?? "").trim();
-  if (o) return (o.length >= 10 ? o.slice(0, 10) : o) + " (order date)";
+  if (o) {
+    const d = formatDateDdMmYyyy(o.length >= 10 ? o.slice(0, 10) : o);
+    return d ? `${d} (order date)` : `${o} (order date)`;
+  }
   return "—";
 }
 

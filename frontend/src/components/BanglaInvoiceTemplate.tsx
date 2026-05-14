@@ -1,5 +1,6 @@
 import type { Order, OrderLine } from "../types";
 import { formatMoneyBn, toBanglaDigits } from "../lib/banglaNumerals";
+import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
 import { billedAmountsForLine } from "../lib/billingLineAmounts";
 import { formatQtyLineBn } from "../lib/uiLabels";
 
@@ -138,11 +139,11 @@ export function BanglaInvoiceTemplate({
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-slate-100 p-3">
               <p className="text-xs text-slate-500">ইস্যুর তারিখ</p>
-              <p className="font-semibold">{toBanglaDigits(order.orderDate)}</p>
+              <p className="font-semibold">{toBanglaDigits(formatDateDdMmYyyy(order.orderDate))}</p>
             </div>
             <div className="rounded-xl border border-slate-100 p-3">
               <p className="text-xs text-slate-500">পরিশোধের শেষ তারিখ</p>
-              <p className="font-semibold">{toBanglaDigits(dueDate)}</p>
+              <p className="font-semibold">{toBanglaDigits(formatDateDdMmYyyy(dueDate))}</p>
             </div>
             <div className="rounded-xl border border-slate-100 p-3">
               <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
@@ -152,7 +153,7 @@ export function BanglaInvoiceTemplate({
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
             <div className="divide-y divide-slate-100 print:hidden md:hidden">
-              {billedRows.map(({ line: r, billedLine, billedUnit, pct }) => (
+              {billedRows.map(({ line: r, billedLine, billedUnit }) => (
                 <div key={r.id} className="space-y-2 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -170,7 +171,6 @@ export function BanglaInvoiceTemplate({
                     <div className="rounded-lg bg-slate-50 px-2 py-1 text-right">
                       <p className="text-slate-500">ইউনিট মূল্য</p>
                       <p className="font-medium">৳ {formatMoneyBn(billedUnit)}</p>
-                      <p className="text-[10px] text-slate-500">+{formatMoneyBn(pct)}%</p>
                     </div>
                   </div>
                 </div>
@@ -188,7 +188,7 @@ export function BanglaInvoiceTemplate({
                 </tr>
               </thead>
               <tbody>
-                {billedRows.map(({ line: r, billedUnit, billedLine, pct }) => (
+                {billedRows.map(({ line: r, billedUnit, billedLine }) => (
                   <tr key={r.id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium">{toBanglaDigits(String(r.serial))}</td>
                     <td className="px-3 py-2">
@@ -196,10 +196,7 @@ export function BanglaInvoiceTemplate({
                       <p className="text-xs text-slate-500">{r.itemNameEn}</p>
                     </td>
                     <td className="px-3 py-2">{formatQtyLineBn(r.kg, r.gram, r.piece)}</td>
-                    <td className="px-3 py-2 text-right">
-                      ৳ {formatMoneyBn(billedUnit)}
-                      <span className="ml-1 text-[10px] text-slate-500">(+{formatMoneyBn(pct)}%)</span>
-                    </td>
+                    <td className="px-3 py-2 text-right">৳ {formatMoneyBn(billedUnit)}</td>
                     <td className="px-3 py-2 text-right font-semibold">
                       ৳ {formatMoneyBn(billedLine)}
                     </td>

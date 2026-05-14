@@ -1,4 +1,5 @@
 import type { Order } from "../types";
+import { formatDateTimeDdMmYyyy } from "./formatDisplayDate";
 import { parseDeliveryWindow } from "./deliveryWindow";
 
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -64,9 +65,8 @@ export function getDeliveryCommitmentEndMs(order: Order): number | null {
 }
 
 export function formatShortDeliveredAt(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (!iso.trim()) return iso;
+  return formatDateTimeDdMmYyyy(iso);
 }
 
 /** Punctuality badge for order list “Delivered” column (and similar). */

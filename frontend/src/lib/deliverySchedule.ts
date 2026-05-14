@@ -1,4 +1,5 @@
 import type { Order } from "../types";
+import { formatDateDdMmYyyyOrDash } from "./formatDisplayDate";
 import { formatDeliveryTimeOnly, formatDeliveryWindow } from "./deliveryWindow";
 
 /** Static scheduled delivery label for lists (no timers). */
@@ -9,9 +10,8 @@ export function formatDeliveryScheduleLabel(order: Order): string {
 export function formatDeliveryDateLabel(order: Order): string {
   const raw = (order.deliveryDate ?? "").trim();
   if (!raw) return "—";
-  const d = new Date(`${raw}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return raw;
-  return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+  const formatted = formatDateDdMmYyyyOrDash(raw);
+  return formatted === "—" ? raw : formatted;
 }
 
 export function formatDeliveryTimeWindowLabel(order: Order): string {

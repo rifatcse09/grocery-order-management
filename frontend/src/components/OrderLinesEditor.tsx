@@ -1,28 +1,25 @@
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import type { CategoryDef, OrderLine } from "../types";
 import { billedAmountsForLine } from "../lib/billingLineAmounts";
-import { computePurchaseLineTotal } from "../lib/invoiceFlow";
-import { COL } from "../lib/uiLabels";
+import { formatDecimalEn } from "../lib/banglaNumerals";
+import { roundMarkupPercent, roundMoneyTwoDecimals } from "../lib/markupPercentInput";
+import {
+  computePurchaseLineTotal,
+  linesReadyForPurchaseInvoice,
+  linesReadyForPurchaseInvoiceWithCostDrafts,
+} from "../lib/invoiceFlow";
+import { COL, UNKNOWN_CATEGORY_LABEL, UNKNOWN_ITEM_LABEL } from "../lib/uiLabels";
 
-export function OrderLinesEditor({
-  lines,
-  onChange,
-  categories,
-  showPricing = false,
-  largeText = false,
-  billingMarkupsByCategory,
-  /** When true with showPricing, always show Markup % / after-markup columns (uses empty category map if needed). */
-  billingMarkupPreview = false,
-  globalBillingMarkupPercent = 0,
-  /** When true, entire editor is read-only (legacy). */
-  linesLocked = false,
-  /** When true, kg / g / pcs cannot change (defaults to same as `linesLocked` if omitted). */
-  quantityLocked: quantityLockedProp,
-  /** When true, cost unit and line total are locked (defaults to same as `linesLocked` if omitted). */
-  pricingLocked: pricingLockedProp,
-  /** When set, locks Markup % only; if omitted, markup follows `pricingLocked`. */
-  markupLocked,
-}: {
+export type OrderLinesEditorHandle = {
+  /**
+   * Commits in-progress cost unit drafts into the line list, clears those drafts, and calls `onChange`.
+   * Use before saving / generating purchase invoice so the server receives typed-but-not-blurred costs.
+   */
+  mergeCostUnitDraftsIntoLines: () => OrderLine[];
+};
+
+export type OrderLinesEditorProps = {
   lines: OrderLine[];
   onChange: (next: OrderLine[]) => void;
   categories: CategoryDef[];
@@ -30,13 +27,33 @@ export function OrderLinesEditor({
   largeText?: boolean;
   billingMarkupsByCategory?: Record<string, number>;
   billingMarkupPreview?: boolean;
-  /** Used with category map when computing billing columns (matches invoice). */
   globalBillingMarkupPercent?: number;
   linesLocked?: boolean;
   quantityLocked?: boolean;
   pricingLocked?: boolean;
   markupLocked?: boolean;
-}) {
+  onPurchaseLinesReadyChange?: (ready: boolean) => void;
+};
+
+export const OrderLinesEditor = forwardRef<OrderLinesEditorHandle, OrderLinesEditorProps>(
+  function OrderLinesEditor(
+    {
+      lines,
+      onChange,
+      categories,
+      showPricing = false,
+      largeText = false,
+      billingMarkupsByCategory,
+      billingMarkupPreview = false,
+      globalBillingMarkupPercent = 0,
+      linesLocked = false,
+      quantityLocked: quantityLockedProp,
+      pricingLocked: pricingLockedProp,
+      markupLocked,
+      onPurchaseLinesReadyChange,
+    },
+    ref,
+  ) {
   const catMap = new Map(categories.map((c) => [c.id, c]));
   const billingCategoryMap = billingMarkupsByCategory ?? {};
   const showMarkupCols = Boolean(
@@ -56,6 +73,117 @@ export function OrderLinesEditor({
       : showMarkupCols
         ? false
         : pricingLocked);
+
+  /** Lets users type fractional cost units (e.g. `12.55`) without controlled-number stripping mid-edit. */
+  const [costUnitDrafts, setCostUnitDrafts] = useState<Record<string, string>>({});
+  /** Same for markup % (e.g. `7.25` or `7.` while typing). */
+  const [markupDrafts, setMarkupDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const ids = new Set(lines.map((l) => l.id));
+    setCostUnitDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const k of Object.keys(next)) {
+        if (!ids.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setMarkupDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const k of Object.keys(next)) {
+        if (!ids.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [lines]);
+
+  useEffect(() => {
+    if (pricingLocked) setCostUnitDrafts({});
+  }, [pricingLocked]);
+
+  useEffect(() => {
+    if (markupLockedEffective) setMarkupDrafts({});
+  }, [markupLockedEffective]);
+
+  useLayoutEffect(() => {
+    if (!onPurchaseLinesReadyChange || !showPricing) return;
+    if (pricingLocked) {
+      onPurchaseLinesReadyChange(linesReadyForPurchaseInvoice(lines));
+      return;
+    }
+    onPurchaseLinesReadyChange(linesReadyForPurchaseInvoiceWithCostDrafts(lines, costUnitDrafts));
+  }, [lines, costUnitDrafts, pricingLocked, showPricing, onPurchaseLinesReadyChange]);
+
+  useImperativeHandle(ref, () => ({
+    mergeCostUnitDraftsIntoLines: () => {
+      if (pricingLocked || lockAll) return lines;
+      const idsWithDraft = Object.keys(costUnitDrafts);
+      if (idsWithDraft.length === 0) return lines;
+
+      const snapshot = { ...costUnitDrafts };
+      const merged = lines.map((line) => {
+        if (!Object.prototype.hasOwnProperty.call(snapshot, line.id)) return line;
+        const raw = (snapshot[line.id] ?? "").trim().replace(",", ".");
+        if (raw === "" || raw === ".") {
+          return { ...line, unitPrice: undefined, lineTotal: undefined };
+        }
+        const unit = parseFloat(raw);
+        if (!Number.isFinite(unit) || unit < 0) return line;
+        const unitRounded = roundMoneyTwoDecimals(unit);
+        return { ...line, unitPrice: unitRounded, lineTotal: computePurchaseLineTotal(line, unitRounded) };
+      });
+
+      setCostUnitDrafts((prev) => {
+        const next = { ...prev };
+        for (const id of idsWithDraft) delete next[id];
+        return next;
+      });
+      onChange(merged);
+      return merged;
+    },
+  }), [lines, costUnitDrafts, pricingLocked, lockAll, onChange]);
+
+  const costUnitInputValue = (line: OrderLine) =>
+    costUnitDrafts[line.id] !== undefined
+      ? costUnitDrafts[line.id]!
+      : line.unitPrice == null
+        ? ""
+        : String(line.unitPrice);
+
+  const draftParsedCostUnit = (lineId: string): number | null => {
+    const raw = costUnitDrafts[lineId];
+    if (raw === undefined) return null;
+    const t = raw.trim().replace(",", ".");
+    if (t === "" || t === ".") return null;
+    const u = parseFloat(t);
+    return Number.isFinite(u) && u >= 0 ? u : null;
+  };
+
+  const draftParsedMarkupPercent = (lineId: string): number | null => {
+    const raw = markupDrafts[lineId];
+    if (raw === undefined) return null;
+    const t = raw.trim().replace(",", ".");
+    if (t === "" || t === ".") return null;
+    const n = parseFloat(t);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
+  const markupInputDisplayValue = (line: OrderLine) => {
+    if (markupDrafts[line.id] !== undefined) return markupDrafts[line.id]!;
+    const has =
+      line.markupPercent !== undefined &&
+      line.markupPercent !== null &&
+      Number.isFinite(Number(line.markupPercent));
+    return has ? String(line.markupPercent) : "";
+  };
 
   const update = (id: string, patch: Partial<OrderLine>) => {
     if (lockAll) return;
@@ -86,6 +214,44 @@ export function OrderLinesEditor({
   const remove = (id: string) => {
     if (pricingLocked) return;
     onChange(lines.filter((l) => l.id !== id).map((l, i) => ({ ...l, serial: i + 1 })));
+  };
+
+  const commitCostUnitDraft = (lineId: string) => {
+    if (pricingLocked) return;
+    const line = lines.find((l) => l.id === lineId);
+    if (!line) return;
+    const raw = (costUnitDrafts[lineId] ?? "").trim().replace(",", ".");
+    setCostUnitDrafts((prev) => {
+      const next = { ...prev };
+      delete next[lineId];
+      return next;
+    });
+    if (raw === "" || raw === ".") {
+      update(lineId, { unitPrice: undefined, lineTotal: undefined });
+      return;
+    }
+    const unit = parseFloat(raw);
+    if (!Number.isFinite(unit) || unit < 0) return;
+    const unitRounded = roundMoneyTwoDecimals(unit);
+    const total = computePurchaseLineTotal(line, unitRounded);
+    update(lineId, { unitPrice: unitRounded, lineTotal: total });
+  };
+
+  const commitMarkupDraft = (lineId: string) => {
+    if (markupLockedEffective) return;
+    const raw = (markupDrafts[lineId] ?? "").trim().replace(",", ".");
+    setMarkupDrafts((prev) => {
+      const next = { ...prev };
+      delete next[lineId];
+      return next;
+    });
+    if (raw === "" || raw === ".") {
+      update(lineId, { markupPercent: undefined });
+      return;
+    }
+    const pct = parseFloat(raw);
+    if (!Number.isFinite(pct) || pct < 0) return;
+    update(lineId, { markupPercent: roundMarkupPercent(pct) });
   };
 
   return (
@@ -138,19 +304,42 @@ export function OrderLinesEditor({
             const markupPctFromCat = Number(
               billingCategoryMap[line.categoryId] ?? globalBillingMarkupPercent,
             );
-            const { billedUnit: billingUnit, billedLine: billingLineTotal } = showMarkupCols
-              ? billedAmountsForLine(line, billingCategoryMap, globalBillingMarkupPercent)
-              : { billedUnit: null as number | null, billedLine: null as number | null };
+            const draftCostU = draftParsedCostUnit(line.id);
+            const draftMu = draftParsedMarkupPercent(line.id);
+            let lineForBilling: OrderLine = { ...line };
+            if (draftCostU != null) {
+              lineForBilling = {
+                ...lineForBilling,
+                unitPrice: draftCostU,
+                lineTotal: computePurchaseLineTotal(line, draftCostU),
+              };
+            }
+            if (draftMu !== null) {
+              lineForBilling = { ...lineForBilling, markupPercent: draftMu };
+            }
+            const billingPreviewLive = Boolean(showMarkupCols && !markupLockedEffective);
+            const { billedUnit: billingUnit, billedLine: billingLineTotal, pct: effectiveMarkupPct } =
+              showMarkupCols
+                ? billedAmountsForLine(lineForBilling, billingCategoryMap, globalBillingMarkupPercent, {
+                    ignorePersistedBilling: billingPreviewLive,
+                  })
+                : { billedUnit: null as number | null, billedLine: null as number | null, pct: 0 };
             const lineMarkupOverride =
               line.markupPercent !== undefined &&
               line.markupPercent !== null &&
               Number.isFinite(Number(line.markupPercent));
             const markupPlaceholder = Number.isFinite(markupPctFromCat)
-              ? String(markupPctFromCat)
+              ? formatDecimalEn(markupPctFromCat, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
               : "—";
             const markupTitle = Number.isFinite(markupPctFromCat)
-              ? `Category default ${markupPctFromCat}% (editable)`
+              ? `Category default ${formatDecimalEn(markupPctFromCat, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}% (editable)`
               : "Markup %";
+            const markupPctInvoiceStyle = { minimumFractionDigits: 2, maximumFractionDigits: 2 } as const;
+            const markupValueLocked = markupLockedEffective
+              ? lineMarkupOverride
+                ? formatDecimalEn(Number(line.markupPercent), markupPctInvoiceStyle)
+                : formatDecimalEn(effectiveMarkupPct, markupPctInvoiceStyle)
+              : null;
             return (
               <tr key={line.id} className={`${showPricing ? "border-t border-border bg-card" : "border-t border-slate-100"} align-top`}>
                 <td className={`px-3 py-2 font-mono text-slate-600 ${largeText ? "text-base" : "text-sm"}`}>
@@ -165,12 +354,22 @@ export function OrderLinesEditor({
                       </span>
                     </>
                   ) : (
-                    line.categoryId
+                    <span className="text-muted-foreground">{UNKNOWN_CATEGORY_LABEL}</span>
                   )}
                 </td>
                 <td className={`px-3 py-2 ${largeText ? "text-base" : "text-sm"}`}>
-                  <div className="font-medium">{line.itemNameEn}</div>
-                  <div className={`font-bn text-slate-600 ${largeText ? "text-sm" : "text-xs"}`}>{line.itemNameBn}</div>
+                  {!String(line.itemNameEn ?? "").trim() && !String(line.itemNameBn ?? "").trim() ? (
+                    <span className="text-muted-foreground">{UNKNOWN_ITEM_LABEL}</span>
+                  ) : (
+                    <>
+                      <div className="font-medium">
+                        {String(line.itemNameEn ?? "").trim() || String(line.itemNameBn ?? "").trim()}
+                      </div>
+                      <div className={`font-bn text-slate-600 ${largeText ? "text-sm" : "text-xs"}`}>
+                        {String(line.itemNameBn ?? "").trim() || "—"}
+                      </div>
+                    </>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   <input
@@ -227,27 +426,35 @@ export function OrderLinesEditor({
                       <input
                         type="text"
                         inputMode="decimal"
+                        autoComplete="off"
                         readOnly={pricingLocked}
                         disabled={pricingLocked}
-                        className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-700"
-                        value={line.unitPrice == null ? "" : String(line.unitPrice)}
+                        className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right text-sm tabular-nums disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-700"
+                        value={costUnitInputValue(line)}
                         placeholder="0"
                         onChange={(e) => {
                           if (pricingLocked) return;
-                          const raw = e.target.value.trim().replace(",", ".");
-                          if (raw === "" || raw === ".") {
-                            update(line.id, { unitPrice: undefined, lineTotal: undefined });
-                            return;
+                          setCostUnitDrafts((prev) => ({ ...prev, [line.id]: e.target.value }));
+                        }}
+                        onBlur={() => {
+                          commitCostUnitDraft(line.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            (e.target as HTMLInputElement).blur();
                           }
-                          const unit = parseFloat(raw);
-                          if (!Number.isFinite(unit) || unit < 0) return;
-                          const total = computePurchaseLineTotal(line, unit);
-                          update(line.id, { unitPrice: unit, lineTotal: total });
                         }}
                       />
                     </td>
                     <td className="px-3 py-2 text-right text-sm font-medium tabular-nums">
-                      {line.lineTotal != null ? line.lineTotal.toFixed(0) : "—"}
+                      {(() => {
+                        const draftU = draftParsedCostUnit(line.id);
+                        const total =
+                          draftU != null ? computePurchaseLineTotal(line, draftU) : line.lineTotal;
+                        return total != null
+                          ? formatDecimalEn(total, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          : "—";
+                      })()}
                     </td>
                     {showMarkupCols ? (
                       <>
@@ -264,27 +471,35 @@ export function OrderLinesEditor({
                                 ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-600"
                                 : "cursor-text border-slate-200 bg-white text-slate-900 shadow-sm placeholder:text-slate-500 hover:border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/25"
                             }`}
-                            value={lineMarkupOverride ? String(line.markupPercent) : ""}
+                            value={markupValueLocked ?? markupInputDisplayValue(line)}
                             placeholder={markupPlaceholder}
                             title={markupTitle}
                             onChange={(e) => {
                               if (markupLockedEffective) return;
-                              const raw = e.target.value.trim().replace(",", ".");
-                              if (raw === "" || raw === ".") {
-                                update(line.id, { markupPercent: undefined });
-                                return;
+                              setMarkupDrafts((prev) => ({ ...prev, [line.id]: e.target.value }));
+                            }}
+                            onBlur={() => {
+                              commitMarkupDraft(line.id);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                (e.target as HTMLInputElement).blur();
                               }
-                              const pct = Number(raw);
-                              if (!Number.isFinite(pct) || pct < 0) return;
-                              update(line.id, { markupPercent: pct });
                             }}
                           />
                         </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
-                          {billingUnit != null ? billingUnit.toFixed(0) : "—"}
+                          {billingUnit != null
+                            ? formatDecimalEn(billingUnit, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            : "—"}
                         </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold tabular-nums text-blue-700">
-                          {billingLineTotal != null ? billingLineTotal.toFixed(0) : "—"}
+                          {billingLineTotal != null
+                            ? formatDecimalEn(billingLineTotal, {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })
+                            : "—"}
                         </td>
                       </>
                     ) : null}
@@ -308,5 +523,5 @@ export function OrderLinesEditor({
       </table>
     </div>
   );
-}
+});
 

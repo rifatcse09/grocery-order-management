@@ -17,6 +17,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 
 function formatQty(kg: string, gram: string, piece: string) {
@@ -161,9 +162,9 @@ export function ReviewOrderPage() {
           Order details
         </h2>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <DetailTile icon={Calendar} label="Order date" value={order.orderDate} />
+          <DetailTile icon={Calendar} label="Order date" value={formatDateDdMmYyyyOrDash(order.orderDate)} />
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
-          <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
+          <DetailTile icon={Calendar} label="Delivery date" value={formatDateDdMmYyyyOrDash(order.deliveryDate)} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
           {order.status === "delivered" || order.status === "invoiced" ? (

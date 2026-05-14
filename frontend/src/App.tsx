@@ -58,6 +58,8 @@ export default function App() {
             <Route path="/user/catalog/products" element={<AdminCatalogPage view="products" />} />
           </Route>
           <Route element={<RequireRole allow={["moderator", "admin", "master_admin"]} />}>
+            <Route path="/moderator/orders/new" element={<AdminOrderDetailPage />} />
+            <Route path="/moderator/orders/:id/bookkeeping" element={<AdminOrderDetailPage />} />
             <Route path="/moderator/orders" element={<ModeratorOrdersPage />} />
             <Route path="/moderator/purchase-invoices/:id" element={<PurchaseInvoiceDetailPage />} />
             <Route path="/moderator/challans/:id" element={<UserChallanDetailPage />} />
