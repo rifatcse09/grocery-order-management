@@ -93,6 +93,10 @@ export interface Order {
   /** Category-wise billing markup (%) used when admin generated billing invoice. */
   billingCategoryMarkups?: Record<string, number>;
   grandTotal?: number;
+  /** Net billing payments minus billing adjustments (API; matches admin settlement). */
+  billingNetPaid?: number;
+  /** Remaining customer invoice balance; absent on legacy/local payloads. */
+  billingAmountDue?: number | null;
   /** Set when master admin soft-deleted the order on the server. */
   deletedAt?: string | null;
 }

@@ -606,6 +606,17 @@ function read_order(array $row): array {
         $out['deletedAt'] = $row['deleted_at'];
     }
 
+    // Customer invoice balance (same net as admin per-order billing settlement).
+    $cap = (float) ($out['grandTotal'] ?? 0);
+    $netB = 0.0;
+    if ($billingInvoiceGenerated && table_has_column('payments', 'payment_type')) {
+        $netB = max(0.0, (float) order_net_billing_paid_applied($orderId));
+    }
+    $out['billingNetPaid'] = round($netB, 2);
+    $out['billingAmountDue'] = ($billingInvoiceGenerated && $cap > 0.00001)
+        ? round(max(0.0, $cap - $netB), 2)
+        : null;
+
     return $out;
 }
 

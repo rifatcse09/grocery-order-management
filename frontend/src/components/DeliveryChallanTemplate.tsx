@@ -8,7 +8,7 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
 
   return (
     <div className="font-bn">
-      <div className="flex min-h-[1080px] flex-col bg-white p-4 sm:p-6">
+      <div className="flex min-h-[1080px] flex-col bg-white p-4 print:min-h-0 sm:p-6">
         <div className="print-challan-header flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-4">
           <div className="max-w-xl">
             <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">হোসেন মিট এন্ড কো.</h2>
@@ -60,7 +60,7 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
             </div>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 print:overflow-visible">
             <div className="divide-y divide-slate-100 print:hidden md:hidden">
               {rows.map((r) => (
                 <div key={r.id} className="space-y-2 p-3">
@@ -98,7 +98,7 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
           </div>
         </div>
 
-        <div className="print-challan-footer mt-24 sm:mt-32">
+        <div className="print-challan-footer mt-8 print:mt-6">
           <div className="flex items-end justify-between gap-12 sm:gap-24">
             <div className="text-left">
               <div className="h-0 w-32 border-t-2 border-black sm:w-44" />
@@ -112,12 +112,6 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
               ) : null}
               <div className="ml-auto h-0 w-32 border-t-2 border-black sm:w-44" />
               <p className="mt-2 text-sm font-semibold text-slate-900 sm:text-base">পক্ষে / কোম্পানি</p>
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end">
-            <div className="text-right leading-tight">
-              <p className="text-2xl font-black tracking-tight text-slate-700 sm:text-3xl">questco</p>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-800 sm:text-sm">managed by : int&apos;l</p>
             </div>
           </div>
         </div>

@@ -249,6 +249,11 @@ function normalizeOrder(order: Record<string, unknown>): Order {
       optionalMoney(order.subtotal ?? order.purchase_subtotal) ??
       (purchaseSumFromLines > 0 ? purchaseSumFromLines : undefined),
     grandTotal: optionalMoney(order.grandTotal ?? order.grand_total),
+    billingNetPaid: optionalMoney(order.billingNetPaid ?? order.billing_net_paid),
+    billingAmountDue:
+      order.billingAmountDue === null || order.billing_amount_due === null
+        ? null
+        : optionalMoney(order.billingAmountDue ?? order.billing_amount_due),
     deletedAt:
       order.deletedAt != null
         ? String(order.deletedAt)

@@ -90,8 +90,8 @@ export function BanglaInvoiceTemplate({
     invoiceType === "purchase" ? "PURCHASE INVOICE / ক্রয় চালান" : "BILLING INVOICE / গ্রাহক বিল";
 
   return (
-    <div className="font-bn overflow-hidden rounded-3xl bg-slate-50 p-3 shadow-card print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none sm:p-5">
-      <div className="rounded-3xl bg-white p-4 sm:p-6">
+    <div className="font-bn overflow-hidden rounded-3xl bg-slate-50 p-3 shadow-card print:overflow-visible print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none sm:p-5">
+      <div className="rounded-3xl bg-white p-4 sm:p-6 print:overflow-visible">
         <div className="print-invoice-header flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-4">
           <div className="max-w-xl">
             <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">{companyNameBn}</h2>
@@ -151,7 +151,7 @@ export function BanglaInvoiceTemplate({
             </div>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 print:overflow-visible">
             <div className="divide-y divide-slate-100 print:hidden md:hidden">
               {billedRows.map(({ line: r, billedLine, billedUnit }) => (
                 <div key={r.id} className="space-y-2 p-3">
@@ -222,13 +222,6 @@ export function BanglaInvoiceTemplate({
               <img src={order.signatureDataUrl} alt="Signature" className="mt-1 h-16 max-w-[200px] object-contain" />
             </div>
           ) : null}
-        </div>
-
-        <div className="print-invoice-footer mt-10 flex justify-end">
-          <div className="text-right leading-tight">
-            <p className="text-2xl font-black tracking-tight text-slate-700 sm:text-3xl">questco</p>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-800 sm:text-sm">managed by : int&apos;l</p>
-          </div>
         </div>
       </div>
     </div>

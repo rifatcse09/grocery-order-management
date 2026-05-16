@@ -14,8 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
+import { apiEnabled } from "../lib/api";
 
-const PAYMENTS_KEY = "gom_statement_payments";
 type InvoiceFilter = "all" | "paid" | "pending" | "overdue";
 
 type InvoiceRow = {
@@ -87,6 +87,13 @@ export function UserInvoicesPage() {
               return sum + (Number.isFinite(line) ? line : 0);
             }, 0),
         );
+        /** Same source as admin billing settlement: API `billingAmountDue` / `billingNetPaid`. */
+        let remaining = amount;
+        if (o.billingAmountDue != null && Number.isFinite(o.billingAmountDue)) {
+          remaining = Math.max(0, o.billingAmountDue);
+        } else if (o.billingNetPaid != null && Number.isFinite(o.billingNetPaid)) {
+          remaining = Math.max(0, amount - o.billingNetPaid);
+        }
         const digits = o.orderNo.replace(/\D/g, "");
         const invoiceNo = `INV-${(digits || o.id.replace(/\D/g, "")).slice(-5).padStart(5, "0")}`;
         const customer = o.contactPerson || "Unknown customer";
@@ -103,48 +110,12 @@ export function UserInvoicesPage() {
           issueDateIso: issueIso,
           dueDateIso: dueIso,
           amount,
-          remaining: amount,
+          remaining,
           paymentStatus: "pending" as const,
           challanGenerated: Boolean(o.challanGenerated),
           invoiceAvailable: hasBillingInvoice(o),
         };
       });
-
-    const paymentsByCustomer = new Map<string, number>();
-    try {
-      const raw = localStorage.getItem(PAYMENTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        Object.entries(parsed).forEach(([k, v]) => {
-          const amount = Number(v);
-          if (!Number.isFinite(amount) || amount <= 0) return;
-          const customerName = (k.split("::")[1] || "").trim().toLowerCase();
-          if (!customerName) return;
-          paymentsByCustomer.set(customerName, (paymentsByCustomer.get(customerName) ?? 0) + amount);
-        });
-      }
-    } catch {
-      /* ignore parse errors */
-    }
-
-    const grouped = new Map<string, InvoiceRow[]>();
-    visible.forEach((r) => {
-      const key = r.customer.trim().toLowerCase();
-      const arr = grouped.get(key) ?? [];
-      arr.push(r);
-      grouped.set(key, arr);
-    });
-
-    grouped.forEach((list, key) => {
-      let pool = paymentsByCustomer.get(key) ?? 0;
-      if (pool <= 0) return;
-      for (const row of list) {
-        if (pool <= 0) break;
-        const consume = Math.min(pool, row.remaining);
-        row.remaining -= consume;
-        pool -= consume;
-      }
-    });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -220,6 +191,14 @@ export function UserInvoicesPage() {
             </button>
           ))}
         </div>
+        {apiEnabled() ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Paid</span> uses the same rule as admin billing: recorded
+            customer payments (minus adjustments) up to the invoice total.{" "}
+            <span className="font-medium text-foreground">Pending</span> means there is still an amount due on that
+            invoice.
+          </p>
+        ) : null}
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <label className="relative w-full max-w-md">

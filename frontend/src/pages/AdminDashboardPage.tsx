@@ -33,7 +33,7 @@ import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 import { useAuth } from "../context/AuthContext";
 import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
-import type { OrderStatus } from "../types";
+import type { Order, OrderStatus } from "../types";
 import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
 import { getCategoryColor } from "../lib/categoryColors";
 import {
@@ -279,20 +279,32 @@ export function AdminDashboardPage() {
     const monthStart = new Date(now);
     monthStart.setDate(now.getDate() - 29);
     let today = 0;
+    let todayDeliveredCount = 0;
     let weekly = 0;
+    let weeklyDeliveredCount = 0;
     let monthly = 0;
-    filteredOrders
-      .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
-      .forEach((o) => {
-        const d = parseIso(o.orderDate);
-        if (!d) return;
-        const amount = Number(o.grandTotal ?? 0);
-        if (formatIso(d) === formatIso(now)) today += amount;
-        if (d.getTime() >= weekStart.getTime()) weekly += amount;
-        if (d.getTime() >= monthStart.getTime()) monthly += amount;
-      });
-    return { today, weekly, monthly };
-  }, [filteredOrders]);
+    let monthlyDeliveredCount = 0;
+    /** Delivery KPIs use full order list (date-range filters use *order date* only). */
+    const ordersForDeliverySalesKpi =
+      customerFilter === "all"
+        ? orders
+        : orders.filter((o) => o.contactPerson === customerFilter);
+    ordersForDeliverySalesKpi.forEach((o) => {
+      if (deliveredStatusTodayLocalDay(o, now)) {
+        today += orderLineTotalSumExcludingInvoice(o);
+        todayDeliveredCount += 1;
+      }
+      if (deliveredAtCalendarDayInRange(o, weekStart, now)) {
+        weekly += orderLineTotalSumExcludingInvoice(o);
+        weeklyDeliveredCount += 1;
+      }
+      if (deliveredAtCalendarDayInRange(o, monthStart, now)) {
+        monthly += orderLineTotalSumExcludingInvoice(o);
+        monthlyDeliveredCount += 1;
+      }
+    });
+    return { today, todayDeliveredCount, weekly, weeklyDeliveredCount, monthly, monthlyDeliveredCount };
+  }, [orders, customerFilter]);
 
   const totalPurchase = useMemo(() => {
     return filteredOrders.reduce((s, o) => {
@@ -445,6 +457,16 @@ export function AdminDashboardPage() {
             </select>
           </Filter>
         </div>
+        {!isModeratorView ? (
+          <p className="mt-3 text-xs text-slate-500">
+            <span className="font-semibold text-slate-700">Today / weekly / monthly sales</span> use completion date:{" "}
+            <span className="font-semibold text-slate-700">deliveredAt</span> when set, otherwise{" "}
+            <span className="font-semibold text-slate-700">billing invoice created</span> for invoiced-only orders
+            (line item totals; not billing invoice totals). The date range above filters by{" "}
+            <span className="font-semibold text-slate-700">order date</span> only for charts and tables below. Customer
+            filter still applies to those three cards.
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -458,6 +480,11 @@ export function AdminDashboardPage() {
           icon={BdTakaIcon}
           tone="coral"
           sparkSeed="dash-today-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.todayDeliveredCount} completed today (delivered or invoiced) · sum of line items`
+          }
         />
         <StatMetricCard
           title={isModeratorView ? "Pending bills" : "Weekly sales"}
@@ -469,6 +496,11 @@ export function AdminDashboardPage() {
           icon={CalendarDays}
           tone="teal"
           sparkSeed="dash-weekly-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.weeklyDeliveredCount} completed in last 7 days · sum of line items`
+          }
         />
         <StatMetricCard
           title={isModeratorView ? "Settled by admin" : "Monthly sales"}
@@ -480,6 +512,11 @@ export function AdminDashboardPage() {
           icon={BarChart3}
           tone="navy"
           sparkSeed="dash-monthly-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.monthlyDeliveredCount} completed in last 30 days · sum of line items`
+          }
         />
       </div>
 
@@ -817,6 +854,68 @@ function InsightList({
       </div>
     </div>
   );
+}
+
+/** Sum of line `lineTotal` only — does not use billing invoice totals (`grandTotal` / `billingSubtotal`). */
+function orderLineTotalSumExcludingInvoice(o: Order): number {
+  return o.lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
+}
+
+/**
+ * Calendar yyyy-mm-dd for delivered-at (handles MySQL "YYYY-MM-DD HH:mm:ss" without TZ quirks).
+ * ISO strings with T/Z still go through the local Date calendar.
+ */
+function calendarDayFromDeliveredAt(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  if (t.includes("T") || t.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(t)) {
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? null : formatIso(d);
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})[ T]/.exec(t);
+  if (m) return m[1];
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : formatIso(d);
+}
+
+/** Counts `delivered` and `invoiced` (after billing, status is no longer `delivered`). */
+function isDeliveredOrInvoicedForSalesKpi(o: Order): boolean {
+  return o.status === "delivered" || o.status === "invoiced";
+}
+
+/**
+ * Day used for today / weekly / monthly sales: `deliveredAt` when present; else billing invoice time for invoiced
+ * orders (covers legacy rows missing `deliveredAt`).
+ */
+function calendarDayForSalesKpi(o: Order): string | null {
+  const dAt = o.deliveredAt?.trim();
+  if (dAt) {
+    const fromDelivered = calendarDayFromDeliveredAt(dAt);
+    if (fromDelivered) return fromDelivered;
+  }
+  if (o.status === "invoiced") {
+    const inv = o.billingInvoiceCreatedAt?.trim();
+    if (inv) return calendarDayFromDeliveredAt(inv);
+  }
+  return null;
+}
+
+/** Completed order (`delivered` or `invoiced`) and completion calendar day in [startDay, endDay] inclusive. */
+function deliveredAtCalendarDayInRange(o: Order, startDay: Date, endDay: Date): boolean {
+  if (!isDeliveredOrInvoicedForSalesKpi(o)) return false;
+  const day = calendarDayForSalesKpi(o);
+  if (!day) return false;
+  const lo = formatIso(startDay);
+  const hi = formatIso(endDay);
+  return day >= lo && day <= hi;
+}
+
+/** Completed today: `delivered` or `invoiced`, using `calendarDayForSalesKpi`. */
+function deliveredStatusTodayLocalDay(o: Order, dayStart: Date): boolean {
+  if (!isDeliveredOrInvoicedForSalesKpi(o)) return false;
+  const day = calendarDayForSalesKpi(o);
+  if (!day) return false;
+  return day === formatIso(dayStart);
 }
 
 function parseIso(iso: string): Date | null {
