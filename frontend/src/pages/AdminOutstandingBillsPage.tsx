@@ -22,26 +22,25 @@ import {
   totalPaymentRoomOnOrders,
 } from "../lib/statementPaymentAllocation";
 import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
+import {
+  formatStatementAmount,
+  orderInvoiceRemainingExact,
+  previewPaidAfterPayNow,
+  roundMoney,
+} from "../lib/statementMoney";
 import type { Order } from "../types";
 
 type Range = "all" | "7d" | "30d" | "90d";
-
-function roundMoney(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 function billingStatementAmount(o: { grandTotal?: number; billingSubtotal?: number }): number {
   return Number(o.grandTotal ?? o.billingSubtotal ?? 0) || 0;
 }
 
-/** After save: cumulative total paid (current + pay now), clamped to [0, cap]. */
-function previewPaidAfterPayNow(cap: number, currentPaid: number, payNowRaw: string): number | null {
-  const t = payNowRaw.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n)) return null;
-  const sum = Math.round((currentPaid + n) * 100) / 100;
-  return Math.round(Math.min(cap, Math.max(0, sum)) * 100) / 100;
+function orderBillingRemaining(o: Order, cap: number, net: number): number {
+  if (o.billingAmountDue != null && Number.isFinite(o.billingAmountDue)) {
+    return Math.max(0, roundMoney(o.billingAmountDue));
+  }
+  return orderInvoiceRemainingExact(cap, net);
 }
 
 export function AdminOutstandingBillsPage() {
@@ -110,8 +109,7 @@ export function AdminOutstandingBillsPage() {
         const cap = invoiceCapForStatement(o, "billing");
         const net =
           oid != null ? netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments) : 0;
-        // Keep “Remaining” consistent with UI display (whole taka). Avoid lingering 0.01/0.1 due to rounding.
-        const remaining = Math.max(0, Math.round(cap) - Math.round(net));
+        const remaining = orderBillingRemaining(o, cap, net);
         return {
           id: o.id,
           order: o,
@@ -129,7 +127,7 @@ export function AdminOutstandingBillsPage() {
       })
       .sort((a, b) => a.issue.getTime() - b.issue.getTime());
 
-    return invoiceRows.filter((r) => r.remaining > 0.001).sort((a, b) => b.issue.getTime() - a.issue.getTime());
+    return invoiceRows.filter((r) => r.remaining >= 0.01).sort((a, b) => b.issue.getTime() - a.issue.getTime());
   }, [billingInvoiced, range, customer, transactions]);
 
   const adjustPayPreview = useMemo(() => {
@@ -145,7 +143,7 @@ export function AdminOutstandingBillsPage() {
     };
   }, [adjustOrder, adjustPayNowInput, transactions.payments, transactions.adjustments]);
 
-  const totalUnpaid = rows.reduce((s, r) => s + r.remaining, 0);
+  const totalUnpaid = roundMoney(rows.reduce((s, r) => s + r.remaining, 0));
   const pendingCount = rows.length;
   const overdueCount = rows.filter((r) => r.isOverdue).length;
   const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
@@ -221,7 +219,7 @@ export function AdminOutstandingBillsPage() {
           const room = totalPaymentRoomOnOrders(cycleOrders, "billing", transactions.payments, transactions.adjustments);
           if (delta > room + 0.02) {
             setSaveError(
-              `You can record at most ৳ ${Math.round(room).toLocaleString("en-US")} against this billing invoice (per-order cap).`,
+              `You can record at most ৳ ${formatStatementAmount(room)} against this billing invoice (per-order cap).`,
             );
             return;
           }
@@ -239,7 +237,7 @@ export function AdminOutstandingBillsPage() {
           const sum = roundMoney(chunks.reduce((s, c) => s + c.amount, 0));
           if (sum + 0.02 < delta) {
             setSaveError(
-              `Could not allocate ৳ ${Math.round(delta).toLocaleString("en-US")} (allocated ৳ ${Math.round(sum).toLocaleString("en-US")}).`,
+              `Could not allocate ৳ ${formatStatementAmount(delta)} (allocated ৳ ${formatStatementAmount(sum)}).`,
             );
             return;
           }
@@ -260,7 +258,7 @@ export function AdminOutstandingBillsPage() {
           const sum = roundMoney(adjChunks.reduce((s, c) => s + c.amount, 0));
           if (sum + 0.02 < need) {
             setSaveError(
-              `Cannot reduce recorded payments by ৳ ${Math.round(need).toLocaleString("en-US")} — only ৳ ${Math.round(sum).toLocaleString("en-US")} can be adjusted back.`,
+              `Cannot reduce recorded payments by ৳ ${formatStatementAmount(need)} — only ৳ ${formatStatementAmount(sum)} can be adjusted back.`,
             );
             return;
           }
@@ -309,7 +307,7 @@ export function AdminOutstandingBillsPage() {
       <div className="grid gap-3 md:grid-cols-3">
         <StatMetricCard
           title="Total unpaid amount"
-          value={`৳ ${Math.round(totalUnpaid).toLocaleString("en-US")}`}
+          value={`৳ ${formatStatementAmount(totalUnpaid)}`}
           icon={BdTakaIcon}
           tone="coral"
           sparkSeed="outstanding-total-unpaid"
@@ -388,10 +386,10 @@ export function AdminOutstandingBillsPage() {
                   <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.orderDate)}</td>
                   <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.deliveryDate)}</td>
                   <td className="px-3 py-3.5">{formatDateDdMmYyyy(formatIso(r.due))}</td>
-                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.cap).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {Math.round(r.netPaid).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.cap)}</td>
+                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.netPaid)}</td>
                   <td className="px-3 py-3.5 text-right font-semibold tabular-nums">
-                    ৳ {Math.round(r.remaining).toLocaleString("en-US")}
+                    ৳ {formatStatementAmount(r.remaining)}
                   </td>
                   <td className="px-3 py-3.5">
                     {r.isOverdue ? (
@@ -449,16 +447,20 @@ export function AdminOutstandingBillsPage() {
             <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-500">Invoice amount</p>
-                <p className="font-semibold text-slate-900">৳ {Math.round(adjustPayPreview.cap).toLocaleString("en-US")}</p>
+                <p className="font-semibold tabular-nums text-slate-900">
+                  ৳ {formatStatementAmount(adjustPayPreview.cap)}
+                </p>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
-                <p className="text-slate-500">Paid</p>
-                <p className="font-semibold text-slate-900">৳ {Math.round(adjustPayPreview.cur).toLocaleString("en-US")}</p>
+                <p className="text-slate-500">Paid (net)</p>
+                <p className="font-semibold tabular-nums text-slate-900">
+                  ৳ {formatStatementAmount(adjustPayPreview.cur)}
+                </p>
               </div>
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-slate-500">Balance</p>
-                <p className="font-semibold text-slate-900">
-                  ৳ {Math.round(Math.max(0, adjustPayPreview.cap - adjustPayPreview.cur)).toLocaleString("en-US")}
+                <p className="font-semibold tabular-nums text-slate-900">
+                  ৳ {formatStatementAmount(orderInvoiceRemainingExact(adjustPayPreview.cap, adjustPayPreview.cur))}
                 </p>
               </div>
             </div>
@@ -470,7 +472,7 @@ export function AdminOutstandingBillsPage() {
                 value={adjustPayNowInput}
                 onChange={(e) => setAdjustPayNowInput(e.target.value)}
                 className="mt-2 w-full rounded-xl border-2 border-red-300 bg-red-50/50 px-4 py-3 text-lg font-semibold text-red-900 outline-none focus:border-red-500 focus:ring-2 focus:ring-red-200"
-                placeholder="e.g. 20"
+                placeholder="e.g. 20 or 0.50"
                 autoComplete="off"
               />
             </label>
@@ -483,9 +485,9 @@ export function AdminOutstandingBillsPage() {
                 value={
                   adjustPayPreview.next == null
                     ? adjustPayNowInput.trim() === ""
-                      ? `৳ ${Math.round(adjustPayPreview.cur).toLocaleString("en-US")} (enter amount above)`
+                      ? `৳ ${formatStatementAmount(adjustPayPreview.cur)} (enter amount above)`
                       : "— (invalid number)"
-                    : `৳ ${Math.round(adjustPayPreview.next).toLocaleString("en-US")}`
+                    : `৳ ${formatStatementAmount(adjustPayPreview.next)}`
                 }
                 className="mt-2 w-full cursor-default rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-lg font-semibold text-slate-900"
               />

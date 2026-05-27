@@ -23,11 +23,11 @@ import {
 } from "../lib/statementPaymentAllocation";
 import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
 import {
-  billingInvoiceAmountTaka,
+  formatStatementAmount,
   formatStatementTaka,
-  pendingBillRemainingTaka,
+  orderInvoiceRemainingExact,
+  reconcileStatementDisplay,
   roundMoney,
-  statementBalanceDue,
 } from "../lib/statementMoney";
 import type { Order } from "../types";
 
@@ -139,7 +139,7 @@ export function AdminBillingStatementsPage() {
       const c = (o.contactPerson ?? "").trim() || "Unknown customer";
       const key = `${formatIso(start)}::${c}`;
       const prev = bucket.get(key);
-      const lineAmt = billingInvoiceAmountTaka(billingStatementAmount(o));
+      const lineAmt = roundMoney(invoiceCapForStatement(o, "billing"));
       bucket.set(key, {
         customer: c,
         start,
@@ -179,6 +179,28 @@ export function AdminBillingStatementsPage() {
     return Math.max(0, paymentsByKey.get(key) ?? 0);
   }
 
+  /** Exact invoice + carry-over due for this cycle row (paisa). */
+  function dueExactForRow(row: StatementRow): number {
+    const ordersInRow = ordersForStatementRow(row);
+    const invoicePart = ordersInRow.reduce(
+      (sum, o) => sum + roundMoney(invoiceCapForStatement(o, "billing")),
+      0,
+    );
+    return roundMoney(roundMoney(row.previousDue) + invoicePart);
+  }
+
+  function paidExactForRow(row: StatementRow): number {
+    return roundMoney(paidOf(row.key));
+  }
+
+  function displayAmounts(row: StatementRow) {
+    return reconcileStatementDisplay(
+      dueExactForRow(row),
+      paidExactForRow(row),
+      isCustomerBillingFullySettled(row.customer),
+    );
+  }
+
   function ordersForStatementRow(row: StatementRow): Order[] {
     const customer = row.customer.trim();
     return row.invoices
@@ -190,7 +212,7 @@ export function AdminBillingStatementsPage() {
       .filter((o): o is Order => Boolean(o));
   }
 
-  function orderBillingRemainingTaka(o: Order): number {
+  function orderBillingRemaining(o: Order): number {
     const oid = orderNumericId(o);
     const cap = invoiceCapForStatement(o, "billing");
     const net =
@@ -198,9 +220,9 @@ export function AdminBillingStatementsPage() {
         ? netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments)
         : 0;
     if (o.billingAmountDue != null && Number.isFinite(o.billingAmountDue)) {
-      return Math.max(0, Math.round(o.billingAmountDue));
+      return Math.max(0, roundMoney(o.billingAmountDue));
     }
-    return pendingBillRemainingTaka(cap, net);
+    return orderInvoiceRemainingExact(cap, net);
   }
 
   function isCustomerBillingFullySettled(customer: string): boolean {
@@ -212,17 +234,11 @@ export function AdminBillingStatementsPage() {
         (o.contactPerson ?? "").trim() === c,
     );
     if (invoiced.length === 0) return false;
-    return invoiced.every((o) => orderBillingRemainingTaka(o) === 0);
+    return invoiced.every((o) => orderBillingRemaining(o) < 0.01);
   }
 
-  /** Match Pending bills: per-order whole-taka remaining + carryover; clear when all customer invoices are paid. */
   function balanceOf(row: StatementRow): number {
-    if (isCustomerBillingFullySettled(row.customer)) return 0;
-
-    const ordersInRow = ordersForStatementRow(row);
-    const cycleRemainder = ordersInRow.reduce((sum, o) => sum + orderBillingRemainingTaka(o), 0);
-    const prevRemainder = Math.round(row.previousDue);
-    return statementBalanceDue(prevRemainder + cycleRemainder, 0);
+    return displayAmounts(row).balance;
   }
 
   function paymentStatusOf(row: StatementRow): "Paid" | "Partial" | "Unpaid" {
@@ -266,11 +282,17 @@ export function AdminBillingStatementsPage() {
 
   const listSource = viewMode === "active" ? activeStatements : historyStatements;
   const listTotals = useMemo(() => {
-    const totalDue = listSource.reduce((sum, row) => sum + roundMoney(row.totalDue), 0);
-    const totalPaid = listSource.reduce((sum, row) => sum + roundMoney(paidOf(row.key)), 0);
-    const totalBalance = listSource.reduce((sum, row) => sum + roundMoney(balanceOf(row)), 0);
+    let totalDue = 0;
+    let totalPaid = 0;
+    let totalBalance = 0;
+    for (const row of listSource) {
+      const d = displayAmounts(row);
+      totalDue += d.totalDue;
+      totalPaid += d.paid;
+      totalBalance += d.balance;
+    }
     return { totalDue, totalPaid, totalBalance };
-  }, [listSource, paymentsByKey]);
+  }, [listSource, paymentsByKey, transactions, orders]);
   const safePage = Math.min(page, Math.max(1, Math.ceil(listSource.length / perPage)));
   const paged = listSource.slice((safePage - 1) * perPage, safePage * perPage);
   const selected = selectedKey ? listSource.find((s) => s.key === selectedKey) ?? null : null;
@@ -284,10 +306,7 @@ export function AdminBillingStatementsPage() {
       const cap = o ? invoiceCapForStatement(o, "billing") : invoiceAmt;
       const net =
         oid != null ? netPaidAppliedOnOrder(oid, "billing", transactions.payments, transactions.adjustments) : 0;
-      const due =
-        o?.billingAmountDue != null && Number.isFinite(o.billingAmountDue)
-          ? Math.max(0, Math.round(o.billingAmountDue))
-          : pendingBillRemainingTaka(cap, net);
+      const due = o ? orderBillingRemaining(o) : orderInvoiceRemainingExact(cap, net);
       return {
         orderNo: inv.orderNo,
         orderDate: inv.orderDate,
@@ -342,6 +361,20 @@ export function AdminBillingStatementsPage() {
     rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : b.id - a.id));
     return rows;
   }, [selected, transactions.payments, transactions.adjustments, orders, cycleConfig]);
+
+  const billingHistoryTotals = useMemo(() => {
+    let payments = 0;
+    let adjustments = 0;
+    for (const r of statementBillingHistoryRows) {
+      if (r.kind === "payment") payments += Number(r.amount ?? 0);
+      else adjustments += Number(r.amount ?? 0);
+    }
+    return {
+      payments: roundMoney(payments),
+      adjustments: roundMoney(adjustments),
+      net: roundMoney(payments - adjustments),
+    };
+  }, [statementBillingHistoryRows]);
 
   useEffect(() => {
     if (!selected) setPaymentHistoryOpen(false);
@@ -451,18 +484,18 @@ export function AdminBillingStatementsPage() {
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <p className="text-xs text-slate-500">Total due ({viewMode})</p>
-            <p className="text-sm font-semibold">৳ {formatStatementTaka(listTotals.totalDue)}</p>
+            <p className="text-sm font-semibold">৳ {formatStatementAmount(listTotals.totalDue)}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
             <p className="text-xs text-emerald-700">Total paid ({viewMode})</p>
             <p className="text-sm font-semibold text-emerald-800">
-              ৳ {formatStatementTaka(listTotals.totalPaid)}
+              ৳ {formatStatementAmount(listTotals.totalPaid)}
             </p>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
             <p className="text-xs text-amber-700">Total balance ({viewMode})</p>
             <p className="text-sm font-semibold text-amber-900">
-              ৳ {formatStatementTaka(listTotals.totalBalance)}
+              ৳ {formatStatementAmount(listTotals.totalBalance)}
             </p>
           </div>
         </div>
@@ -483,7 +516,9 @@ export function AdminBillingStatementsPage() {
               </tr>
             </thead>
             <tbody>
-              {paged.map((r) => (
+              {paged.map((r) => {
+                const amt = displayAmounts(r);
+                return (
                 <tr
                   key={r.key}
                   onClick={() => setSelectedKey(r.key)}
@@ -502,11 +537,11 @@ export function AdminBillingStatementsPage() {
                   </td>
                   <td className="px-3 py-3.5">{r.invoiceCount}</td>
                   <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {formatStatementTaka(r.totalDue)}
+                    ৳ {formatStatementAmount(amt.totalDue)}
                   </td>
-                  <td className="px-3 py-3.5 text-right">৳ {formatStatementTaka(paidOf(r.key))}</td>
+                  <td className="px-3 py-3.5 text-right">৳ {formatStatementAmount(amt.paid)}</td>
                   <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {formatStatementTaka(balanceOf(r))}
+                    ৳ {formatStatementAmount(amt.balance)}
                   </td>
                   <td className="px-3 py-3.5">
                     <span
@@ -547,7 +582,8 @@ export function AdminBillingStatementsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
               {paged.length === 0 ? (
                 <tr className="border-t border-border bg-card">
                   <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
@@ -592,7 +628,11 @@ export function AdminBillingStatementsPage() {
           <p className="mt-2 text-xs text-slate-600">
             Totals below are from <strong>customer billing invoices</strong> in this cycle.{" "}
             <strong>Paid</strong> is net billing collections for this statement (supplier purchase side is separate).
+            When fully paid, <strong>Total due and Paid show the same amount</strong> (fractions included). Otherwise Total due = Paid + Balance (exact paisa).
           </p>
+          {(() => {
+            const amt = displayAmounts(selected);
+            return (
           <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <DetailStat
@@ -603,15 +643,22 @@ export function AdminBillingStatementsPage() {
                 label="Previous due carry-over"
                 value={`৳ ${formatStatementTaka(selected.previousDue)}`}
               />
-              <DetailStat label="Total bill due" value={`৳ ${formatStatementTaka(selected.totalDue)}`} />
-              <DetailStat
-                label="Paid (this cycle)"
-                value={`৳ ${formatStatementTaka(paidOf(selected.key))}`}
-              />
-              <DetailStat label="Balance due" value={`৳ ${formatStatementTaka(balanceOf(selected))}`} />
+              <DetailStat label="Total bill due (display)" value={`৳ ${formatStatementAmount(amt.totalDue)}`} />
+              <DetailStat label="Paid (this cycle)" value={`৳ ${formatStatementAmount(amt.paid)}`} />
+              <DetailStat label="Balance due" value={`৳ ${formatStatementAmount(amt.balance)}`} />
               <DetailStat label="Payment status" value={paymentStatusOf(selected)} />
             </div>
+            {Math.abs(amt.roundingGap) >= 0.01 ? (
+              <p className="mt-3 text-xs text-amber-800">
+                Rounding note: exact invoice + carry-over total ৳ {formatStatementAmount(amt.dueRaw)}, payments in
+                this cycle (net) ৳ {formatStatementAmount(amt.paidRaw)}. Difference ৳{" "}
+                {formatStatementAmount(Math.abs(amt.roundingGap))} is from per-invoice decimals vs whole-taka payments
+                — open <strong>Payment history</strong> to see each amount.
+              </p>
+            ) : null}
           </div>
+            );
+          })()}
 
           <div className="table-scroll mt-3 max-h-[min(40vh,320px)] rounded-2xl border border-border shadow-inner">
             <table className="min-w-[720px] w-full text-left text-base">
@@ -635,8 +682,8 @@ export function AdminBillingStatementsPage() {
                       {!row.hasOrder ? <span className="ml-1 text-xs font-normal text-amber-700">(order not in list)</span> : null}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-slate-700">{formatDateDdMmYyyy(row.orderDate)}</td>
-                    <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.cap)}</td>
-                    <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.net)}</td>
+                    <td className="px-3 py-3 text-right">৳ {formatStatementAmount(row.cap)}</td>
+                    <td className="px-3 py-3 text-right">৳ {formatStatementAmount(row.net)}</td>
                     <td className="px-3 py-3 text-right font-semibold">৳ {formatStatementTaka(row.due)}</td>
                   </tr>
                 ))}
@@ -717,7 +764,7 @@ export function AdminBillingStatementsPage() {
                       <td className="px-3 py-2 font-mono text-xs">{r.orderLabel}</td>
                       <td className="px-3 py-2 text-right font-semibold tabular-nums">
                         {r.kind === "adjustment" ? "−" : ""}
-                        {Math.round(r.amount).toLocaleString("en-US")}
+                        {formatStatementAmount(r.amount)}
                       </td>
                       <td className="max-w-[220px] px-3 py-2 text-xs text-slate-700 break-words">{r.note}</td>
                     </tr>
@@ -730,6 +777,25 @@ export function AdminBillingStatementsPage() {
                     </tr>
                   ) : null}
                 </tbody>
+                {statementBillingHistoryRows.length > 0 ? (
+                  <tfoot className="border-t-2 border-slate-200 bg-slate-50 text-xs font-semibold text-slate-800">
+                    <tr>
+                      <td colSpan={3} className="px-3 py-2">
+                        Cycle totals (exact amounts — fractions shown when present)
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        <div>Payments: ৳ {formatStatementAmount(billingHistoryTotals.payments)}</div>
+                        <div className="text-amber-900">
+                          Adjustments: −৳ {formatStatementAmount(billingHistoryTotals.adjustments)}
+                        </div>
+                        <div className="mt-1 border-t border-slate-200 pt-1">
+                          Net paid: ৳ {formatStatementAmount(billingHistoryTotals.net)}
+                        </div>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                ) : null}
               </table>
             </div>
           </div>

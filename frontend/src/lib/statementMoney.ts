@@ -3,19 +3,11 @@ export function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/**
- * Balance due for statement tables (whole-taka display).
- * Payments/adjustments are whole numbers; hide sub-1 taka leftovers so UI does not show "Balance 1"
- * for tiny fractions (e.g. 0.40 after rounding).
- */
+/** Balance = due − paid (exact paisa; fractions count). */
 export function statementBalanceDue(totalDue: number, paid: number): number {
   const due = roundMoney(totalDue);
   const p = roundMoney(Math.max(0, paid));
-  if (p <= 0) return due;
-  if (Math.round(p) >= Math.round(due)) return 0;
-  const raw = Math.max(0, due - p);
-  if (raw < 1) return 0;
-  return roundMoney(raw);
+  return Math.max(0, roundMoney(due - p));
 }
 
 export function statementPaymentStatus(
@@ -41,4 +33,79 @@ export function pendingBillRemainingTaka(cap: number, netPaid: number): number {
 /** Sum billing invoice amounts in whole taka (avoids 142204 vs 142203 drift from decimals). */
 export function billingInvoiceAmountTaka(amount: number): number {
   return Math.round(Number(amount) || 0);
+}
+
+/** Per-order balance (exact paisa) — same math as pending bills & statement per-order rows. */
+export function orderInvoiceRemainingExact(cap: number, netPaid: number): number {
+  return Math.max(0, roundMoney(cap) - roundMoney(netPaid));
+}
+
+/** After save: cumulative total paid (current + pay now), clamped to [0, cap] (2 decimal paisa). */
+export function previewPaidAfterPayNow(
+  cap: number,
+  currentPaid: number,
+  payNowRaw: string,
+): number | null {
+  const t = payNowRaw.trim().replace(",", ".");
+  if (t === "") return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  const capR = roundMoney(cap);
+  const curR = roundMoney(currentPaid);
+  return roundMoney(Math.min(capR, Math.max(0, curR + n)));
+}
+
+/** Show paisa when needed (payment history); otherwise whole taka. */
+export function formatStatementAmount(n: number): string {
+  const r = roundMoney(n);
+  if (Math.abs(r - Math.round(r)) < 0.005) {
+    return Math.round(r).toLocaleString("en-US");
+  }
+  return r.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+export type StatementDisplayAmounts = {
+  totalDue: number;
+  paid: number;
+  balance: number;
+  /** Cycle bucket: payments − adjustments (exact). */
+  paidRaw: number;
+  /** Row total due from invoices + carry-over (may include decimals). */
+  dueRaw: number;
+  /** dueRaw − paidRaw − balance (rounding / carry-over drift). */
+  roundingGap: number;
+};
+
+/**
+ * Statement row totals (exact paisa). When fully settled, Total due = Paid and Balance = 0.
+ */
+export function reconcileStatementDisplay(
+  dueExact: number,
+  paidExact: number,
+  fullySettled: boolean,
+): StatementDisplayAmounts {
+  const dueR = roundMoney(dueExact);
+  const paidR = roundMoney(Math.max(0, paidExact));
+  let balance = statementBalanceDue(dueR, paidR);
+
+  if (fullySettled || balance < 0.01) {
+    const settledAmount = paidR > 0 ? paidR : dueR;
+    return {
+      totalDue: settledAmount,
+      paid: settledAmount,
+      balance: 0,
+      paidRaw: paidR,
+      dueRaw: dueR,
+      roundingGap: roundMoney(dueR - paidR),
+    };
+  }
+
+  return {
+    totalDue: dueR,
+    paid: paidR,
+    balance,
+    paidRaw: paidR,
+    dueRaw: dueR,
+    roundingGap: roundMoney(dueR - paidR - balance),
+  };
 }
