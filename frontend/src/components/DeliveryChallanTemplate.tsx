@@ -1,6 +1,7 @@
 import type { Order, OrderLine } from "../types";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
 import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
+import { formatQtyLineBn, itemLabelBn } from "../lib/uiLabels";
 
 /** বাংলা ডেলিভারি চালান — শুধু বস্তু ও পরিমাণ, মূল্য ছাড়া। */
 export function DeliveryChallanTemplate({ order }: { order: Order }) {
@@ -67,10 +68,10 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-xs text-slate-500">ক্রমিক: {toBanglaNum(String(r.serial))}</p>
-                      <p className="font-semibold">{r.itemNameBn}</p>
+                      <p className="font-semibold">{itemLabelBn(r)}</p>
                     </div>
                     <p className="max-w-[14rem] rounded-lg bg-slate-50 px-2 py-1 text-left text-sm font-medium leading-relaxed whitespace-normal break-words">
-                      {formatQtyBangla(r)}
+                      {formatQtyLineBn(r.kg, r.gram, r.piece)}
                     </p>
                   </div>
                 </div>
@@ -89,8 +90,10 @@ export function DeliveryChallanTemplate({ order }: { order: Order }) {
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium whitespace-nowrap">{toBanglaNum(String(r.serial))}</td>
-                    <td className="px-3 py-2 font-semibold">{r.itemNameBn}</td>
-                    <td className="px-3 py-2 text-left whitespace-normal break-words leading-relaxed">{formatQtyBangla(r)}</td>
+                    <td className="px-3 py-2 font-semibold">{itemLabelBn(r)}</td>
+                    <td className="px-3 py-2 text-left whitespace-normal break-words leading-relaxed">
+                      {formatQtyLineBn(r.kg, r.gram, r.piece)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -134,24 +137,6 @@ function toBanglaNum(input: string): string {
     "9": "৯",
   };
   return input.replace(/[0-9]/g, (d) => map[d] ?? d);
-}
-
-function formatQtyBangla(line: OrderLine): string {
-  const piece = parseFloat(line.piece || "0");
-  const kg = parseFloat(line.kg || "0");
-  const gram = parseFloat(line.gram || "0");
-  if (piece > 0) return `${toBanglaNum(format2(piece))} পিস`;
-  const parts: string[] = [];
-  if (kg > 0) parts.push(`${toBanglaNum(format2(kg))} কেজি`);
-  if (gram > 0) parts.push(`${toBanglaNum(format2(gram))} গ্রাম`);
-  return parts.join(" ") || "—";
-}
-
-function format2(value: number): string {
-  return value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 }
 
 function toBanglaDate(iso: string): string {

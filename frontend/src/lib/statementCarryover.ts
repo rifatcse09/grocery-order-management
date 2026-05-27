@@ -1,9 +1,11 @@
+import { statementBalanceDue } from "./statementMoney";
+
 /**
  * Statement rows: "previous due" must be unpaid balance from older cycles for the same
  * customer, not the sum of prior invoice amounts (which ignores partial payments).
  *
  * Process cycles in order: customer name, then cycle start (oldest first). After each row,
- * carry forward max(0, totalDue − paid) for that cycle key.
+ * carry forward unpaid balance for that cycle (whole-taka rules; sub-1 taka not carried).
  */
 export type CycleStatementBucketRow = {
   key: string;
@@ -30,7 +32,7 @@ export function applyPaymentAwareCarryover<T extends CycleStatementBucketRow>(
     const previousDue = unpaidAfterCycle.get(ck) ?? 0;
     const totalDue = previousDue + row.invoiceTotal;
     const paid = Math.max(0, netPaidForKey(row.key));
-    const unpaid = Math.max(0, totalDue - paid);
+    const unpaid = statementBalanceDue(totalDue, paid);
     unpaidAfterCycle.set(ck, unpaid);
     return { ...row, previousDue, totalDue };
   });

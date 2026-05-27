@@ -22,6 +22,12 @@ import {
   statementBucketKeyForTxn,
 } from "../lib/statementPaymentAllocation";
 import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
+import {
+  formatStatementTaka,
+  roundMoney,
+  statementBalanceDue,
+  statementPaymentStatus,
+} from "../lib/statementMoney";
 
 interface PurchaseStatementRow {
   key: string;
@@ -179,16 +185,11 @@ export function PurchaseBillingStatementsPage() {
   }
 
   function balanceOf(row: PurchaseStatementRow): number {
-    return Math.max(0, roundMoney(row.totalDue) - roundMoney(paidOf(row.key)));
+    return statementBalanceDue(row.totalDue, paidOf(row.key));
   }
 
   function paymentStatusOf(row: PurchaseStatementRow): "Paid" | "Partial" | "Unpaid" {
-    const paid = roundMoney(paidOf(row.key));
-    const due = roundMoney(row.totalDue);
-    if (paid <= 0) return "Unpaid";
-    // Match UI display (whole-taka rounded values) to avoid tiny decimal leftovers showing as Partial.
-    if (Math.round(paid) >= Math.round(due)) return "Paid";
-    return "Partial";
+    return statementPaymentStatus(row.totalDue, paidOf(row.key));
   }
 
   /** Calendar deadline vs today, but once balance is cleared do not keep showing Overdue. */
@@ -244,7 +245,7 @@ export function PurchaseBillingStatementsPage() {
       const cap = o ? invoiceCapForStatement(o, "purchase") : invoiceAmt;
       const net =
         oid != null ? netPaidAppliedOnOrder(oid, "purchase", transactions.payments, transactions.adjustments) : 0;
-      const due = Math.max(0, roundMoney(cap) - roundMoney(net));
+      const due = statementBalanceDue(cap, net);
       return {
         orderNo: inv.orderNo,
         orderDate: inv.orderDate,
@@ -414,18 +415,18 @@ export function PurchaseBillingStatementsPage() {
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
             <p className="text-xs text-slate-500">Total due ({viewMode})</p>
-            <p className="text-sm font-semibold">৳ {Math.round(listTotals.totalDue).toLocaleString("en-US")}</p>
+            <p className="text-sm font-semibold">৳ {formatStatementTaka(listTotals.totalDue)}</p>
           </div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
             <p className="text-xs text-emerald-700">Total paid ({viewMode})</p>
             <p className="text-sm font-semibold text-emerald-800">
-              ৳ {Math.round(listTotals.totalPaid).toLocaleString("en-US")}
+              ৳ {formatStatementTaka(listTotals.totalPaid)}
             </p>
           </div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
             <p className="text-xs text-amber-700">Total balance ({viewMode})</p>
             <p className="text-sm font-semibold text-amber-900">
-              ৳ {Math.round(listTotals.totalBalance).toLocaleString("en-US")}
+              ৳ {formatStatementTaka(listTotals.totalBalance)}
             </p>
           </div>
         </div>
@@ -464,9 +465,9 @@ export function PurchaseBillingStatementsPage() {
                     <span className="ml-1 text-xs text-slate-500">· Due {formatDateDdMmYyyy(formatIso(r.dueDate))}</span>
                   </td>
                   <td className="px-3 py-3.5">{r.invoiceCount}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(r.totalDue).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right">৳ {Math.round(paidOf(r.key)).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(balanceOf(r)).toLocaleString("en-US")}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold">৳ {formatStatementTaka(r.totalDue)}</td>
+                  <td className="px-3 py-3.5 text-right">৳ {formatStatementTaka(paidOf(r.key))}</td>
+                  <td className="px-3 py-3.5 text-right font-semibold">৳ {formatStatementTaka(balanceOf(r))}</td>
                   <td className="px-3 py-3.5">
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -555,18 +556,18 @@ export function PurchaseBillingStatementsPage() {
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               <DetailStat
                 label="Purchase invoice total (cycle)"
-                value={`৳ ${Math.round(selected.invoiceTotal).toLocaleString("en-US")}`}
+                value={`৳ ${formatStatementTaka(selected.invoiceTotal)}`}
               />
               <DetailStat
                 label="Previous due carry-over"
-                value={`৳ ${Math.round(selected.previousDue).toLocaleString("en-US")}`}
+                value={`৳ ${formatStatementTaka(selected.previousDue)}`}
               />
-              <DetailStat label="Total bill due" value={`৳ ${Math.round(selected.totalDue).toLocaleString("en-US")}`} />
+              <DetailStat label="Total bill due" value={`৳ ${formatStatementTaka(selected.totalDue)}`} />
               <DetailStat
                 label="Paid (this cycle)"
-                value={`৳ ${Math.round(paidOf(selected.key)).toLocaleString("en-US")}`}
+                value={`৳ ${formatStatementTaka(paidOf(selected.key))}`}
               />
-              <DetailStat label="Balance due" value={`৳ ${Math.round(balanceOf(selected)).toLocaleString("en-US")}`} />
+              <DetailStat label="Balance due" value={`৳ ${formatStatementTaka(balanceOf(selected))}`} />
               <DetailStat label="Payment status" value={paymentStatusOf(selected)} />
             </div>
           </div>
@@ -594,9 +595,9 @@ export function PurchaseBillingStatementsPage() {
                       {!row.hasOrder ? <span className="ml-1 text-xs font-normal text-amber-700">(order not in list)</span> : null}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-slate-700">{formatDateDdMmYyyy(row.orderDate)}</td>
-                    <td className="px-3 py-3 text-right">৳ {Math.round(row.cap).toLocaleString("en-US")}</td>
-                    <td className="px-3 py-3 text-right">৳ {Math.round(row.net).toLocaleString("en-US")}</td>
-                    <td className="px-3 py-3 text-right font-semibold">৳ {Math.round(row.due).toLocaleString("en-US")}</td>
+                    <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.cap)}</td>
+                    <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.net)}</td>
+                    <td className="px-3 py-3 text-right font-semibold">৳ {formatStatementTaka(row.due)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -697,10 +698,6 @@ export function PurchaseBillingStatementsPage() {
 
     </div>
   );
-}
-
-function roundMoney(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function getPurchaseSubtotalFallback(order: { lines: Array<{ lineTotal?: number }> }) {

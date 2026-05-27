@@ -2,7 +2,7 @@ import type { Order, OrderLine } from "../types";
 import { formatMoneyBn, toBanglaDigits } from "../lib/banglaNumerals";
 import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
 import { billedAmountsForLine } from "../lib/billingLineAmounts";
-import { formatQtyLineBn } from "../lib/uiLabels";
+import { formatQtyLineBn, itemLabelBn } from "../lib/uiLabels";
 
 /** বাংলা ইনভয়েস — modern card layout inspired by sample UI. */
 export function BanglaInvoiceTemplate({
@@ -158,8 +158,7 @@ export function BanglaInvoiceTemplate({
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-xs text-slate-500">ক্রমিক: {toBanglaDigits(String(r.serial))}</p>
-                      <p className="font-semibold">{r.itemNameBn}</p>
-                      <p className="text-xs text-slate-500">{r.itemNameEn}</p>
+                      <p className="font-semibold">{itemLabelBn(r)}</p>
                     </div>
                     <p className="text-right text-sm font-semibold">৳ {formatMoneyBn(billedLine)}</p>
                   </div>
@@ -191,10 +190,7 @@ export function BanglaInvoiceTemplate({
                 {billedRows.map(({ line: r, billedUnit, billedLine }) => (
                   <tr key={r.id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium">{toBanglaDigits(String(r.serial))}</td>
-                    <td className="px-3 py-2">
-                      <p className="font-semibold">{r.itemNameBn}</p>
-                      <p className="text-xs text-slate-500">{r.itemNameEn}</p>
-                    </td>
+                    <td className="px-3 py-2 font-semibold">{itemLabelBn(r)}</td>
                     <td className="px-3 py-2">{formatQtyLineBn(r.kg, r.gram, r.piece)}</td>
                     <td className="px-3 py-2 text-right">৳ {formatMoneyBn(billedUnit)}</td>
                     <td className="px-3 py-2 text-right font-semibold">

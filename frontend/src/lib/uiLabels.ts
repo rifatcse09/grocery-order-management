@@ -38,7 +38,20 @@ function format2(value: number): string {
   });
 }
 
-/** Same as {@link formatQtyLine} with Western digits replaced by Bengali (invoice / Bangla print). */
+/** Item name for Bangla print views (invoice / challan) — Bangla only, no English subtitle. */
+export function itemLabelBn(line: { itemNameBn?: string }): string {
+  const bn = String(line.itemNameBn ?? "").trim();
+  return bn || "—";
+}
+
+/** Quantity for invoices / challan print — Bengali digits and unit labels (কেজি, গ্রাম, পিস). */
 export function formatQtyLineBn(kg: string, gram: string, piece: string): string {
-  return toBanglaDigits(formatQtyLine(kg, gram, piece));
+  const k = parseFloat(String(kg).replace(",", ".")) || 0;
+  const g = parseFloat(String(gram).replace(",", ".")) || 0;
+  const p = parseFloat(String(piece).replace(",", ".")) || 0;
+  if (p > 0) return `${toBanglaDigits(format2(p))} পিস`;
+  const parts: string[] = [];
+  if (k > 0) parts.push(`${toBanglaDigits(format2(k))} কেজি`);
+  if (g > 0) parts.push(`${toBanglaDigits(format2(g))} গ্রাম`);
+  return parts.join(" ") || "—";
 }
