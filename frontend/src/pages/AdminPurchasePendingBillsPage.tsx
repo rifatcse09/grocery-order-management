@@ -1,5 +1,7 @@
 import { AlertTriangle, FileStack } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { StatMetricCard } from "../components/StatMetricCard";
 import { useOrders } from "../context/OrdersContext";
 import { PaginationControls } from "../components/PaginationControls";
@@ -39,6 +41,14 @@ export function AdminPurchasePendingBillsPage() {
   const [customer, setCustomer] = useState("all");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
   const [transactions, setTransactions] = useState<{ payments: PaymentTxn[]; adjustments: AdjustmentTxn[] }>({
     payments: [],
     adjustments: [],
@@ -142,9 +152,63 @@ export function AdminPurchasePendingBillsPage() {
   const totalUnpaid = roundMoney(rows.reduce((s, r) => s + r.remaining, 0));
   const pendingCount = rows.length;
   const overdueCount = rows.filter((r) => r.isOverdue).length;
-  const totalPages = Math.max(1, Math.ceil(rows.length / perPage));
+
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return rows;
+    return [...rows].sort((a, b) => {
+      let av: string | number = "";
+      let bv: string | number = "";
+      if (sortKey === "orderNo") { av = a.orderNo; bv = b.orderNo; }
+      else if (sortKey === "customer") { av = a.customer; bv = b.customer; }
+      else if (sortKey === "invoiceDate") { av = a.issue.getTime(); bv = b.issue.getTime(); }
+      else if (sortKey === "orderDate") { av = a.order.orderDate ?? ""; bv = b.order.orderDate ?? ""; }
+      else if (sortKey === "deliveryDate") { av = a.order.deliveryDate ?? ""; bv = b.order.deliveryDate ?? ""; }
+      else if (sortKey === "dueDate") { av = a.due.getTime(); bv = b.due.getTime(); }
+      else if (sortKey === "cap") { av = a.cap; bv = b.cap; }
+      else if (sortKey === "netPaid") { av = a.netPaid; bv = b.netPaid; }
+      else if (sortKey === "remaining") { av = a.remaining; bv = b.remaining; }
+      else if (sortKey === "overdueDays") { av = a.overdueDays; bv = b.overdueDays; }
+      const cmp = typeof av === "number" ? (av as number) - (bv as number) : String(av).localeCompare(String(bv), undefined, { sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, sortKey, sortDir]);
+
+  const PENDING_BILLS_COLS = [
+    { key: "orderNo", label: "Invoice / Order" },
+    { key: "customer", label: "Customer" },
+    { key: "invoiceDate", label: "Invoice date" },
+    { key: "orderDate", label: "Order date" },
+    { key: "deliveryDate", label: "Delivery date" },
+    { key: "dueDate", label: "Due date" },
+    { key: "cap", label: "Invoice" },
+    { key: "netPaid", label: "Net paid" },
+    { key: "remaining", label: "Remaining" },
+    { key: "overdueDays", label: "Overdue" },
+  ];
+  const { visibleColumns: pendingBillsVisibleCols, toggleColumn: togglePendingBillsCol, isVisible: pendingBillsColVisible } = useColumnVisibility(PENDING_BILLS_COLS);
+
+  const getPendingBillsData = () => {
+    const headers = PENDING_BILLS_COLS.filter((c) => pendingBillsColVisible(c.key)).map((c) => c.label);
+    const exportRows = sortedRows.map((r) => {
+      const cols: string[] = [];
+      if (pendingBillsColVisible("orderNo")) cols.push(r.orderNo);
+      if (pendingBillsColVisible("customer")) cols.push(r.customer);
+      if (pendingBillsColVisible("invoiceDate")) cols.push(r.invoiceDateDisplay);
+      if (pendingBillsColVisible("orderDate")) cols.push(r.order.orderDate ?? "");
+      if (pendingBillsColVisible("deliveryDate")) cols.push(r.order.deliveryDate ?? "");
+      if (pendingBillsColVisible("dueDate")) cols.push(formatIso(r.due));
+      if (pendingBillsColVisible("cap")) cols.push(String(r.cap));
+      if (pendingBillsColVisible("netPaid")) cols.push(String(r.netPaid));
+      if (pendingBillsColVisible("remaining")) cols.push(String(r.remaining));
+      if (pendingBillsColVisible("overdueDays")) cols.push(r.isOverdue ? `${r.overdueDays} days` : "");
+      return cols;
+    });
+    return { headers, rows: exportRows };
+  };
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / perPage));
   const safePage = Math.min(page, totalPages);
-  const pagedRows = rows.slice((safePage - 1) * perPage, safePage * perPage);
+  const pagedRows = sortedRows.slice((safePage - 1) * perPage, safePage * perPage);
 
   useEffect(() => {
     setPage(1);
@@ -360,48 +424,49 @@ export function AdminPurchasePendingBillsPage() {
           </label>
         </div>
 
-        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-500">Showing <strong>{sortedRows.length}</strong> pending bills</p>
+          <ExportToolbar filename="purchase-pending-bills" columns={PENDING_BILLS_COLS} visibleColumns={pendingBillsVisibleCols} onToggleColumn={togglePendingBillsCol} getData={getPendingBillsData} />
+        </div>
+
+        <div className="table-scroll mt-2 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
           <table className="min-w-[1040px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
-                <th className="px-3 py-2">Invoice / Order</th>
-                <th className="px-3 py-2">Customer</th>
-                <th className="px-3 py-2 whitespace-nowrap">Invoice date</th>
-                <th className="px-3 py-2 whitespace-nowrap">Order date</th>
-                <th className="px-3 py-2 whitespace-nowrap">Delivery date</th>
-                <th className="px-3 py-2">Due date</th>
-                <th className="px-3 py-2 text-right">Invoice</th>
-                <th className="px-3 py-2 text-right">Net paid</th>
-                <th className="px-3 py-2 text-right">Remaining</th>
-                <th className="px-3 py-2">Overdue</th>
+                {pendingBillsColVisible("orderNo") && <th className="px-3 py-2"><SortableHeader label="Invoice / Order" field="orderNo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("customer") && <th className="px-3 py-2"><SortableHeader label="Customer" field="customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("invoiceDate") && <th className="px-3 py-2 whitespace-nowrap"><SortableHeader label="Invoice date" field="invoiceDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("orderDate") && <th className="px-3 py-2 whitespace-nowrap"><SortableHeader label="Order date" field="orderDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("deliveryDate") && <th className="px-3 py-2 whitespace-nowrap"><SortableHeader label="Delivery date" field="deliveryDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("dueDate") && <th className="px-3 py-2"><SortableHeader label="Due date" field="dueDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("cap") && <th className="px-3 py-2 text-right"><SortableHeader label="Invoice" field="cap" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("netPaid") && <th className="px-3 py-2 text-right"><SortableHeader label="Net paid" field="netPaid" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("remaining") && <th className="px-3 py-2 text-right"><SortableHeader label="Remaining" field="remaining" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {pendingBillsColVisible("overdueDays") && <th className="px-3 py-2"><SortableHeader label="Overdue" field="overdueDays" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
                 {canAdjust ? <th className="px-3 py-2 text-right">Action</th> : null}
               </tr>
             </thead>
             <tbody>
               {pagedRows.map((r) => (
                 <tr key={r.id} className={`border-t border-border ${r.isOverdue ? "bg-red-50" : "bg-card"}`}>
-                  <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>
-                  <td className="px-3 py-3.5 font-medium">{r.customer}</td>
-                  <td className="px-3 py-3.5 whitespace-nowrap">{r.invoiceDateDisplay}</td>
-                  <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.orderDate)}</td>
-                  <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.deliveryDate)}</td>
-                  <td className="px-3 py-3.5">{formatDateDdMmYyyy(formatIso(r.due))}</td>
-                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.cap)}</td>
-                  <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.netPaid)}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold tabular-nums">
-                    ৳ {formatStatementAmount(r.remaining)}
-                  </td>
-                  <td className="px-3 py-3.5">
-                    {r.isOverdue ? (
-                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        {r.overdueDays} days
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                        On time
-                      </span>
-                    )}
-                  </td>
+                  {pendingBillsColVisible("orderNo") && <td className="px-3 py-3.5 font-semibold">{r.orderNo}</td>}
+                  {pendingBillsColVisible("customer") && <td className="px-3 py-3.5 font-medium">{r.customer}</td>}
+                  {pendingBillsColVisible("invoiceDate") && <td className="px-3 py-3.5 whitespace-nowrap">{r.invoiceDateDisplay}</td>}
+                  {pendingBillsColVisible("orderDate") && <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.orderDate)}</td>}
+                  {pendingBillsColVisible("deliveryDate") && <td className="px-3 py-3.5 whitespace-nowrap">{formatDateDdMmYyyyOrDash(r.order.deliveryDate)}</td>}
+                  {pendingBillsColVisible("dueDate") && <td className="px-3 py-3.5">{formatDateDdMmYyyy(formatIso(r.due))}</td>}
+                  {pendingBillsColVisible("cap") && <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.cap)}</td>}
+                  {pendingBillsColVisible("netPaid") && <td className="px-3 py-3.5 text-right tabular-nums">৳ {formatStatementAmount(r.netPaid)}</td>}
+                  {pendingBillsColVisible("remaining") && <td className="px-3 py-3.5 text-right font-semibold tabular-nums">৳ {formatStatementAmount(r.remaining)}</td>}
+                  {pendingBillsColVisible("overdueDays") && (
+                    <td className="px-3 py-3.5">
+                      {r.isOverdue ? (
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">{r.overdueDays} days</span>
+                      ) : (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">On time</span>
+                      )}
+                    </td>
+                  )}
                   {canAdjust ? (
                     <td className="px-3 py-3.5 text-right">
                       <button
@@ -421,7 +486,7 @@ export function AdminPurchasePendingBillsPage() {
         </div>
 
         <PaginationControls
-          totalItems={rows.length}
+          totalItems={sortedRows.length}
           page={safePage}
           perPage={perPage}
           onPageChange={setPage}

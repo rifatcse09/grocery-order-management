@@ -13,14 +13,17 @@ class AdminUserController extends Controller
     private function toFrontend(User $user): array
     {
         return [
-            'id' => (string) $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'phone' => $user->phone,
-            'role' => $user->role,
-            'billingAddress' => $user->billing_address,
+            'id'              => (string) $user->id,
+            'name'            => $user->name,
+            'email'           => $user->email,
+            'phone'           => $user->phone,
+            'role'            => $user->role,
+            'billingAddress'  => $user->billing_address,
             'deliveryAddress' => $user->delivery_address,
-            'isActive' => (bool) $user->is_active,
+            'isActive'        => (bool) $user->is_active,
+            'emailVerifiedAt' => $user->email_verified_at?->toIso8601String(),
+            'created_at'      => $user->created_at?->toIso8601String(),
+            'updated_at'      => $user->updated_at?->toIso8601String(),
         ];
     }
 

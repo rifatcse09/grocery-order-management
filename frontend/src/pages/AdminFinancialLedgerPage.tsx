@@ -1,5 +1,7 @@
 import { Banknote, Receipt, RefreshCw, Scale } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { useLocation } from "react-router-dom";
 import { StatMetricCard } from "../components/StatMetricCard";
 import { PaginationControls } from "../components/PaginationControls";
@@ -39,6 +41,15 @@ export function AdminFinancialLedgerPage() {
   const [customerFilter, setCustomerFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
   const [ledgerRows, setLedgerRows] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,14 +115,19 @@ export function AdminFinancialLedgerPage() {
     });
   }, [normalized, bookFilter, typeFilter, customerFilter, query]);
 
+  const sortedFiltered = useMemo(() => {
+    if (!sortKey) return filtered;
+    return sortRows(filtered, sortKey as keyof typeof filtered[0], sortDir);
+  }, [filtered, sortKey, sortDir]);
+
   const rows = useMemo(() => {
     let balance = 0;
-    const withBalance = filtered.map((r) => {
+    const withBalance = sortedFiltered.map((r) => {
       balance += r.credit - r.debit;
       return { ...r, balance };
     });
-    return withBalance.reverse();
-  }, [filtered]);
+    return sortKey ? withBalance : withBalance.reverse();
+  }, [sortedFiltered, sortKey]);
 
   const totalDebit = filtered.reduce((s, r) => s + r.debit, 0);
   const totalCredit = filtered.reduce((s, r) => s + r.credit, 0);
@@ -120,6 +136,37 @@ export function AdminFinancialLedgerPage() {
 
   const safePage = Math.min(page, Math.max(1, Math.ceil(rows.length / perPage)));
   const pagedRows = rows.slice((safePage - 1) * perPage, safePage * perPage);
+
+  const LEDGER_COLS = [
+    { key: "date", label: "Date" },
+    { key: "book", label: "Book" },
+    { key: "customer", label: "Customer" },
+    { key: "ref", label: "Reference" },
+    { key: "entryLabel", label: "Entry" },
+    { key: "type", label: "Type" },
+    { key: "debit", label: "Debit" },
+    { key: "credit", label: "Credit" },
+    { key: "balance", label: "Running balance" },
+  ];
+  const { visibleColumns: ledgerVisibleCols, toggleColumn: toggleLedgerCol, isVisible: ledgerColVisible } = useColumnVisibility(LEDGER_COLS);
+
+  const getLedgerData = () => {
+    const headers = LEDGER_COLS.filter((c) => ledgerColVisible(c.key)).map((c) => c.label);
+    const exportRows = rows.map((r) => {
+      const cols: string[] = [];
+      if (ledgerColVisible("date")) cols.push(r.date);
+      if (ledgerColVisible("book")) cols.push(ledgerBookLabel(r.book));
+      if (ledgerColVisible("customer")) cols.push(r.customer);
+      if (ledgerColVisible("ref")) cols.push(r.ref);
+      if (ledgerColVisible("entryLabel")) cols.push(r.entryLabel);
+      if (ledgerColVisible("type")) cols.push(r.type);
+      if (ledgerColVisible("debit")) cols.push(r.debit > 0 ? String(r.debit) : "");
+      if (ledgerColVisible("credit")) cols.push(r.credit > 0 ? String(r.credit) : "");
+      if (ledgerColVisible("balance")) cols.push(String(r.balance));
+      return cols;
+    });
+    return { headers, rows: exportRows };
+  };
 
   return (
     <div className="space-y-4">
@@ -235,19 +282,24 @@ export function AdminFinancialLedgerPage() {
           </label>
         </div>
 
-        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border bg-white shadow-inner">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-500">Showing <strong>{rows.length}</strong> entries</p>
+          <ExportToolbar filename="ledger-export" columns={LEDGER_COLS} visibleColumns={ledgerVisibleCols} onToggleColumn={toggleLedgerCol} getData={getLedgerData} />
+        </div>
+
+        <div className="table-scroll mt-2 max-h-[min(70vh,640px)] rounded-2xl border border-border bg-white shadow-inner">
           <table className="min-w-[960px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Book</th>
-                <th className="px-3 py-2">Customer</th>
-                <th className="px-3 py-2">Reference</th>
-                <th className="px-3 py-2">Entry</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2 text-right">Debit</th>
-                <th className="px-3 py-2 text-right">Credit</th>
-                <th className="px-3 py-2 text-right">Running balance</th>
+                {ledgerColVisible("date") && <th className="px-3 py-2"><SortableHeader label="Date" field="date" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("book") && <th className="px-3 py-2"><SortableHeader label="Book" field="book" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("customer") && <th className="px-3 py-2"><SortableHeader label="Customer" field="customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("ref") && <th className="px-3 py-2"><SortableHeader label="Reference" field="ref" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("entryLabel") && <th className="px-3 py-2"><SortableHeader label="Entry" field="entryLabel" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("type") && <th className="px-3 py-2"><SortableHeader label="Type" field="type" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("debit") && <th className="px-3 py-2 text-right"><SortableHeader label="Debit" field="debit" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("credit") && <th className="px-3 py-2 text-right"><SortableHeader label="Credit" field="credit" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {ledgerColVisible("balance") && <th className="px-3 py-2 text-right">Running balance</th>}
               </tr>
             </thead>
             <tbody>
@@ -260,27 +312,19 @@ export function AdminFinancialLedgerPage() {
               ) : null}
               {pagedRows.map((r) => (
                 <tr key={r.id} className="border-t border-border bg-card">
-                  <td className="px-3 py-3.5">{r.date}</td>
-                  <td className="px-3 py-3.5 text-xs font-semibold text-slate-700">{ledgerBookLabel(r.book)}</td>
-                  <td className="px-3 py-3.5 font-medium">{r.customer}</td>
-                  <td className="px-3 py-3.5 font-mono text-sm text-slate-800">{r.orderNo || "—"}</td>
-                  <td className="px-3 py-3.5 text-sm text-slate-800">{r.entryLabel}</td>
-                  <td className="px-3 py-3.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        r.type === "Invoice"
-                          ? "bg-muted text-primary"
-                          : r.type === "Payment"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {r.type}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.debit).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right">৳ {Math.round(r.credit).toLocaleString("en-US")}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(r.balance).toLocaleString("en-US")}</td>
+                  {ledgerColVisible("date") && <td className="px-3 py-3.5">{r.date}</td>}
+                  {ledgerColVisible("book") && <td className="px-3 py-3.5 text-xs font-semibold text-slate-700">{ledgerBookLabel(r.book)}</td>}
+                  {ledgerColVisible("customer") && <td className="px-3 py-3.5 font-medium">{r.customer}</td>}
+                  {ledgerColVisible("ref") && <td className="px-3 py-3.5 font-mono text-sm text-slate-800">{r.orderNo || "—"}</td>}
+                  {ledgerColVisible("entryLabel") && <td className="px-3 py-3.5 text-sm text-slate-800">{r.entryLabel}</td>}
+                  {ledgerColVisible("type") && (
+                    <td className="px-3 py-3.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${r.type === "Invoice" ? "bg-muted text-primary" : r.type === "Payment" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{r.type}</span>
+                    </td>
+                  )}
+                  {ledgerColVisible("debit") && <td className="px-3 py-3.5 text-right">৳ {Math.round(r.debit).toLocaleString("en-US")}</td>}
+                  {ledgerColVisible("credit") && <td className="px-3 py-3.5 text-right">৳ {Math.round(r.credit).toLocaleString("en-US")}</td>}
+                  {ledgerColVisible("balance") && <td className="px-3 py-3.5 text-right font-semibold">৳ {Math.round(r.balance).toLocaleString("en-US")}</td>}
                 </tr>
               ))}
               {!loading && pagedRows.length === 0 ? (

@@ -1,5 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { Eye, MoreVertical, Search, Trash2, Truck } from "lucide-react";
 import { useOrders } from "../context/OrdersContext";
 import { useAuth } from "../context/AuthContext";
@@ -7,6 +9,7 @@ import { apiDeleteOrder, apiEnabled, apiMarkOrderDelivered } from "../lib/api";
 import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
 import { StatusBadge } from "../components/StatusBadge";
 import { PaginationControls } from "../components/PaginationControls";
+import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { NOTIFICATIONS_EVENT, readAdminNotifyOrderIds } from "../lib/orderNotifications";
 import { hasBillingInvoice, hasPurchaseInvoice } from "../lib/invoiceFlow";
 import { type Order, type OrderStatus, isAdministrationRole } from "../types";
@@ -69,7 +72,7 @@ function AdminDocCell({ children }: { children: ReactNode }) {
 
 export function AdminOrdersPage() {
   const { user } = useAuth();
-  const { orders, loadOrders } = useOrders();
+  const { orders, loadOrders, deleteOrder } = useOrders();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [customer, setCustomer] = useState("all");
@@ -89,6 +92,47 @@ export function AdminOrdersPage() {
   const [deliverBusyId, setDeliverBusyId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [showDeletedOrders, setShowDeletedOrders] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Order | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
+
+  const ORDER_COLS = [
+    { key: "orderNo", label: "Order" },
+    { key: "contactPerson", label: "Customer" },
+    { key: "createdByName", label: "Created by" },
+    { key: "deliveryDate", label: "Delivery" },
+    { key: "deliveredAt", label: "Delivered" },
+    { key: "status", label: "Status" },
+    { key: "challan", label: "Challan" },
+    { key: "purchaseInvoice", label: "Purchase invoice" },
+    { key: "billingInvoice", label: "Billing invoice" },
+  ];
+  const { visibleColumns: orderVisibleCols, toggleColumn: toggleOrderCol, isVisible: orderColVisible } = useColumnVisibility(ORDER_COLS);
+
+  const getOrderData = () => {
+    const headers = ORDER_COLS.filter((c) => orderColVisible(c.key)).map((c) => c.label);
+    const rows = sorted.map((o) => {
+      const cols: string[] = [];
+      if (orderColVisible("orderNo")) cols.push(o.orderNo);
+      if (orderColVisible("contactPerson")) cols.push(o.contactPerson);
+      if (orderColVisible("createdByName")) cols.push(o.createdByName ?? "");
+      if (orderColVisible("deliveryDate")) cols.push(o.deliveryDate ?? "");
+      if (orderColVisible("deliveredAt")) cols.push(o.deliveredAt ?? "");
+      if (orderColVisible("status")) cols.push(o.status);
+      if (orderColVisible("challan")) cols.push(o.challanGenerated ? "Yes" : "No");
+      if (orderColVisible("purchaseInvoice")) cols.push(hasPurchaseInvoice(o) ? "Yes" : "No");
+      if (orderColVisible("billingInvoice")) cols.push(hasBillingInvoice(o) ? "Yes" : "No");
+      return cols;
+    });
+    return { headers, rows };
+  };
 
   const mode = useMemo<"orders" | "purchase" | "billing">(() => {
     if (location.pathname.startsWith("/admin/purchase-invoices")) return "purchase";
@@ -107,15 +151,15 @@ export function AdminOrdersPage() {
   }, [loadOrders, listLoadOpts]);
 
   async function softDeleteOrderFromList(o: Order) {
-    if (!apiEnabled() || o.deletedAt) return;
-    const ok = window.confirm(
-      `Soft-delete order ${o.orderNo}? It will be hidden from normal lists and totals; active invoices are voided with ledger adjustments. You can still find it with “Show soft-deleted orders”.`,
-    );
-    if (!ok) return;
+    if (o.deletedAt) return;
     setListError(null);
     try {
-      await apiDeleteOrder(o.id);
-      await loadOrders(listLoadOpts);
+      if (apiEnabled()) {
+        await apiDeleteOrder(o.id);
+        await loadOrders(listLoadOpts);
+      } else {
+        deleteOrder(o.id);
+      }
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Soft-delete failed.");
     }
@@ -158,14 +202,7 @@ export function AdminOrdersPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const staffId = user?.id ? String(user.id) : "";
-
     return orders.filter((o) => {
-      /* New bookkeeping orders are draft until submitted; hide others' drafts, show your own. */
-      if (o.status === "draft") {
-        const creator = String(o.createdById ?? "");
-        if (!staffId || creator !== staffId) return false;
-      }
       if (status !== "all" && o.status !== status) return false;
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
@@ -185,11 +222,16 @@ export function AdminOrdersPage() {
         formatCreatorRoleLabel(o.createdByRole || "").toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter, mode, user?.id]);
+  }, [orders, query, status, customer, docFilter, mode]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    return sortRows(filtered, sortKey as keyof Order, sortDir);
+  }, [filtered, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageList = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageList = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <div className="space-y-6">
@@ -314,103 +356,72 @@ export function AdminOrdersPage() {
               </select>
             </label>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Showing <strong className="text-slate-700">{filtered.length}</strong> of {orders.length} orders
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              Showing <strong className="text-slate-700">{sorted.length}</strong> of {orders.length} orders
+            </p>
+            <ExportToolbar
+              filename="orders-export"
+              columns={ORDER_COLS}
+              visibleColumns={orderVisibleCols}
+              onToggleColumn={toggleOrderCol}
+              getData={getOrderData}
+            />
+          </div>
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="min-w-[1280px] w-full text-left text-base">
             <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
-                <th className="px-4 py-3">Order</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3 min-w-[140px]">Created by</th>
-                <th className="px-4 py-3 min-w-[160px]">Delivery</th>
-                <th className="px-4 py-3 min-w-[160px]">Delivered</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Challan</th>
-                <th className="px-4 py-3">Purchase invoice</th>
-                <th className="px-4 py-3">Billing invoice</th>
+                {orderColVisible("orderNo") && <th className="px-4 py-3"><SortableHeader label="Order" field="orderNo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("contactPerson") && <th className="px-4 py-3"><SortableHeader label="Customer" field="contactPerson" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("createdByName") && <th className="px-4 py-3 min-w-[140px]"><SortableHeader label="Created by" field="createdByName" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("deliveryDate") && <th className="px-4 py-3 min-w-[160px]"><SortableHeader label="Delivery" field="deliveryDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("deliveredAt") && <th className="px-4 py-3 min-w-[160px]"><SortableHeader label="Delivered" field="deliveredAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("status") && <th className="px-4 py-3"><SortableHeader label="Status" field="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {orderColVisible("challan") && <th className="px-4 py-3">Challan</th>}
+                {orderColVisible("purchaseInvoice") && <th className="px-4 py-3">Purchase invoice</th>}
+                {orderColVisible("billingInvoice") && <th className="px-4 py-3">Billing invoice</th>}
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {pageList.map((o) => (
                 <tr key={o.id} className="border-t border-border bg-card">
-                  <td className="px-4 py-3 align-middle">
+                  {orderColVisible("orderNo") && <td className="px-4 py-3 align-middle">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-base font-semibold text-slate-900">{o.orderNo}</span>
-                      {adminNewIds.includes(o.id) ? (
-                        <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 shadow-sm">
-                          New
-                        </span>
-                      ) : null}
-                      {o.deletedAt ? (
-                        <span className="rounded-full bg-slate-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-                          Deleted
-                        </span>
-                      ) : null}
+                      {adminNewIds.includes(o.id) ? <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-950 shadow-sm">New</span> : null}
+                      {o.deletedAt ? <span className="rounded-full bg-slate-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">Deleted</span> : null}
                     </div>
-                  </td>
-                  <td className="px-4 py-3 align-middle text-base font-semibold text-slate-800">{o.contactPerson}</td>
-                  <td className="px-4 py-3 align-middle">
-                    <OrderCreatedByCell order={o} />
-                  </td>
-                  <td className="px-4 py-3 align-middle text-sm text-slate-800">
-                    <OrderScheduledDeliveryCell order={o} />
-                  </td>
-                  <td className="px-4 py-3 align-middle text-sm text-slate-800">
-                    <OrderDeliveredAtCell order={o} />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
-                    <StatusBadge status={o.status} />
-                  </td>
-                  <td className="px-4 py-3 align-middle">
+                  </td>}
+                  {orderColVisible("contactPerson") && <td className="px-4 py-3 align-middle text-base font-semibold text-slate-800">{o.contactPerson}</td>}
+                  {orderColVisible("createdByName") && <td className="px-4 py-3 align-middle"><OrderCreatedByCell order={o} /></td>}
+                  {orderColVisible("deliveryDate") && <td className="px-4 py-3 align-middle text-sm text-slate-800"><OrderScheduledDeliveryCell order={o} /></td>}
+                  {orderColVisible("deliveredAt") && <td className="px-4 py-3 align-middle text-sm text-slate-800"><OrderDeliveredAtCell order={o} /></td>}
+                  {orderColVisible("status") && <td className="px-4 py-3 align-middle"><StatusBadge status={o.status} /></td>}
+                  {orderColVisible("challan") && <td className="px-4 py-3 align-middle">
                     <AdminDocCell>
                       {o.challanGenerated ? (
-                        <Link
-                          to={`/admin/challans/${o.id}`}
-                          title="Open delivery challan"
-                          className={`${adminDocLinkClass} border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100`}
-                        >
-                          View challan
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
+                        <Link to={`/admin/challans/${o.id}`} title="Open delivery challan" className={`${adminDocLinkClass} border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100`}>View challan</Link>
+                      ) : <span className="text-xs text-slate-400">—</span>}
                     </AdminDocCell>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
+                  </td>}
+                  {orderColVisible("purchaseInvoice") && <td className="px-4 py-3 align-middle">
                     <AdminDocCell>
                       {hasPurchaseInvoice(o) ? (
-                        <Link
-                          to={`/admin/purchase-invoices/${o.id}`}
-                          title="Open purchase invoice"
-                          className={`${adminDocLinkClass} border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100`}
-                        >
-                          View purchase invoice
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
+                        <Link to={`/admin/purchase-invoices/${o.id}`} title="Open purchase invoice" className={`${adminDocLinkClass} border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100`}>View purchase invoice</Link>
+                      ) : <span className="text-xs text-slate-400">—</span>}
                     </AdminDocCell>
-                  </td>
-                  <td className="px-4 py-3 align-middle">
+                  </td>}
+                  {orderColVisible("billingInvoice") && <td className="px-4 py-3 align-middle">
                     <AdminDocCell>
                       {hasBillingInvoice(o) ? (
-                        <Link
-                          to={`/admin/billing-invoices/${o.id}`}
-                          title="Open billing invoice"
-                          className={`${adminDocLinkClass} border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100`}
-                        >
-                          View invoice
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-slate-400">—</span>
-                      )}
+                        <Link to={`/admin/billing-invoices/${o.id}`} title="Open billing invoice" className={`${adminDocLinkClass} border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100`}>View invoice</Link>
+                      ) : <span className="text-xs text-slate-400">—</span>}
                     </AdminDocCell>
-                  </td>
+                  </td>}
                   <td className="px-4 py-3 align-middle text-right">
                     <div className={`${tableActionsWideSingle()} flex flex-wrap items-center gap-1`}>
                       <Button
@@ -424,15 +435,15 @@ export function AdminOrdersPage() {
                           <Eye className="h-4 w-4" />
                         </Link>
                       </Button>
-                      {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                      {canAdminPanel && !o.deletedAt ? (
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
                           className="h-9 w-9 text-red-600 hover:text-red-700"
-                          title="Soft-delete order"
-                          aria-label="Soft-delete order"
-                          onClick={() => void softDeleteOrderFromList(o)}
+                          title="Delete order"
+                          aria-label="Delete order"
+                          onClick={() => setDeleteTarget(o)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -481,16 +492,13 @@ export function AdminOrdersPage() {
                               Mark delivery complete
                             </DropdownMenuItem>
                           ) : null}
-                          {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                          {canAdminPanel && !o.deletedAt ? (
                             <DropdownMenuItem
                               className="cursor-pointer gap-2 text-red-600 focus:text-red-600"
-                              onSelect={(e) => {
-                                e.preventDefault();
-                                void softDeleteOrderFromList(o);
-                              }}
+                              onSelect={() => setDeleteTarget(o)}
                             >
                               <Trash2 className="h-4 w-4" />
-                              Soft-delete order
+                              Delete order
                             </DropdownMenuItem>
                           ) : null}
                         </DropdownMenuContent>
@@ -578,12 +586,12 @@ export function AdminOrdersPage() {
                 >
                   Edit
                 </Link>
-                {canAdminPanel && apiEnabled() && !o.deletedAt ? (
+                {canAdminPanel && !o.deletedAt ? (
                   <button
                     type="button"
-                    onClick={() => void softDeleteOrderFromList(o)}
+                    onClick={() => setDeleteTarget(o)}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2 text-sm font-semibold text-red-800"
-                    title="Soft-delete order"
+                    title="Delete order"
                   >
                     <Trash2 className="h-4 w-4" />
                     Delete
@@ -632,9 +640,9 @@ export function AdminOrdersPage() {
           ) : null}
         </div>
 
-        {filtered.length > 0 ? (
+        {sorted.length > 0 ? (
           <PaginationControls
-            totalItems={filtered.length}
+            totalItems={sorted.length}
             page={safePage}
             perPage={pageSize}
             onPageChange={setPage}
@@ -645,6 +653,24 @@ export function AdminOrdersPage() {
           />
         ) : null}
       </div>
+
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title="Delete order?"
+        description={
+          deleteTarget
+            ? `Are you sure you want to delete ${deleteTarget.orderNo}? This action cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          const target = deleteTarget;
+          setDeleteTarget(null);
+          void softDeleteOrderFromList(target);
+        }}
+      />
     </div>
   );
 }

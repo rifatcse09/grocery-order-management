@@ -369,14 +369,17 @@ function persist_signature(mixed $incoming): ?string {
 
 function public_user(array $row): array {
     return [
-        'id' => (string)$row['id'],
-        'name' => $row['name'],
-        'email' => $row['email'],
-        'phone' => $row['phone'],
-        'role' => $row['role'],
-        'billingAddress' => $row['billing_address'],
-        'deliveryAddress' => $row['delivery_address'],
-        'isActive' => (bool)$row['is_active'],
+        'id'               => (string)$row['id'],
+        'name'             => $row['name'],
+        'email'            => $row['email'],
+        'phone'            => $row['phone'],
+        'role'             => $row['role'],
+        'billingAddress'   => $row['billing_address'],
+        'deliveryAddress'  => $row['delivery_address'],
+        'isActive'         => (bool)$row['is_active'],
+        'emailVerifiedAt'  => $row['email_verified_at'] ?? null,
+        'created_at'       => $row['created_at'] ?? null,
+        'updated_at'       => $row['updated_at'] ?? null,
     ];
 }
 

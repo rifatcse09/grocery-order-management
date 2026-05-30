@@ -16,12 +16,16 @@ import {
   apiRegister,
   apiUpdateProfile,
 } from "../lib/api";
+import { flagNewUserSignup } from "../lib/orderNotifications";
+import { clearPresence } from "../lib/userPresence";
 
 interface AuthState {
   user: SessionUser | null;
   login: (email: string, password: string) => Promise<{ ok: boolean; role?: Role; message?: string }>;
   register: (payload: RegisterPayload) => Promise<{ ok: boolean; message?: string }>;
   createAccountByAdmin: (payload: AdminCreatePayload) => Promise<{ ok: boolean; message?: string }>;
+  updateAccountByAdmin: (id: string, patch: Partial<AdminCreatePayload>) => Promise<{ ok: boolean; message?: string }>;
+  deleteAccountByAdmin: (id: string) => Promise<{ ok: boolean; message?: string }>;
   listAccounts: () => SessionUser[];
   updateProfile: (patch: {
     name: string;
@@ -122,6 +126,12 @@ function loadAccounts(): Account[] {
           )
           .map((a) => {
             const fallback = defaults.find((d) => d.id === a.id || d.email === a.email);
+            const raw = a as unknown as Record<string, unknown>;
+            const registeredAt =
+              a.registeredAt ??
+              (raw.created_at as string | undefined) ??
+              (raw.createdAt as string | undefined) ??
+              undefined;
             return {
               id: a.id,
               name: a.name ?? fallback?.name ?? "User",
@@ -131,11 +141,13 @@ function loadAccounts(): Account[] {
               role: a.role,
               billingAddress: a.billingAddress ?? fallback?.billingAddress ?? "",
               deliveryAddress: a.deliveryAddress ?? fallback?.deliveryAddress ?? "",
+              registeredAt,
+              deletedAt: a.deletedAt,
             } satisfies Account;
           });
 
         // Keep built-in demo accounts always available for quick role login.
-        const merged = [...normalized];
+        const merged: Account[] = [...normalized];
         for (const d of defaults) {
           if (!merged.some((a) => a.id === d.id)) merged.push(d);
         }
@@ -169,10 +181,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void apiListUsers()
       .then((rows) => {
         setAccounts(
-          rows.map((a) => ({
-            ...a,
-            password: "",
-          })),
+          rows.map((a) => {
+            const raw = a as unknown as Record<string, unknown>;
+            const registeredAt =
+              (a.registeredAt) ??
+              (raw.created_at as string | undefined) ??
+              (raw.createdAt as string | undefined) ??
+              (raw.registered_at as string | undefined) ??
+              undefined;
+            return { ...a, password: "", registeredAt };
+          }),
         );
       })
       .catch(() => {
@@ -230,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(res.user);
           localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
           localStorage.setItem(TOKEN_KEY, res.token);
+          flagNewUserSignup(res.user.id, res.user.name, res.user.email);
           return { ok: true };
         } catch (error) {
           return { ok: false, message: error instanceof Error ? error.message : "Sign up failed." };
@@ -251,11 +270,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: payload.password,
         billingAddress: payload.billingAddress.trim(),
         deliveryAddress: payload.deliveryAddress.trim(),
+        registeredAt: new Date().toISOString(),
       };
       setAccounts((prev) => [account, ...prev]);
       const session = toSession(account);
       setUser(session);
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      flagNewUserSignup(account.id, account.name, account.email);
       return { ok: true };
     },
     [accounts],
@@ -294,8 +315,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: payload.password.trim(),
         billingAddress: payload.billingAddress?.trim() || "—",
         deliveryAddress: payload.deliveryAddress?.trim() || "—",
+        registeredAt: new Date().toISOString(),
       };
       setAccounts((prev) => [account, ...prev]);
+      return { ok: true };
+    },
+    [accounts, user],
+  );
+
+  const updateAccountByAdmin = useCallback(
+    async (id: string, patch: Partial<AdminCreatePayload>) => {
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can edit accounts." };
+      }
+      const existing = accounts.find((a) => a.id === id);
+      if (!existing) return { ok: false, message: "Account not found." };
+
+      const emailNorm = patch.email ? patch.email.trim().toLowerCase() : existing.email;
+      const emailConflict = accounts.some((a) => a.id !== id && a.email.toLowerCase() === emailNorm);
+      if (emailConflict) return { ok: false, message: "Email already used by another account." };
+
+      const updated: Account = {
+        ...existing,
+        name: patch.name?.trim() || existing.name,
+        phone: patch.phone?.trim() ?? existing.phone,
+        email: emailNorm,
+        role: patch.role ?? existing.role,
+        billingAddress: patch.billingAddress?.trim() || existing.billingAddress,
+        deliveryAddress: patch.deliveryAddress?.trim() || existing.deliveryAddress,
+        ...(patch.password?.trim() ? { password: patch.password.trim() } : {}),
+      };
+      setAccounts((prev) => prev.map((a) => (a.id === id ? updated : a)));
+      return { ok: true };
+    },
+    [accounts, user],
+  );
+
+  const deleteAccountByAdmin = useCallback(
+    async (id: string) => {
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can delete accounts." };
+      }
+      const target = accounts.find((a) => a.id === id);
+      if (!target) return { ok: false, message: "Account not found." };
+      if (target.id === user.id) return { ok: false, message: "You cannot delete your own account." };
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, deletedAt: new Date().toISOString() } : a)),
+      );
       return { ok: true };
     },
     [accounts, user],
@@ -376,10 +442,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    if (user?.id) clearPresence(user.id);
     setUser(null);
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(TOKEN_KEY);
-  }, []);
+  }, [user]);
 
   const value = useMemo(
     () => ({
@@ -387,6 +454,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       createAccountByAdmin,
+      updateAccountByAdmin,
+      deleteAccountByAdmin,
       listAccounts,
       updateProfile,
       updatePassword,
@@ -397,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       createAccountByAdmin,
+      updateAccountByAdmin,
       listAccounts,
       updateProfile,
       updatePassword,

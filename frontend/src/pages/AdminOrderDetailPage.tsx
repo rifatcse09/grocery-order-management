@@ -45,6 +45,7 @@ import {
   apiUpdateOrder,
 } from "../lib/api";
 import { type Order, type SessionUser, isAdministrationRole } from "../types";
+import { ConfirmActionModal } from "../components/ConfirmActionModal";
 
 /** Compare draft to last server copy so we can gate workflow until Save. */
 function orderFingerprint(o: Order): string {
@@ -570,15 +571,15 @@ export function AdminOrderDetailPage() {
                 type="button"
                 onClick={() => setShowDeleteModal(true)}
                 disabled={workflowBlocked}
-                title={workflowBlocked ? "Save changes before soft-delete." : undefined}
+                title={workflowBlocked ? "Save changes before deleting." : undefined}
                 className="mt-1 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Soft-delete order
+                Delete order
               </button>
             ) : null}
             {!isNew && order.deletedAt ? (
               <span className="mt-1 rounded-xl bg-slate-600 px-3.5 py-2 text-xs font-semibold text-white">
-                Soft-deleted (hidden from totals)
+                Deleted
               </span>
             ) : null}
           </div>
@@ -1035,49 +1036,29 @@ export function AdminOrderDetailPage() {
         </div>
       ) : null}
 
-      {showDeleteModal ? (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-900/35 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-slate-900">Soft-delete order</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              This will mark <span className="font-semibold text-slate-900">{order.orderNo}</span> as deleted: it
-              disappears from lists and reports, active invoices are voided with ledger reversals, and the row stays in
-              the database for audit. You can still list it with &quot;Show soft-deleted orders&quot; on the order list.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowDeleteModal(false)}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void (async () => {
-                    setShowDeleteModal(false);
-                    try {
-                      if (apiEnabled()) {
-                        await apiDeleteOrder(order.id);
-                        await loadOrders();
-                      } else {
-                        deleteOrder(order.id);
-                      }
-                      navigate(staffOrdersListPath);
-                    } catch (e) {
-                      setWorkflowError(e instanceof Error ? e.message : "Soft-delete failed.");
-                    }
-                  })();
-                }}
-                className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
-              >
-                Soft-delete
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <ConfirmActionModal
+        open={showDeleteModal}
+        title="Delete order?"
+        description={`Are you sure you want to delete ${order?.orderNo ?? "this order"}? This action cannot be undone.`}
+        confirmLabel="Delete"
+        onCancel={() => setShowDeleteModal(false)}
+        onConfirm={() => {
+          void (async () => {
+            setShowDeleteModal(false);
+            try {
+              if (apiEnabled()) {
+                await apiDeleteOrder(order!.id);
+                await loadOrders();
+              } else {
+                deleteOrder(order!.id);
+              }
+              navigate(staffOrdersListPath);
+            } catch (e) {
+              setWorkflowError(e instanceof Error ? e.message : "Soft-delete failed.");
+            }
+          })();
+        }}
+      />
     </div>
   );
 }

@@ -40,7 +40,8 @@ if ($path === '/api/v1/auth/register' && $method === 'POST') {
         json_response(409, ['message' => 'Email already exists.']);
     }
     $passCol = users_password_column();
-    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery)");
+    $now = date('Y-m-d H:i:s');
+    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address, created_at, updated_at) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery, :created_at, :updated_at)");
     $insert->execute([
         'name' => $name,
         'email' => $email,
@@ -49,6 +50,8 @@ if ($path === '/api/v1/auth/register' && $method === 'POST') {
         'role' => 'user',
         'billing' => trim((string)($in['billingAddress'] ?? '')),
         'delivery' => trim((string)($in['deliveryAddress'] ?? '')),
+        'created_at' => $now,
+        'updated_at' => $now,
     ]);
     $uid = (int)db()->lastInsertId();
     $sel = db()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');
@@ -569,7 +572,8 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
         json_response(409, ['message' => 'Email already exists.']);
     }
     $passCol = users_password_column();
-    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery)");
+    $now = date('Y-m-d H:i:s');
+    $insert = db()->prepare("INSERT INTO users (name, email, {$passCol}, phone, role, billing_address, delivery_address, created_at, updated_at) VALUES (:name, :email, :ph, :phone, :role, :billing, :delivery, :created_at, :updated_at)");
     $insert->execute([
         'name' => $name,
         'email' => $email,
@@ -578,6 +582,8 @@ if ($path === '/api/v1/admin/users' && $method === 'POST') {
         'role' => $role,
         'billing' => trim((string)($in['billingAddress'] ?? '')),
         'delivery' => trim((string)($in['deliveryAddress'] ?? '')),
+        'created_at' => $now,
+        'updated_at' => $now,
     ]);
     $uid = (int)db()->lastInsertId();
     $sel = db()->prepare('SELECT * FROM users WHERE id = :id LIMIT 1');

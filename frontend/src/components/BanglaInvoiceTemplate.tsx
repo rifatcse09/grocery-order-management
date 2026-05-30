@@ -10,7 +10,7 @@ export function BanglaInvoiceTemplate({
   invoiceType = "billing",
   companyName = "হোসেন মিট অ্যান্ড কো.",
   companyNameBn = "হোসেন মিট অ্যান্ড কো.",
-  companyTagline = "সকল প্রকার মুদি মালামাল সুলভ মূল্যে খুচরা ও পাইকারী বিক্রয় করা হয়।",
+  companyTagline = "সকল প্রকার মুদি মালামাল সুলভ মূল্যে\nখুচরা ও পাইকারী বিক্রয় করা হয়।",
   companyTaglineBn = "সকল প্রকার মুদি ও তাজা পণ্য খুচরা ও পাইকারী।",
   companyAddress = "ভুলতা-গাউসিয়া, রূপগঞ্জ, নারায়ণগঞ্জ — ১৪৬০",
   hotline = "+৮৮০১৫৭১ ২২৭৫৮৮",
@@ -91,9 +91,10 @@ export function BanglaInvoiceTemplate({
 
   return (
     <div className="font-bn overflow-hidden rounded-3xl bg-slate-50 p-3 shadow-card print:overflow-visible print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none sm:p-5">
-      <div className="rounded-3xl bg-white p-4 sm:p-6 print:overflow-visible">
-        <div className="print-invoice-header flex flex-wrap items-start justify-between gap-6 border-b border-slate-200 pb-4">
-          <div className="max-w-xl">
+      <div className="rounded-3xl bg-white p-4 sm:p-6 print:overflow-visible print:p-0">
+        <div className="print-invoice-header flex flex-nowrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+          {/* Left: company info */}
+          <div className="min-w-0 flex-1">
             <h2 className="text-xl font-extrabold text-slate-900 sm:text-2xl">{companyNameBn}</h2>
             {companyName !== companyNameBn ? (
               <p className="mt-0.5 text-xs font-medium text-slate-600 sm:text-sm">{companyName}</p>
@@ -105,7 +106,8 @@ export function BanglaInvoiceTemplate({
             <p className="mt-4 text-xs text-slate-700 sm:text-sm">{companyAddress}</p>
             <p className="text-xs text-slate-700 sm:text-sm">হটলাইন: {hotline}</p>
           </div>
-          <div className="ml-auto -mt-1 self-start text-right sm:-mt-2">
+          {/* Right: logo + invoice heading */}
+          <div className="shrink-0 -mt-4 self-start text-right print:-mt-6">
             <img
               src={`${import.meta.env.BASE_URL}hmc-logo.png`}
               alt={companyName}
@@ -121,38 +123,49 @@ export function BanglaInvoiceTemplate({
         </div>
 
         <div className="print-invoice-body">
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-              <p className="text-xs text-slate-500">বিল প্রদানকারী</p>
-              <p className="text-base font-semibold">{companyNameBn}</p>
-              <p className="mt-0.5 text-sm text-slate-700">{companyAddress}</p>
-              <p className="mt-1 text-sm text-slate-700">হটলাইন: {hotline}</p>
-            </div>
-            <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            {invoiceType !== "purchase" ? (
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">বিল প্রদানকারী</p>
+                <p className="text-base font-semibold">{companyNameBn}</p>
+                <p className="mt-0.5 text-sm text-slate-700">{companyAddress}</p>
+                <p className="mt-1 text-sm text-slate-700">হটলাইন: {hotline}</p>
+              </div>
+            ) : null}
+            <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-xs text-slate-500">বিল গ্রহীতা</p>
               <p className="text-base font-semibold">{order.contactPerson}</p>
               <p className="mt-0.5 text-sm text-slate-700">{order.phone}</p>
               <p className="mt-1 text-sm text-slate-700">{order.billingAddress}</p>
             </div>
+            {invoiceType === "purchase" ? (
+              <div className="rounded-xl bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
+                <p className="text-sm font-medium">{order.deliveryAddress}</p>
+              </div>
+            ) : null}
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-slate-100 p-3">
+          <div className="mt-0 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl p-3">
               <p className="text-xs text-slate-500">ইস্যুর তারিখ</p>
               <p className="font-semibold">{toBanglaDigits(formatDateDdMmYyyy(order.orderDate))}</p>
             </div>
-            <div className="rounded-xl border border-slate-100 p-3">
+            <div className="rounded-xl p-3">
               <p className="text-xs text-slate-500">পরিশোধের শেষ তারিখ</p>
               <p className="font-semibold">{toBanglaDigits(formatDateDdMmYyyy(dueDate))}</p>
             </div>
-            <div className="rounded-xl border border-slate-100 p-3">
-              <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
-              <p className="text-sm font-medium">{order.deliveryAddress}</p>
-            </div>
+            {invoiceType !== "purchase" ? (
+              <div className="rounded-xl p-3">
+                <p className="text-xs text-slate-500">ডেলিভারি ঠিকানা</p>
+                <p className="text-sm font-medium">{order.deliveryAddress}</p>
+              </div>
+            ) : null}
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 print:overflow-visible">
-            <div className="divide-y divide-slate-100 print:hidden md:hidden">
+          {/* Screen: rounded border card */}
+          <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200 print:hidden">
+            <div className="divide-y divide-slate-100 md:hidden">
               {billedRows.map(({ line: r, billedLine, billedUnit }) => (
                 <div key={r.id} className="space-y-2 p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -175,8 +188,7 @@ export function BanglaInvoiceTemplate({
                 </div>
               ))}
             </div>
-
-            <table className="hidden w-full text-left text-sm print:table md:table">
+            <table className="hidden w-full text-left text-sm md:table">
               <thead className="bg-slate-100 text-xs font-semibold text-slate-600">
                 <tr>
                   <th className="px-3 py-2">ক্রমিক</th>
@@ -193,18 +205,41 @@ export function BanglaInvoiceTemplate({
                     <td className="px-3 py-2 font-semibold">{itemLabelBn(r)}</td>
                     <td className="px-3 py-2">{formatQtyLineBn(r.kg, r.gram, r.piece)}</td>
                     <td className="px-3 py-2 text-right">৳ {formatMoneyBn(billedUnit)}</td>
-                    <td className="px-3 py-2 text-right font-semibold">
-                      ৳ {formatMoneyBn(billedLine)}
-                    </td>
+                    <td className="px-3 py-2 text-right font-semibold">৳ {formatMoneyBn(billedLine)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
+          {/* Print-only: per-cell borders with border-collapse — no outer box that
+              closes/reopens at page breaks, matching the challan print style. */}
+          <table className="hidden w-full border-collapse text-left text-sm print:table">
+            <thead className="text-xs font-semibold text-slate-600">
+              <tr>
+                <th className="border border-slate-300 bg-slate-100 px-3 py-2">ক্রমিক</th>
+                <th className="border border-slate-300 bg-slate-100 px-3 py-2">আইটেম</th>
+                <th className="border border-slate-300 bg-slate-100 px-3 py-2">পরিমাণ</th>
+                <th className="border border-slate-300 bg-slate-100 px-3 py-2 text-right">ইউনিট মূল্য</th>
+                <th className="border border-slate-300 bg-slate-100 px-3 py-2 text-right">মোট মূল্য</th>
+              </tr>
+            </thead>
+            <tbody>
+              {billedRows.map(({ line: r, billedUnit, billedLine }) => (
+                <tr key={r.id} style={{ breakInside: "avoid" }}>
+                  <td className="border border-slate-200 px-3 py-2 font-medium">{toBanglaDigits(String(r.serial))}</td>
+                  <td className="border border-slate-200 px-3 py-2 font-semibold">{itemLabelBn(r)}</td>
+                  <td className="border border-slate-200 px-3 py-2">{formatQtyLineBn(r.kg, r.gram, r.piece)}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-right">৳ {formatMoneyBn(billedUnit)}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-right font-semibold">৳ {formatMoneyBn(billedLine)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_300px]">
             <div />
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="rounded-xl bg-slate-50 p-3">
               <div className="flex items-center justify-between text-base font-bold">
                 <span>সর্বমোট</span>
                 <span className="text-slate-900">৳ {formatMoneyBn(grand)}</span>

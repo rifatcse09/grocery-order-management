@@ -26,10 +26,15 @@ import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { BrandLogo } from "./BrandLogo";
 import {
+  clearNewSignupNotification,
   moderatorNewSubmittedCount,
   NOTIFICATIONS_EVENT,
   readAdminNotifyOrderIds,
+  readNewSignups,
+  readNewSignupUserIds,
+  type SignupNotification,
 } from "../lib/orderNotifications";
+import { startHeartbeat } from "../lib/userPresence";
 import type { Role } from "../types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -53,9 +58,14 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
-/** Sidebar “order list” links should not stay active on `/orders/new`, detail, or bookkeeping URLs. */
+/**
+ * Dashboard root entries (/admin, /moderator/dashboard) are exact-only so that
+ * sub-routes like /admin/orders/123 do not accidentally activate them.
+ * All other nav items match their own path and any sub-paths; the longest
+ * match wins, so /admin/orders/new activates "New order" not "Order list".
+ */
 function navItemActive(path: string, to: string): boolean {
-  if (to.endsWith("/orders")) return path === to;
+  if (to === "/admin" || to === "/moderator/dashboard") return path === to;
   return path === to || path.startsWith(`${to}/`);
 }
 
@@ -117,6 +127,7 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [notifTick, setNotifTick] = useState(0);
+  const [newSignups, setNewSignups] = useState<SignupNotification[]>(() => readNewSignups());
   const [showProfile, setShowProfile] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -143,10 +154,18 @@ export function AppShell() {
   }, [dark]);
 
   useEffect(() => {
-    const bump = () => setNotifTick((t) => t + 1);
+    const bump = () => {
+      setNotifTick((t) => t + 1);
+      setNewSignups(readNewSignups());
+    };
     window.addEventListener(NOTIFICATIONS_EVENT, bump);
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, bump);
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    return startHeartbeat(user.id);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user) return;
@@ -170,7 +189,10 @@ export function AppShell() {
   const orderNotifyCount = useMemo(() => {
     void notifTick;
     if (!user) return 0;
-    if (user.role === "admin" || user.role === "master_admin") return readAdminNotifyOrderIds().length;
+    if (user.role === "admin" || user.role === "master_admin") {
+      const submittedCount = orders.filter((o) => o.status === "submitted").length;
+      return submittedCount + readNewSignupUserIds().length;
+    }
     if (user.role === "moderator") return moderatorNewSubmittedCount(orders);
     return 0;
   }, [notifTick, user, orders]);
@@ -188,13 +210,6 @@ export function AppShell() {
       .sort((a, b) => b.to.length - a.to.length);
     return matches[0]?.to ?? null;
   }, [dedup, location.pathname]);
-
-  const ordersPath =
-    user.role === "admin" || user.role === "master_admin"
-      ? "/admin/orders"
-      : user.role === "moderator"
-        ? "/moderator/orders"
-        : "/user/orders";
   const primaryCta =
     user.role === "user"
       ? { to: "/user/orders/new", label: "New order", Icon: Plus }
@@ -297,6 +312,19 @@ export function AppShell() {
             <LogOut className="h-5 w-5 shrink-0" />
             <span className={cn(sidebarCollapsed && "md:hidden")}>Logout</span>
           </Button>
+
+          <div className={cn("mt-3 border-t border-border pt-3 text-center", sidebarCollapsed && "md:hidden")}>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              Designed &amp; developed by{" "}
+              <a href="https://invatiqsoft.com/" target="_blank" rel="noopener noreferrer" className="font-semibold text-foreground hover:underline">InvatiqSoft</a>
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              <a href="mailto:support@invatiqsoft.com" className="hover:underline">support@invatiqsoft.com</a>
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              <a href="tel:+8801867254624" className="hover:underline">01867254624</a>
+            </p>
+          </div>
         </div>
       </aside>
 
@@ -327,24 +355,123 @@ export function AppShell() {
                 <span className="truncate">{primaryCta.label}</span>
               </Button>
               <Separator orientation="vertical" className="mx-0.5 hidden h-7 sm:block" />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="relative h-9 w-9 shrink-0 text-muted-foreground"
-                onClick={() => navigate(ordersPath)}
-                aria-label={
-                  orderNotifyCount > 0
-                    ? `${orderNotifyCount} notification${orderNotifyCount === 1 ? "" : "s"}`
-                    : "Notifications"
-                }
-                title="Notifications"
-              >
-                <Bell className="h-4 w-4" />
-                {orderNotifyCount > 0 ? (
-                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-zinc-950" />
-                ) : null}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="relative h-9 w-9 shrink-0 text-muted-foreground"
+                    aria-label={
+                      orderNotifyCount > 0
+                        ? `${orderNotifyCount} notification${orderNotifyCount === 1 ? "" : "s"}`
+                        : "Notifications"
+                    }
+                    title="Notifications"
+                  >
+                    <Bell className="h-4 w-4" />
+                    {orderNotifyCount > 0 ? (
+                      <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-zinc-950" />
+                    ) : null}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80 p-0">
+                  <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+                    <p className="text-sm font-semibold">Notifications</p>
+                    {orderNotifyCount > 0 && (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                        {orderNotifyCount}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* New customer signups — admin only */}
+                  {(user.role === "admin" || user.role === "master_admin") && newSignups.length > 0 && (
+                    <>
+                      <div className="px-3 pt-2.5 pb-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          New customers ({newSignups.length})
+                        </p>
+                      </div>
+                      {newSignups.map((s) => (
+                        <DropdownMenuItem
+                          key={s.id}
+                          className="flex items-start gap-3 px-3 py-2.5 cursor-pointer"
+                          onSelect={() => {
+                            clearNewSignupNotification(s.id);
+                            navigate("/admin/users");
+                          }}
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
+                            {s.name.trim().charAt(0).toUpperCase()}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold">{s.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">{s.email}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(s.at).toLocaleString("en-GB", {
+                                day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                              })}
+                            </p>
+                          </div>
+                          <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuItem
+                        className="px-3 py-2 text-xs font-semibold text-primary cursor-pointer"
+                        onSelect={() => navigate("/admin/users")}
+                      >
+                        View all users →
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  {/* Order notifications */}
+                  {(user.role === "admin" || user.role === "master_admin") && readAdminNotifyOrderIds().length > 0 && (
+                    <>
+                      <div className="px-3 pt-2.5 pb-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Pending order review ({readAdminNotifyOrderIds().length})
+                        </p>
+                      </div>
+                      <DropdownMenuItem
+                        className="px-3 py-2.5 cursor-pointer"
+                        onSelect={() => navigate("/admin/orders")}
+                      >
+                        <ClipboardList className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">View orders awaiting review</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  {/* Moderator: new submitted orders */}
+                  {user.role === "moderator" && orderNotifyCount > 0 && (
+                    <>
+                      <div className="px-3 pt-2.5 pb-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          New orders ({orderNotifyCount})
+                        </p>
+                      </div>
+                      <DropdownMenuItem
+                        className="px-3 py-2.5 cursor-pointer"
+                        onSelect={() => navigate("/moderator/orders")}
+                      >
+                        <ClipboardList className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">View submitted orders</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  {orderNotifyCount === 0 && (
+                    <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No new notifications
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button

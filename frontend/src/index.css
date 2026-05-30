@@ -105,7 +105,12 @@ html {
 @media print {
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm 14mm 14mm 14mm;
+  }
+
+  /* No top margin on the very first page so the header sits at the top */
+  @page :first {
+    margin-top: 0;
   }
 
   html,
@@ -128,10 +133,9 @@ html {
     visibility: visible;
   }
 
+  /* ── Invoice ──────────────────────────────────────────────────── */
   body.print-isolated .print-invoice-only {
     position: static;
-    left: 0;
-    top: 0;
     width: 100%;
     max-width: none;
     margin: 0 !important;
@@ -141,9 +145,10 @@ html {
   }
 
   /*
-   * Do NOT use position:fixed for document headers in print. Browsers repeat the fixed block on
-   * every sheet while body margin-top applies only once — table rows on page 2+ hide under the header.
-   * Let the company block print once; table thead still repeats via table-header-group.
+   * Do NOT use position:fixed for document headers in print. Browsers repeat the fixed
+   * block on every sheet while body margin-top applies only once — rows on page 2+
+   * hide under the header. The company block prints once; inner table thead repeats
+   * via table-header-group.
    */
   body.print-isolated .print-invoice-only .print-invoice-header {
     position: static;
@@ -158,10 +163,15 @@ html {
     margin-bottom: 0;
   }
 
+  /* Keep each invoice item row intact across page breaks */
+  body.print-isolated .print-invoice-only table tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* ── Challan ──────────────────────────────────────────────────── */
   body.print-isolated .print-doc-only {
     position: static;
-    left: 0;
-    top: 0;
     width: 100%;
     max-width: none;
     margin: 0 !important;
@@ -170,10 +180,12 @@ html {
     page-break-inside: auto;
   }
 
+  /*
+   * Do NOT use position:fixed for the company header in print. Let it flow
+   * normally on page 1; the @page margin gives clean spacing on page 2+.
+   */
   body.print-isolated .print-doc-only .print-challan-header {
     position: static;
-    padding: 0 0 4mm;
-    border-bottom: 1px solid #e2e8f0;
     page-break-after: avoid;
     break-after: avoid;
   }
@@ -183,19 +195,14 @@ html {
     margin-bottom: 0;
   }
 
-  body.print-isolated .print-doc-only table thead {
-    display: table-header-group;
+  body.print-isolated .print-doc-only .print-challan-footer {
+    page-break-before: avoid;
+    break-before: avoid;
   }
 
-  body.print-isolated .print-invoice-only table thead {
-    display: table-header-group;
-  }
-
+  /* Keep each item row intact — no row split across a page break */
   body.print-isolated .print-doc-only table tr {
     page-break-inside: avoid;
-  }
-
-  body.print-isolated .print-invoice-only table tr {
-    page-break-inside: avoid;
+    break-inside: avoid;
   }
 }

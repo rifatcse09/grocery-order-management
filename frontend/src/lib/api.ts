@@ -298,19 +298,19 @@ export function apiEnabled() {
 }
 
 export async function apiLogin(payload: LoginPayload): Promise<{ user: SessionUser; token: string }> {
-  const res = await req<{ user: SessionUser; token: string }>("/api/v1/auth/login", {
+  const res = await req<{ user: Record<string, unknown>; token: string }>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return res;
+  return { user: normalizeUser(res.user), token: res.token };
 }
 
 export async function apiRegister(payload: RegisterPayload): Promise<{ user: SessionUser; token: string }> {
-  const res = await req<{ user: SessionUser; token: string }>("/api/v1/auth/register", {
+  const res = await req<{ user: Record<string, unknown>; token: string }>("/api/v1/auth/register", {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return res;
+  return { user: normalizeUser(res.user), token: res.token };
 }
 
 export async function apiLogout(): Promise<void> {
@@ -325,15 +325,37 @@ export async function apiUpdateProfile(payload: ProfileUpdatePayload): Promise<S
   return res.user;
 }
 
+function normalizeUser(u: Record<string, unknown>): SessionUser {
+  // Log raw fields in dev so we can see what the API actually returns
+  if (import.meta.env.DEV) {
+    console.log("[normalizeUser] raw API user fields:", Object.keys(u), u);
+  }
+  const registeredAt =
+    (u.registeredAt as string | undefined) ??
+    (u.created_at as string | undefined) ??
+    (u.createdAt as string | undefined) ??
+    (u.registered_at as string | undefined) ??
+    (u.registration_date as string | undefined) ??
+    (u.date_joined as string | undefined) ??
+    (u.joinedAt as string | undefined) ??
+    (u.join_date as string | undefined) ??
+    (u.created as string | undefined) ??
+    undefined;
+  return {
+    ...(u as unknown as SessionUser),
+    registeredAt,
+  };
+}
+
 export async function apiListUsers(): Promise<SessionUser[]> {
-  const res = await req<{ data: SessionUser[] }>("/api/v1/admin/users");
-  return res.data;
+  const res = await req<{ data: Record<string, unknown>[] }>("/api/v1/admin/users");
+  return res.data.map(normalizeUser);
 }
 
 /** Moderators and admins: list active customer accounts for on-behalf order entry. */
 export async function apiListStaffCustomerAccounts(): Promise<SessionUser[]> {
-  const res = await req<{ data: SessionUser[] }>("/api/v1/staff/customer-accounts");
-  return res.data;
+  const res = await req<{ data: Record<string, unknown>[] }>("/api/v1/staff/customer-accounts");
+  return res.data.map(normalizeUser);
 }
 
 export async function apiCreateUser(payload: AdminCreatePayload): Promise<SessionUser> {

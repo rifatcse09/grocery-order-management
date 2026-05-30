@@ -109,4 +109,8 @@ export interface SessionUser {
   role: Role;
   billingAddress: string;
   deliveryAddress: string;
+  /** ISO timestamp set when the account is created. */
+  registeredAt?: string;
+  /** ISO timestamp set when an admin soft-deletes the account. */
+  deletedAt?: string;
 }

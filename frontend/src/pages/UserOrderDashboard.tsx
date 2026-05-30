@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import { Pencil, FileCheck2, FileText, Search, Trash2, MoreVertical } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { useAuth } from "../context/AuthContext";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useOrders } from "../context/OrdersContext";
@@ -36,6 +38,44 @@ export function UserOrderDashboard() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; orderNo: string } | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
+
+  const USER_ORDER_COLS = [
+    { key: "orderNo", label: "Order" },
+    { key: "submittedAt", label: "Submitted" },
+    { key: "orderDate", label: "Order date" },
+    { key: "deliveryDate", label: "Delivery" },
+    { key: "deliveredAt", label: "Delivered" },
+    { key: "status", label: "Status" },
+    { key: "challan", label: "Challan" },
+    { key: "invoice", label: "Invoice" },
+  ];
+  const { visibleColumns: userOrderVisibleCols, toggleColumn: toggleUserOrderCol, isVisible: userOrderColVisible } = useColumnVisibility(USER_ORDER_COLS);
+
+  const getUserOrderData = () => {
+    const headers = USER_ORDER_COLS.filter((c) => userOrderColVisible(c.key)).map((c) => c.label);
+    const rows = sorted.map((o) => {
+      const cols: string[] = [];
+      if (userOrderColVisible("orderNo")) cols.push(o.orderNo);
+      if (userOrderColVisible("submittedAt")) cols.push(o.submittedAt ?? "");
+      if (userOrderColVisible("orderDate")) cols.push(o.orderDate ?? "");
+      if (userOrderColVisible("deliveryDate")) cols.push(o.deliveryDate ?? "");
+      if (userOrderColVisible("deliveredAt")) cols.push(o.deliveredAt ?? "");
+      if (userOrderColVisible("status")) cols.push(o.status);
+      if (userOrderColVisible("challan")) cols.push(o.challanGenerated ? "Yes" : "No");
+      if (userOrderColVisible("invoice")) cols.push(hasBillingInvoice(o) ? "Yes" : "No");
+      return cols;
+    });
+    return { headers, rows };
+  };
 
   useEffect(() => {
     void loadOrders();
@@ -55,9 +95,14 @@ export function UserOrderDashboard() {
     });
   }, [mine, query, status]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    return sortRows(filtered, sortKey as keyof typeof filtered[0], sortDir);
+  }, [filtered, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageItems = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const btnPrimary =
     "inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900";
@@ -116,23 +161,32 @@ export function UserOrderDashboard() {
               </select>
             </label>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Showing <strong className="text-slate-700">{filtered.length}</strong> of {mine.length} orders
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              Showing <strong className="text-slate-700">{sorted.length}</strong> of {mine.length} orders
+            </p>
+            <ExportToolbar
+              filename="my-orders-export"
+              columns={USER_ORDER_COLS}
+              visibleColumns={userOrderVisibleCols}
+              onToggleColumn={toggleUserOrderCol}
+              getData={getUserOrderData}
+            />
+          </div>
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="w-full text-left text-base">
             <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
-                <th className="px-4 py-3">Order</th>
-                <th className="px-4 py-3">Submitted</th>
-                <th className="px-4 py-3">Order date</th>
-                <th className="px-4 py-3 min-w-[140px]">Delivery</th>
-                <th className="px-4 py-3 min-w-[140px]">Delivered</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Challan</th>
-                <th className="px-4 py-3">Invoice</th>
+                {userOrderColVisible("orderNo") && <th className="px-4 py-3"><SortableHeader label="Order" field="orderNo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("submittedAt") && <th className="px-4 py-3"><SortableHeader label="Submitted" field="submittedAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("orderDate") && <th className="px-4 py-3"><SortableHeader label="Order date" field="orderDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("deliveryDate") && <th className="px-4 py-3 min-w-[140px]"><SortableHeader label="Delivery" field="deliveryDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("deliveredAt") && <th className="px-4 py-3 min-w-[140px]"><SortableHeader label="Delivered" field="deliveredAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("status") && <th className="px-4 py-3"><SortableHeader label="Status" field="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("challan") && <th className="px-4 py-3">Challan</th>}
+                {userOrderColVisible("invoice") && <th className="px-4 py-3">Invoice</th>}
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -400,9 +454,9 @@ export function UserOrderDashboard() {
           ) : null}
         </div>
 
-        {filtered.length > 0 ? (
+        {sorted.length > 0 ? (
           <PaginationControls
-            totalItems={filtered.length}
+            totalItems={sorted.length}
             page={safePage}
             perPage={pageSize}
             onPageChange={setPage}

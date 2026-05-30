@@ -1,8 +1,9 @@
 import { Link, useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { PaginationControls } from "../components/PaginationControls";
 import { ClipboardCheck, Calendar, FileBadge2, FileText, MoreVertical, ReceiptText, Search } from "lucide-react";
 import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
@@ -26,7 +27,6 @@ import { StatMetricCard } from "../components/StatMetricCard";
 import { apiEnabled } from "../lib/api";
 
 export function ModeratorOrdersPage() {
-  const { user } = useAuth();
   const { orders, loadOrders } = useOrders();
   const location = useLocation();
   const [query, setQuery] = useState("");
@@ -43,7 +43,49 @@ export function ModeratorOrdersPage() {
   >("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [seenTick, setSeenTick] = useState(0);
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
+
+  const MOD_COLS = [
+    { key: "orderNo", label: "Order" },
+    { key: "contactPerson", label: "Customer" },
+    { key: "orderDate", label: "Order date" },
+    { key: "deliveryDate", label: "Delivery date" },
+    { key: "delivery", label: "Delivery" },
+    { key: "deliveredAt", label: "Delivered" },
+    { key: "status", label: "Status" },
+    { key: "documents", label: "Documents" },
+    { key: "purchaseBalance", label: "Purchase balance" },
+    { key: "purchasePayment", label: "Purchase payment" },
+  ];
+  const { visibleColumns: modVisibleCols, toggleColumn: toggleModCol, isVisible: modColVisible } = useColumnVisibility(MOD_COLS);
+
+  const getModData = () => {
+    const headers = MOD_COLS.filter((c) => modColVisible(c.key)).map((c) => c.label);
+    const rows = sorted.map((o) => {
+      const cols: string[] = [];
+      if (modColVisible("orderNo")) cols.push(o.orderNo);
+      if (modColVisible("contactPerson")) cols.push(o.contactPerson);
+      if (modColVisible("orderDate")) cols.push(o.orderDate ?? "");
+      if (modColVisible("deliveryDate")) cols.push(o.deliveryDate ?? "");
+      if (modColVisible("delivery")) cols.push(o.deliveryDate ?? "");
+      if (modColVisible("deliveredAt")) cols.push(o.deliveredAt ?? "");
+      if (modColVisible("status")) cols.push(o.status);
+      if (modColVisible("documents")) cols.push(o.challanGenerated ? "Challan" : "—");
+      if (modColVisible("purchaseBalance")) cols.push(String(o.purchaseSubtotal ?? "—"));
+      if (modColVisible("purchasePayment")) cols.push("—");
+      return cols;
+    });
+    return { headers, rows };
+  };
   const [adjustOrderId, setAdjustOrderId] = useState<string | null>(null);
   const [adjustInput, setAdjustInput] = useState("");
   const [purchasePayments, setPurchasePayments] = useState<Record<string, number>>(() => {
@@ -131,13 +173,8 @@ export function ModeratorOrdersPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const staffId = user?.id ? String(user.id) : "";
     return orders.filter((o) => {
       if (mode === "purchase" && o.status === "draft") return false;
-      if (mode === "orders" && o.status === "draft") {
-        const creator = String(o.createdById ?? "");
-        if (!staffId || creator !== staffId) return false;
-      }
       if (status !== "all" && o.status !== status) return false;
       if (customer !== "all" && o.contactPerson !== customer) return false;
       if (docFilter === "challan_yes" && !o.challanGenerated) return false;
@@ -152,11 +189,16 @@ export function ModeratorOrdersPage() {
         o.deliveryAddress.toLowerCase().includes(q)
       );
     });
-  }, [orders, query, status, customer, docFilter, mode, purchasePayments, user?.id]);
+  }, [orders, query, status, customer, docFilter, mode, purchasePayments]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    return sortRows(filtered, sortKey as keyof typeof filtered[0], sortDir);
+  }, [filtered, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageList = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageList = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
   const challanCount = orders.filter((o) => o.challanGenerated).length;
   const invoiceCount = orders.filter((o) => o.status === "delivered").length;
   const underReview = orders.filter((o) => o.status === "under_review").length;
@@ -253,25 +295,34 @@ export function ModeratorOrdersPage() {
               </select>
             </label>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Showing <strong className="text-slate-700">{filtered.length}</strong> of {orders.length} orders
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              Showing <strong className="text-slate-700">{sorted.length}</strong> of {orders.length} orders
+            </p>
+            <ExportToolbar
+              filename="moderator-orders-export"
+              columns={MOD_COLS}
+              visibleColumns={modVisibleCols}
+              onToggleColumn={toggleModCol}
+              getData={getModData}
+            />
+          </div>
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="min-w-[1180px] w-full text-left text-sm lg:text-base">
           <thead className="bg-muted text-sm uppercase tracking-wide text-foreground">
             <tr>
-              <th className="px-4 py-3">Order</th>
-              <th className="px-4 py-3">Customer</th>
-              <th className="px-4 py-3 whitespace-nowrap">Order date</th>
-              <th className="px-4 py-3 whitespace-nowrap">Delivery date</th>
-              <th className="px-4 py-3 min-w-[160px]">Delivery</th>
-              <th className="px-4 py-3 min-w-[160px]">Delivered</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Documents</th>
-              <th className="px-4 py-3 text-right">Purchase balance</th>
-              <th className="px-4 py-3">Purchase payment</th>
+              {modColVisible("orderNo") && <th className="px-4 py-3"><SortableHeader label="Order" field="orderNo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("contactPerson") && <th className="px-4 py-3"><SortableHeader label="Customer" field="contactPerson" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("orderDate") && <th className="px-4 py-3 whitespace-nowrap"><SortableHeader label="Order date" field="orderDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("deliveryDate") && <th className="px-4 py-3 whitespace-nowrap"><SortableHeader label="Delivery date" field="deliveryDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("delivery") && <th className="px-4 py-3 min-w-[160px]">Delivery</th>}
+              {modColVisible("deliveredAt") && <th className="px-4 py-3 min-w-[160px]"><SortableHeader label="Delivered" field="deliveredAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("status") && <th className="px-4 py-3"><SortableHeader label="Status" field="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+              {modColVisible("documents") && <th className="px-4 py-3">Documents</th>}
+              {modColVisible("purchaseBalance") && <th className="px-4 py-3 text-right">Purchase balance</th>}
+              {modColVisible("purchasePayment") && <th className="px-4 py-3">Purchase payment</th>}
               <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -484,9 +535,9 @@ export function ModeratorOrdersPage() {
             <p className="py-8 text-center text-sm text-slate-500">No orders match your search or filters.</p>
           ) : null}
         </div>
-        {filtered.length > 0 ? (
+        {sorted.length > 0 ? (
           <PaginationControls
-            totalItems={filtered.length}
+            totalItems={sorted.length}
             page={safePage}
             perPage={pageSize}
             onPageChange={setPage}

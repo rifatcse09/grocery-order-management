@@ -1,14 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  ChevronsUpDown,
-  Columns3,
-  Download,
-  MoreVertical,
-  Pencil,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { MoreVertical, Pencil, Search, Trash2 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
+import { ConfirmActionModal } from "../ConfirmActionModal";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../ExportToolbar";
 import type { SessionUser } from "../../types";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +27,7 @@ import {
   tableActionsWideAccountRow,
 } from "@/lib/tableActionsLayout";
 import { cn } from "@/lib/utils";
+import { getOnlineUserIds } from "../../lib/userPresence";
 
 function initials(name: string): string {
   const p = name.trim().split(/\s+/).filter(Boolean);
@@ -44,11 +41,17 @@ function departmentLabel(a: SessionUser): string {
   return line.length > 36 ? `${line.slice(0, 34)}…` : line;
 }
 
-function lastActiveLabel(id: string): string {
-  const opts = ["Just now", "5 min ago", "2 hours ago", "Yesterday", "3 days ago", "1 week ago"];
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h + id.charCodeAt(i) * (i + 1)) % 997;
-  return opts[h % opts.length];
+function registeredLabel(iso: string | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function compactPages(current: number, total: number): Array<number | "..."> {
@@ -80,6 +83,65 @@ export function AdminAccountsDataTable({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const COL_DEFS = [
+    { key: "name", label: "Name" },
+    { key: "email", label: "Email" },
+    { key: "role", label: "Role" },
+    { key: "department", label: "Department" },
+    { key: "status", label: "Status" },
+    { key: "registeredAt", label: "Registered" },
+    { key: "actions", label: "Actions" },
+  ];
+  const { visibleColumns, toggleColumn, isVisible } = useColumnVisibility(COL_DEFS);
+
+  const getData = () => {
+    const headers = COL_DEFS.filter((c) => c.key !== "actions" && isVisible(c.key)).map((c) => c.label);
+    const rows = sorted.map((a) => {
+      const status = a.phone?.trim() ? "Active" : "Inactive";
+      const role = kind === "users" ? "User" : "Moderator";
+      const cols: string[] = [];
+      if (isVisible("name")) cols.push(a.name);
+      if (isVisible("email")) cols.push(a.email);
+      if (isVisible("role")) cols.push(role);
+      if (isVisible("department")) cols.push(departmentLabel(a));
+      if (isVisible("status")) cols.push(status);
+      if (isVisible("registeredAt")) cols.push(registeredLabel(a.registeredAt));
+      return cols;
+    });
+    return { headers, rows };
+  };
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(() => getOnlineUserIds());
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SessionUser | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const { deleteAccountByAdmin } = useAuth();
+
+  useEffect(() => {
+    // Refresh online status every 15 s so the dot updates without a page reload
+    tickRef.current = setInterval(() => setOnlineIds(getOnlineUserIds()), 15_000);
+    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteTarget) return;
+    const result = await deleteAccountByAdmin(deleteTarget.id);
+    if (!result.ok) {
+      setDeleteError(result.message ?? "Failed to delete account.");
+      return;
+    }
+    setDeleteTarget(null);
+    setDeleteError(null);
+  }, [deleteTarget, deleteAccountByAdmin]);
 
   const tabFiltered = useMemo(() => {
     if (tab === "active") return accounts.filter((a) => Boolean(a.phone?.trim()));
@@ -100,27 +162,18 @@ export function AdminAccountsDataTable({
     );
   }, [tabFiltered, query]);
 
-  const totalPages = Math.max(1, Math.ceil(searched.length / perPage));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const pageRows = searched.slice((safePage - 1) * perPage, safePage * perPage);
-  const from = searched.length === 0 ? 0 : (safePage - 1) * perPage + 1;
-  const to = Math.min(safePage * perPage, searched.length);
+  const sorted = useMemo(() => {
+    if (!sortKey) return searched;
+    const key = sortKey as keyof SessionUser;
+    return sortRows(searched, key, sortDir);
+  }, [searched, sortKey, sortDir]);
 
-  const exportCsv = () => {
-    const headers = ["Name", "Email", "Phone", "Role", "Department", "Status"];
-    const rows = searched.map((a) => {
-      const status = a.phone?.trim() ? "Active" : "Inactive";
-      const role = kind === "users" ? "User" : "Moderator";
-      return [a.name, a.email, a.phone || "", role, departmentLabel(a), status].map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",");
-    });
-    const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${kind}-export.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const totalPages = Math.max(1, Math.ceil(sorted.length / perPage));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const pageRows = sorted.slice((safePage - 1) * perPage, safePage * perPage);
+  const from = sorted.length === 0 ? 0 : (safePage - 1) * perPage + 1;
+  const to = Math.min(safePage * perPage, sorted.length);
+
 
   return (
     <div className="space-y-6">
@@ -184,23 +237,14 @@ export function AdminAccountsDataTable({
                 className="h-10 border-border bg-muted pl-9 shadow-none"
               />
             </div>
-            <div className="flex shrink-0 gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="outline" size="sm" className="h-10 gap-2">
-                    <Columns3 className="h-4 w-4" />
-                    Columns
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-52">
-                  <DropdownMenuLabel>Columns</DropdownMenuLabel>
-                  <DropdownMenuItem disabled>All columns visible</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button type="button" variant="outline" size="sm" className="h-10 gap-2" onClick={exportCsv}>
-                <Download className="h-4 w-4" />
-                Export
-              </Button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <ExportToolbar
+                filename={`${kind}-export`}
+                columns={COL_DEFS}
+                visibleColumns={visibleColumns}
+                onToggleColumn={toggleColumn}
+                getData={getData}
+              />
             </div>
           </div>
         </div>
@@ -209,37 +253,13 @@ export function AdminAccountsDataTable({
           <Table>
             <TableHeader>
               <TableRow className="border-b border-border hover:bg-transparent">
-                <TableHead className="w-[280px] pl-6">
-                  <button type="button" className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground">
-                    Name
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </TableHead>
-                <TableHead>
-                  <button type="button" className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground">
-                    Role
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </TableHead>
-                <TableHead className="hidden md:table-cell">
-                  <button type="button" className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground">
-                    Department
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </TableHead>
-                <TableHead>
-                  <button type="button" className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground">
-                    Status
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </TableHead>
-                <TableHead className="hidden lg:table-cell">
-                  <button type="button" className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground">
-                    Last active
-                    <ChevronsUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </TableHead>
-                <TableHead className="w-[100px] pr-6 text-right">Actions</TableHead>
+                {isVisible("name") && <TableHead className="w-[280px] pl-6"><SortableHeader label="Name" field="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("email") && <TableHead><SortableHeader label="Email" field="email" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("role") && <TableHead><SortableHeader label="Role" field="role" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("department") && <TableHead className="hidden md:table-cell"><SortableHeader label="Department" field="billingAddress" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("status") && <TableHead><SortableHeader label="Status" field="phone" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("registeredAt") && <TableHead className="hidden lg:table-cell"><SortableHeader label="Registered" field="registeredAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></TableHead>}
+                {isVisible("actions") && <TableHead className="w-[100px] pr-6 text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -254,44 +274,46 @@ export function AdminAccountsDataTable({
                   const active = Boolean(a.phone?.trim());
                   return (
                     <TableRow key={a.id} className="border-b border-border">
-                      <TableCell className="pl-6">
+                      {isVisible("name") && <TableCell className="pl-6">
                         <div className="flex items-center gap-3">
-                          <Avatar className="h-9 w-9">
-                            <AvatarFallback>{initials(a.name)}</AvatarFallback>
-                          </Avatar>
+                          <div className="relative shrink-0">
+                            <Avatar className="h-9 w-9">
+                              <AvatarFallback>{initials(a.name)}</AvatarFallback>
+                            </Avatar>
+                            {onlineIds.has(a.id) ? (
+                              <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-zinc-950" title="Online" />
+                            ) : (
+                              <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-slate-300 ring-2 ring-white dark:ring-zinc-950" title="Offline" />
+                            )}
+                          </div>
                           <div className="min-w-0">
                             <p className="truncate font-semibold text-foreground">{a.name}</p>
                             <p className="truncate text-xs text-muted-foreground">{a.email}</p>
                           </div>
                         </div>
-                      </TableCell>
-                      <TableCell>
+                      </TableCell>}
+                      {isVisible("email") && <TableCell className="text-sm text-muted-foreground">{a.email}</TableCell>}
+                      {isVisible("role") && <TableCell>
                         {kind === "users" ? (
-                          <Badge className="rounded-md border-0 bg-muted px-2.5 py-0.5 font-medium text-foreground hover:bg-muted">
-                            User
-                          </Badge>
+                          <Badge className="rounded-md border-0 bg-muted px-2.5 py-0.5 font-medium text-foreground hover:bg-muted">User</Badge>
                         ) : (
-                          <Badge className="rounded-md border-0 bg-orange-500 px-2.5 py-0.5 font-medium text-white hover:bg-orange-500">
-                            Moderator
-                          </Badge>
+                          <Badge className="rounded-md border-0 bg-orange-500 px-2.5 py-0.5 font-medium text-white hover:bg-orange-500">Moderator</Badge>
                         )}
-                      </TableCell>
-                      <TableCell className="hidden max-w-[200px] truncate text-muted-foreground md:table-cell">
+                      </TableCell>}
+                      {isVisible("department") && <TableCell className="hidden max-w-[200px] truncate text-muted-foreground md:table-cell">
                         {departmentLabel(a)}
-                      </TableCell>
-                      <TableCell>
+                      </TableCell>}
+                      {isVisible("status") && <TableCell>
                         {active ? (
-                          <Badge className="rounded-md border-0 bg-emerald-600 px-2.5 py-0.5 font-medium text-white hover:bg-emerald-600">
-                            Active
-                          </Badge>
+                          <Badge className="rounded-md border-0 bg-emerald-600 px-2.5 py-0.5 font-medium text-white hover:bg-emerald-600">Active</Badge>
                         ) : (
-                          <Badge variant="secondary" className="rounded-md font-medium text-muted-foreground">
-                            Inactive
-                          </Badge>
+                          <Badge variant="secondary" className="rounded-md font-medium text-muted-foreground">Inactive</Badge>
                         )}
-                      </TableCell>
-                      <TableCell className="hidden text-muted-foreground lg:table-cell">{lastActiveLabel(a.id)}</TableCell>
-                      <TableCell className="pr-6 text-right">
+                      </TableCell>}
+                      {isVisible("registeredAt") && <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                        {registeredLabel(a.registeredAt)}
+                      </TableCell>}
+                      {isVisible("actions") && <TableCell className="pr-6 text-right">
                         <div className={tableActionsWideAccountRow()}>
                           <Button
                             type="button"
@@ -300,7 +322,7 @@ export function AdminAccountsDataTable({
                             className="h-8 w-8 text-muted-foreground"
                             asChild
                           >
-                            <Link to="/admin/create" aria-label="Edit (opens create account)">
+                            <Link to={`/admin/${kind}/${a.id}/edit`} aria-label="Edit account">
                               <Pencil className="h-4 w-4" />
                             </Link>
                           </Button>
@@ -310,9 +332,7 @@ export function AdminAccountsDataTable({
                             size="icon"
                             className="h-8 w-8 text-destructive hover:text-destructive"
                             aria-label="Remove"
-                            onClick={() => {
-                              window.alert("Removing accounts is not enabled in this prototype.");
-                            }}
+                            onClick={() => { setDeleteTarget(a); setDeleteError(null); }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -334,16 +354,14 @@ export function AdminAccountsDataTable({
                               <DropdownMenuLabel>Actions</DropdownMenuLabel>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem asChild>
-                                <Link to="/admin/create" className="flex cursor-pointer items-center gap-2">
+                                <Link to={`/admin/${kind}/${a.id}/edit`} className="flex cursor-pointer items-center gap-2">
                                   <Pencil className="h-4 w-4" />
                                   Edit
                                 </Link>
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="gap-2 text-destructive focus:text-destructive data-[highlighted]:bg-red-50 data-[highlighted]:text-destructive dark:data-[highlighted]:bg-red-950"
-                                onSelect={() => {
-                                  window.alert("Removing accounts is not enabled in this prototype.");
-                                }}
+                                onSelect={() => { setDeleteTarget(a); setDeleteError(null); }}
                               >
                                 <Trash2 className="h-4 w-4" />
                                 Delete
@@ -351,7 +369,7 @@ export function AdminAccountsDataTable({
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </div>
-                      </TableCell>
+                      </TableCell>}
                     </TableRow>
                   );
                 })
@@ -362,7 +380,7 @@ export function AdminAccountsDataTable({
 
         <div className="flex flex-col gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <p>
-            Showing {from}-{to} of {searched.length} results
+            Showing {from}-{to} of {sorted.length} results
           </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
@@ -428,6 +446,18 @@ export function AdminAccountsDataTable({
         </div>
       </div>
 
+      <ConfirmActionModal
+        open={Boolean(deleteTarget)}
+        title="Delete account?"
+        description={
+          deleteError
+            ? deleteError
+            : `This will soft-delete ${deleteTarget?.name ?? "this account"} (${deleteTarget?.email ?? ""}). The account will be hidden from active lists but stays in the database for audit.`
+        }
+        confirmLabel="Delete"
+        onCancel={() => { setDeleteTarget(null); setDeleteError(null); }}
+        onConfirm={handleDeleteConfirm}
+      />
     </div>
   );
 }

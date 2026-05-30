@@ -252,6 +252,18 @@ export function LoginPage() {
             </div>
           </CardContent>
         </Card>
+
+        <div className="mt-6 text-center">
+          <p className="text-xs text-muted-foreground">
+            Designed &amp; developed by{" "}
+            <a href="https://invatiqsoft.com/" target="_blank" rel="noopener noreferrer" className="font-semibold text-foreground hover:underline">InvatiqSoft</a>
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            <a href="mailto:support@invatiqsoft.com" className="hover:underline">support@invatiqsoft.com</a>
+            {" · "}
+            <a href="tel:+8801867254624" className="hover:underline">01867254624</a>
+          </p>
+        </div>
       </div>
     </div>
   );

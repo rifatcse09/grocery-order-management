@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { PaginationControls } from "../components/PaginationControls";
 import { useOrders } from "../context/OrdersContext";
 import { useAuth } from "../context/AuthContext";
@@ -55,6 +57,14 @@ export function AdminBillingStatementsPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
   const [transactions, setTransactions] = useState<{ payments: PaymentTxn[]; adjustments: AdjustmentTxn[] }>({
     payments: [],
     adjustments: [],
@@ -281,6 +291,22 @@ export function AdminBillingStatementsPage() {
   );
 
   const listSource = viewMode === "active" ? activeStatements : historyStatements;
+
+  const sortedListSource = useMemo(() => {
+    if (!sortKey) return listSource;
+    return [...listSource].sort((a, b) => {
+      let av: string | number = "";
+      let bv: string | number = "";
+      if (sortKey === "customer") { av = a.customer; bv = b.customer; }
+      else if (sortKey === "start") { av = a.start.getTime(); bv = b.start.getTime(); }
+      else if (sortKey === "invoiceCount") { av = a.invoiceCount; bv = b.invoiceCount; }
+      else if (sortKey === "totalDue") { av = a.totalDue; bv = b.totalDue; }
+      else if (sortKey === "dueDate") { av = a.dueDate.getTime(); bv = b.dueDate.getTime(); }
+      const cmp = typeof av === "number" ? (av as number) - (bv as number) : String(av).localeCompare(String(bv), undefined, { sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [listSource, sortKey, sortDir]);
+
   const listTotals = useMemo(() => {
     let totalDue = 0;
     let totalPaid = 0;
@@ -293,8 +319,39 @@ export function AdminBillingStatementsPage() {
     }
     return { totalDue, totalPaid, totalBalance };
   }, [listSource, paymentsByKey, transactions, orders]);
-  const safePage = Math.min(page, Math.max(1, Math.ceil(listSource.length / perPage)));
-  const paged = listSource.slice((safePage - 1) * perPage, safePage * perPage);
+
+  const BILLING_STMT_COLS = [
+    { key: "customer", label: "Customer" },
+    { key: "period", label: "Period" },
+    { key: "invoiceCount", label: "# Billing inv." },
+    { key: "totalDue", label: "Total due" },
+    { key: "paid", label: "Paid (billing)" },
+    { key: "balance", label: "Balance" },
+    { key: "dueStatus", label: "Due status" },
+    { key: "payment", label: "Payment" },
+  ];
+  const { visibleColumns: billingStmtVisibleCols, toggleColumn: toggleBillingStmtCol, isVisible: billingStmtColVisible } = useColumnVisibility(BILLING_STMT_COLS);
+
+  const getBillingStmtData = () => {
+    const headers = BILLING_STMT_COLS.filter((c) => billingStmtColVisible(c.key)).map((c) => c.label);
+    const exportRows = sortedListSource.map((r) => {
+      const amt = displayAmounts(r);
+      const cols: string[] = [];
+      if (billingStmtColVisible("customer")) cols.push(r.customer);
+      if (billingStmtColVisible("period")) cols.push(`${formatDateDdMmYyyy(formatIso(r.start))} - ${formatDateDdMmYyyy(formatIso(r.end))}`);
+      if (billingStmtColVisible("invoiceCount")) cols.push(String(r.invoiceCount));
+      if (billingStmtColVisible("totalDue")) cols.push(String(amt.totalDue));
+      if (billingStmtColVisible("paid")) cols.push(String(amt.paid));
+      if (billingStmtColVisible("balance")) cols.push(String(amt.balance));
+      if (billingStmtColVisible("dueStatus")) cols.push(scheduleDueLabel(r));
+      if (billingStmtColVisible("payment")) cols.push(paymentStatusOf(r));
+      return cols;
+    });
+    return { headers, rows: exportRows };
+  };
+
+  const safePage = Math.min(page, Math.max(1, Math.ceil(sortedListSource.length / perPage)));
+  const paged = sortedListSource.slice((safePage - 1) * perPage, safePage * perPage);
   const selected = selectedKey ? listSource.find((s) => s.key === selectedKey) ?? null : null;
 
   const selectedPerOrderBilling = useMemo(() => {
@@ -500,18 +557,23 @@ export function AdminBillingStatementsPage() {
           </div>
         </div>
 
-        <div className="table-scroll mt-3 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-slate-500">Showing <strong>{sortedListSource.length}</strong> statements</p>
+          <ExportToolbar filename="billing-statements" columns={BILLING_STMT_COLS} visibleColumns={billingStmtVisibleCols} onToggleColumn={toggleBillingStmtCol} getData={getBillingStmtData} />
+        </div>
+
+        <div className="table-scroll mt-2 max-h-[min(70vh,640px)] rounded-2xl border border-border shadow-inner">
           <table className="min-w-[1080px] w-full text-left text-base">
             <thead className="sticky top-0 z-10 border-b border-border bg-muted text-xs font-bold uppercase tracking-wide text-foreground shadow-sm">
               <tr>
-                <th className="px-4 py-3.5">Customer</th>
-                <th className="px-4 py-3.5">Period</th>
-                <th className="px-4 py-3.5"># billing inv.</th>
-                <th className="px-4 py-3.5 text-right">Total due</th>
-                <th className="px-4 py-3.5 text-right">Paid (billing)</th>
-                <th className="px-4 py-3.5 text-right">Balance</th>
-                <th className="px-4 py-3.5">Due status</th>
-                <th className="px-4 py-3.5">Payment</th>
+                {billingStmtColVisible("customer") && <th className="px-4 py-3.5"><SortableHeader label="Customer" field="customer" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {billingStmtColVisible("period") && <th className="px-4 py-3.5"><SortableHeader label="Period" field="start" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {billingStmtColVisible("invoiceCount") && <th className="px-4 py-3.5"><SortableHeader label="# billing inv." field="invoiceCount" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {billingStmtColVisible("totalDue") && <th className="px-4 py-3.5 text-right"><SortableHeader label="Total due" field="totalDue" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {billingStmtColVisible("paid") && <th className="px-4 py-3.5 text-right">Paid (billing)</th>}
+                {billingStmtColVisible("balance") && <th className="px-4 py-3.5 text-right">Balance</th>}
+                {billingStmtColVisible("dueStatus") && <th className="px-4 py-3.5"><SortableHeader label="Due status" field="dueDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {billingStmtColVisible("payment") && <th className="px-4 py-3.5">Payment</th>}
                 <th className="px-4 py-3.5 text-right">View</th>
               </tr>
             </thead>
@@ -530,45 +592,31 @@ export function AdminBillingStatementsPage() {
                         : "bg-card"
                   }`}
                 >
-                  <td className="px-3 py-3.5 font-semibold">{r.customer}</td>
-                  <td className="px-3 py-3.5">
-                    {formatDateDdMmYyyy(formatIso(r.start))} to {formatDateDdMmYyyy(formatIso(r.end))}
-                    <span className="ml-1 text-xs text-slate-500">· Due {formatDateDdMmYyyy(formatIso(r.dueDate))}</span>
-                  </td>
-                  <td className="px-3 py-3.5">{r.invoiceCount}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {formatStatementAmount(amt.totalDue)}
-                  </td>
-                  <td className="px-3 py-3.5 text-right">৳ {formatStatementAmount(amt.paid)}</td>
-                  <td className="px-3 py-3.5 text-right font-semibold">
-                    ৳ {formatStatementAmount(amt.balance)}
-                  </td>
-                  <td className="px-3 py-3.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        scheduleDueLabel(r) === "Overdue"
-                          ? "bg-red-100 text-red-700"
-                          : scheduleDueLabel(r) === "Paid"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : "bg-emerald-100 text-emerald-700"
-                      }`}
-                    >
-                      {scheduleDueLabel(r)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        paymentStatusOf(r) === "Paid"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : paymentStatusOf(r) === "Partial"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {paymentStatusOf(r)}
-                    </span>
-                  </td>
+                  {billingStmtColVisible("customer") && <td className="px-3 py-3.5 font-semibold">{r.customer}</td>}
+                  {billingStmtColVisible("period") && (
+                    <td className="px-3 py-3.5">
+                      {formatDateDdMmYyyy(formatIso(r.start))} to {formatDateDdMmYyyy(formatIso(r.end))}
+                      <span className="ml-1 text-xs text-slate-500">· Due {formatDateDdMmYyyy(formatIso(r.dueDate))}</span>
+                    </td>
+                  )}
+                  {billingStmtColVisible("invoiceCount") && <td className="px-3 py-3.5">{r.invoiceCount}</td>}
+                  {billingStmtColVisible("totalDue") && <td className="px-3 py-3.5 text-right font-semibold">৳ {formatStatementAmount(amt.totalDue)}</td>}
+                  {billingStmtColVisible("paid") && <td className="px-3 py-3.5 text-right">৳ {formatStatementAmount(amt.paid)}</td>}
+                  {billingStmtColVisible("balance") && <td className="px-3 py-3.5 text-right font-semibold">৳ {formatStatementAmount(amt.balance)}</td>}
+                  {billingStmtColVisible("dueStatus") && (
+                    <td className="px-3 py-3.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${scheduleDueLabel(r) === "Overdue" ? "bg-red-100 text-red-700" : scheduleDueLabel(r) === "Paid" ? "bg-emerald-100 text-emerald-800" : "bg-emerald-100 text-emerald-700"}`}>
+                        {scheduleDueLabel(r)}
+                      </span>
+                    </td>
+                  )}
+                  {billingStmtColVisible("payment") && (
+                    <td className="px-3 py-3.5">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${paymentStatusOf(r) === "Paid" ? "bg-emerald-100 text-emerald-700" : paymentStatusOf(r) === "Partial" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-700"}`}>
+                        {paymentStatusOf(r)}
+                      </span>
+                    </td>
+                  )}
                   <td className="px-3 py-3.5 text-right">
                     <button
                       type="button"
@@ -598,7 +646,7 @@ export function AdminBillingStatementsPage() {
         </div>
 
         <PaginationControls
-          totalItems={listSource.length}
+          totalItems={sortedListSource.length}
           page={safePage}
           perPage={perPage}
           onPageChange={setPage}
