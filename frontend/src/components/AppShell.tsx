@@ -23,13 +23,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useOrders } from "../context/OrdersContext";
 import { BrandLogo } from "./BrandLogo";
 import {
   clearNewSignupNotification,
-  moderatorNewSubmittedCount,
   NOTIFICATIONS_EVENT,
-  readAdminNotifyOrderIds,
   readNewSignups,
   readNewSignupUserIds,
   type SignupNotification,
@@ -123,7 +120,6 @@ const navFor: Record<
 
 export function AppShell() {
   const { user, logout, updateProfile, updatePassword } = useAuth();
-  const { orders } = useOrders();
   const navigate = useNavigate();
   const location = useLocation();
   const [notifTick, setNotifTick] = useState(0);
@@ -189,13 +185,11 @@ export function AppShell() {
   const orderNotifyCount = useMemo(() => {
     void notifTick;
     if (!user) return 0;
-    if (user.role === "admin" || user.role === "master_admin") {
-      const submittedCount = orders.filter((o) => o.status === "submitted").length;
-      return submittedCount + readNewSignupUserIds().length;
-    }
-    if (user.role === "moderator") return moderatorNewSubmittedCount(orders);
+    // Bell badge = new user signups only (admin/master_admin)
+    if (user.role === "admin" || user.role === "master_admin")
+      return readNewSignupUserIds().length;
     return 0;
-  }, [notifTick, user, orders]);
+  }, [notifTick, user]);
 
   if (!user) return <Outlet />;
 
@@ -427,24 +421,6 @@ export function AppShell() {
                     </>
                   )}
 
-                  {/* Order notifications */}
-                  {(user.role === "admin" || user.role === "master_admin") && readAdminNotifyOrderIds().length > 0 && (
-                    <>
-                      <div className="px-3 pt-2.5 pb-1">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                          Pending order review ({readAdminNotifyOrderIds().length})
-                        </p>
-                      </div>
-                      <DropdownMenuItem
-                        className="px-3 py-2.5 cursor-pointer"
-                        onSelect={() => navigate("/admin/orders")}
-                      >
-                        <ClipboardList className="mr-2 h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">View orders awaiting review</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
 
                   {/* Moderator: new submitted orders */}
                   {user.role === "moderator" && orderNotifyCount > 0 && (
