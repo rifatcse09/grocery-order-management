@@ -1,13 +1,17 @@
 import { Link } from "react-router-dom";
-import { Plus, Pencil, FileCheck2, Search, Trash2, MoreVertical } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Pencil, FileCheck2, FileText, Search, Trash2, MoreVertical } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { SortableHeader, nextSort, sortRows, type SortDir } from "../components/SortableHeader";
+import { ExportToolbar, useColumnVisibility } from "../components/ExportToolbar";
 import { useAuth } from "../context/AuthContext";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
 import { useOrders } from "../context/OrdersContext";
 import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder } from "../lib/quantityRules";
 import { PaginationControls } from "../components/PaginationControls";
-import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { formatOrderSavedAt, formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
+import { OrderDeliveredAtCell, OrderScheduledDeliveryCell } from "../components/OrderDeliveryTableCells";
+import { hasBillingInvoice } from "../lib/invoiceFlow";
 import type { OrderStatus } from "../types";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,13 +29,57 @@ import {
 
 export function UserOrderDashboard() {
   const { user } = useAuth();
-  const { orders, deleteOrder } = useOrders();
-  const mine = orders.filter((o) => o.ownerId === user?.id || user?.role === "admin");
+  const { orders, loadOrders, deleteOrder } = useOrders();
+  const mine = orders.filter(
+    (o) => o.ownerId === user?.id || user?.role === "admin" || user?.role === "master_admin",
+  );
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"all" | OrderStatus>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; orderNo: string } | null>(null);
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    const next = nextSort({ key: sortKey, dir: sortDir }, field);
+    setSortKey(next.key);
+    setSortDir(next.dir);
+    setPage(1);
+  };
+
+  const USER_ORDER_COLS = [
+    { key: "orderNo", label: "Order" },
+    { key: "submittedAt", label: "Submitted" },
+    { key: "orderDate", label: "Order date" },
+    { key: "deliveryDate", label: "Delivery" },
+    { key: "deliveredAt", label: "Delivered" },
+    { key: "status", label: "Status" },
+    { key: "challan", label: "Challan" },
+    { key: "invoice", label: "Invoice" },
+  ];
+  const { visibleColumns: userOrderVisibleCols, toggleColumn: toggleUserOrderCol, isVisible: userOrderColVisible } = useColumnVisibility(USER_ORDER_COLS);
+
+  const getUserOrderData = () => {
+    const headers = USER_ORDER_COLS.filter((c) => userOrderColVisible(c.key)).map((c) => c.label);
+    const rows = sorted.map((o) => {
+      const cols: string[] = [];
+      if (userOrderColVisible("orderNo")) cols.push(o.orderNo);
+      if (userOrderColVisible("submittedAt")) cols.push(o.submittedAt ?? "");
+      if (userOrderColVisible("orderDate")) cols.push(o.orderDate ?? "");
+      if (userOrderColVisible("deliveryDate")) cols.push(o.deliveryDate ?? "");
+      if (userOrderColVisible("deliveredAt")) cols.push(o.deliveredAt ?? "");
+      if (userOrderColVisible("status")) cols.push(o.status);
+      if (userOrderColVisible("challan")) cols.push(o.challanGenerated ? "Yes" : "No");
+      if (userOrderColVisible("invoice")) cols.push(hasBillingInvoice(o) ? "Yes" : "No");
+      return cols;
+    });
+    return { headers, rows };
+  };
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -47,14 +95,17 @@ export function UserOrderDashboard() {
     });
   }, [mine, query, status]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const sorted = useMemo(() => {
+    if (!sortKey) return filtered;
+    return sortRows(filtered, sortKey as keyof typeof filtered[0], sortDir);
+  }, [filtered, sortKey, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const safePage = Math.min(page, totalPages);
-  const pageItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pageItems = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const btnPrimary =
     "inline-flex items-center gap-1 rounded-xl bg-primary px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900";
-  const btnPrimaryNew =
-    "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 dark:hover:bg-slate-100 dark:hover:text-slate-900 sm:w-auto";
   const btnOutline =
     "inline-flex items-center gap-1 rounded-xl border border-border bg-white px-3.5 py-2 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-muted";
   const btnDisabled = "inline-flex cursor-not-allowed items-center gap-1 rounded-xl bg-slate-100 px-3.5 py-2 text-sm font-semibold text-slate-400";
@@ -68,13 +119,9 @@ export function UserOrderDashboard() {
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">User</p>
           <h1 className="mt-1 text-3xl font-extrabold text-slate-900">Order dashboard</h1>
           <p className="mt-1 text-base font-medium text-slate-600">
-            Search, filter, and paginate orders. Existing orders are editable until 48h before delivery.
+            Search, filter, and paginate orders. Existing orders are editable until 24h before delivery.
           </p>
         </div>
-        <Link to="/user/orders/new" className={btnPrimaryNew}>
-          <Plus className="h-4 w-4" />
-          New order
-        </Link>
       </div>
 
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
@@ -114,36 +161,74 @@ export function UserOrderDashboard() {
               </select>
             </label>
           </div>
-          <p className="mt-3 text-xs text-slate-500">
-            Showing <strong className="text-slate-700">{filtered.length}</strong> of {mine.length} orders
-          </p>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-500">
+              Showing <strong className="text-slate-700">{sorted.length}</strong> of {mine.length} orders
+            </p>
+            <ExportToolbar
+              filename="my-orders-export"
+              columns={USER_ORDER_COLS}
+              visibleColumns={userOrderVisibleCols}
+              onToggleColumn={toggleUserOrderCol}
+              getData={getUserOrderData}
+            />
+          </div>
         </div>
 
         <div className={tableActionsContainerClass("table-scroll hidden md:block")}>
           <table className="w-full text-left text-base">
             <thead className="bg-muted text-sm font-semibold uppercase tracking-wide text-foreground">
               <tr>
-                <th className="px-4 py-3">Order</th>
-                <th className="px-4 py-3">Submitted</th>
-                <th className="px-4 py-3">Order date</th>
-                <th className="px-4 py-3">Delivery</th>
-                <th className="px-4 py-3">Status</th>
+                {userOrderColVisible("orderNo") && <th className="px-4 py-3"><SortableHeader label="Order" field="orderNo" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("submittedAt") && <th className="px-4 py-3"><SortableHeader label="Submitted" field="submittedAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("orderDate") && <th className="px-4 py-3"><SortableHeader label="Order date" field="orderDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("deliveryDate") && <th className="px-4 py-3 min-w-[140px]"><SortableHeader label="Delivery" field="deliveryDate" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("deliveredAt") && <th className="px-4 py-3 min-w-[140px]"><SortableHeader label="Delivered" field="deliveredAt" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("status") && <th className="px-4 py-3"><SortableHeader label="Status" field="status" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} /></th>}
+                {userOrderColVisible("challan") && <th className="px-4 py-3">Challan</th>}
+                {userOrderColVisible("invoice") && <th className="px-4 py-3">Invoice</th>}
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {pageItems.map((o) => {
-                const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+                const isClosed = o.status === "delivered" || o.status === "invoiced";
+                const editable = !isClosed && (o.status === "draft" || canEditOrder(o.deliveryDate, o.deliveryTime));
                 const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
-                const lockTitle = "Less than 48h to delivery — editing and review are locked";
+                const lockTitle = "Less than 24h to delivery — editing and review are locked";
                 return (
                   <tr key={o.id} className="border-t border-border bg-card">
                     <td className="px-4 py-4 font-mono text-base font-semibold text-slate-900">{o.orderNo}</td>
                     <td className="px-4 py-4 text-sm text-slate-700">{formatOrderSubmittedAt(o)}</td>
-                    <td className="px-4 py-4 text-slate-700">{o.orderDate}</td>
-                    <td className="px-4 py-4 text-slate-700">{o.deliveryDate}</td>
+                    <td className="px-4 py-4 text-slate-700">{formatOrderSavedAt(o)}</td>
+                    <td className="px-4 py-4 text-slate-700">
+                      <OrderScheduledDeliveryCell order={o} />
+                    </td>
+                    <td className="px-4 py-4 text-slate-700">
+                      <OrderDeliveredAtCell order={o} />
+                    </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={o.status} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {o.challanGenerated ? (
+                        <Link
+                          to={`/user/challans/${o.id}`}
+                          className="inline-flex items-center rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                        >
+                          View challan
+                        </Link>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3">
+                      {hasBillingInvoice(o) ? (
+                        <Link
+                          to={`/user/invoices/${o.id}`}
+                          className="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800 hover:bg-blue-100"
+                        >
+                          View invoice
+                        </Link>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className={tableActionsWideUserRow()}>
@@ -213,6 +298,14 @@ export function UserOrderDashboard() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-44">
+                            {o.challanGenerated ? (
+                              <DropdownMenuItem asChild>
+                                <Link to={`/user/challans/${o.id}`} className="flex cursor-pointer items-center gap-2">
+                                  <FileText className="h-4 w-4" />
+                                  Challan
+                                </Link>
+                              </DropdownMenuItem>
+                            ) : null}
                             {editable ? (
                               <DropdownMenuItem asChild>
                                 <Link to={`/user/orders/${o.id}/review`} className="flex cursor-pointer items-center gap-2">
@@ -267,9 +360,10 @@ export function UserOrderDashboard() {
 
         <div className="space-y-3 p-3 md:hidden">
           {pageItems.map((o) => {
-            const editable = o.status === "draft" || canEditOrder(o.deliveryDate);
+            const isClosed = o.status === "delivered" || o.status === "invoiced";
+            const editable = !isClosed && (o.status === "draft" || canEditOrder(o.deliveryDate, o.deliveryTime));
             const canDeleteBeforeSubmit = o.status === "draft" && !o.submittedAt;
-            const lockTitle = "Less than 48h to delivery — editing and review are locked";
+            const lockTitle = "Less than 24h to delivery — editing and review are locked";
             return (
               <div key={o.id} className="rounded-2xl border border-border bg-white p-3.5 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
@@ -280,12 +374,45 @@ export function UserOrderDashboard() {
                   Submitted: <span className="font-medium text-slate-800">{formatOrderSubmittedAt(o)}</span>
                 </p>
                 <p className="mt-1 text-sm text-slate-600">
-                  Order date: <span className="font-medium text-slate-800">{o.orderDate}</span>
+                  Order date: <span className="font-medium text-slate-800">{formatOrderSavedAt(o)}</span>
                 </p>
-                <p className="mt-1 text-sm text-slate-600">
-                  Delivery: <span className="font-medium text-slate-800">{o.deliveryDate}</span>
-                </p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivery</p>
+                <div className="text-sm text-slate-800">
+                  <OrderScheduledDeliveryCell order={o} />
+                </div>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Delivered</p>
+                <div className="text-sm text-slate-800">
+                  <OrderDeliveredAtCell order={o} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-sm">
+                  {o.challanGenerated ? (
+                    <Link
+                      to={`/user/challans/${o.id}`}
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800"
+                    >
+                      Challan available
+                    </Link>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-500">Challan pending</span>
+                  )}
+                  {hasBillingInvoice(o) ? (
+                    <Link
+                      to={`/user/invoices/${o.id}`}
+                      className="rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 font-semibold text-blue-800"
+                    >
+                      Invoice available
+                    </Link>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-500">Invoice pending</span>
+                  )}
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  {o.challanGenerated ? (
+                    <Link to={`/user/challans/${o.id}`} className={`${btnOutline} flex-1 justify-center`}>
+                      <FileText className="h-4 w-4" />
+                      Challan
+                    </Link>
+                  ) : null}
                   {editable ? (
                     <Link to={`/user/orders/${o.id}/review`} className={`${btnOutline} flex-1 justify-center`}>
                       <FileCheck2 className="h-4 w-4" />
@@ -327,9 +454,9 @@ export function UserOrderDashboard() {
           ) : null}
         </div>
 
-        {filtered.length > 0 ? (
+        {sorted.length > 0 ? (
           <PaginationControls
-            totalItems={filtered.length}
+            totalItems={sorted.length}
             page={safePage}
             perPage={pageSize}
             onPageChange={setPage}

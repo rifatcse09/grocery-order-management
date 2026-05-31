@@ -13,8 +13,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
+import { apiEnabled } from "../lib/api";
 
-const PAYMENTS_KEY = "gom_statement_payments";
 type InvoiceFilter = "all" | "paid" | "pending" | "overdue";
 
 type InvoiceRow = {
@@ -23,8 +24,15 @@ type InvoiceRow = {
   orderNo: string;
   customer: string;
   customerEmail: string;
-  issueDate: string;
+  /** Display `dd-mm-yyyy` from order row. */
+  orderDate: string;
+  /** Display `dd-mm-yyyy` from order row. */
+  deliveryDate: string;
+  /** Display `dd-mm-yyyy`. */
   dueDate: string;
+  /** Calendar `yyyy-mm-dd` for sorting and overdue checks (same as order date in this list). */
+  issueDateIso: string;
+  dueDateIso: string;
   amount: number;
   remaining: number;
   paymentStatus: Exclude<InvoiceFilter, "all">;
@@ -60,12 +68,17 @@ export function UserInvoicesPage() {
 
   const rows = useMemo<InvoiceRow[]>(() => {
     const visible = orders
-      .filter((o) => (o.ownerId === user?.id || user?.role === "admin"))
+      .filter(
+        (o) => o.ownerId === user?.id || user?.role === "admin" || user?.role === "master_admin",
+      )
       .filter((o) => hasBillingInvoice(o))
+      .sort((a, b) => (a.orderDate || "").localeCompare(b.orderDate || ""))
       .map((o) => {
         const issue = parseIso(o.orderDate) ?? new Date();
         const due = new Date(issue);
         due.setDate(due.getDate() + 7);
+        const issueIso = formatIso(issue);
+        const dueIso = formatIso(due);
         const amount = Math.max(
           0,
           o.grandTotal ??
@@ -74,6 +87,13 @@ export function UserInvoicesPage() {
               return sum + (Number.isFinite(line) ? line : 0);
             }, 0),
         );
+        /** Same source as admin billing settlement: API `billingAmountDue` / `billingNetPaid`. */
+        let remaining = amount;
+        if (o.billingAmountDue != null && Number.isFinite(o.billingAmountDue)) {
+          remaining = Math.max(0, o.billingAmountDue);
+        } else if (o.billingNetPaid != null && Number.isFinite(o.billingNetPaid)) {
+          remaining = Math.max(0, amount - o.billingNetPaid);
+        }
         const digits = o.orderNo.replace(/\D/g, "");
         const invoiceNo = `INV-${(digits || o.id.replace(/\D/g, "")).slice(-5).padStart(5, "0")}`;
         const customer = o.contactPerson || "Unknown customer";
@@ -84,58 +104,24 @@ export function UserInvoicesPage() {
           orderNo: o.orderNo,
           customer,
           customerEmail,
-          issueDate: formatIso(issue),
-          dueDate: formatIso(due),
+          orderDate: formatDateDdMmYyyyOrDash(o.orderDate),
+          deliveryDate: formatDateDdMmYyyyOrDash(o.deliveryDate),
+          dueDate: formatDateDdMmYyyy(dueIso),
+          issueDateIso: issueIso,
+          dueDateIso: dueIso,
           amount,
-          remaining: amount,
+          remaining,
           paymentStatus: "pending" as const,
           challanGenerated: Boolean(o.challanGenerated),
           invoiceAvailable: hasBillingInvoice(o),
         };
-      })
-      .sort((a, b) => a.issueDate.localeCompare(b.issueDate));
-
-    const paymentsByCustomer = new Map<string, number>();
-    try {
-      const raw = localStorage.getItem(PAYMENTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        Object.entries(parsed).forEach(([k, v]) => {
-          const amount = Number(v);
-          if (!Number.isFinite(amount) || amount <= 0) return;
-          const customerName = (k.split("::")[1] || "").trim().toLowerCase();
-          if (!customerName) return;
-          paymentsByCustomer.set(customerName, (paymentsByCustomer.get(customerName) ?? 0) + amount);
-        });
-      }
-    } catch {
-      /* ignore parse errors */
-    }
-
-    const grouped = new Map<string, InvoiceRow[]>();
-    visible.forEach((r) => {
-      const key = r.customer.trim().toLowerCase();
-      const arr = grouped.get(key) ?? [];
-      arr.push(r);
-      grouped.set(key, arr);
-    });
-
-    grouped.forEach((list, key) => {
-      let pool = paymentsByCustomer.get(key) ?? 0;
-      if (pool <= 0) return;
-      for (const row of list) {
-        if (pool <= 0) break;
-        const consume = Math.min(pool, row.remaining);
-        row.remaining -= consume;
-        pool -= consume;
-      }
-    });
+      });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return visible
       .map((r) => {
-        const due = parseIso(r.dueDate);
+        const due = parseIso(r.dueDateIso);
         const overdue = Boolean(due && due.getTime() < today.getTime() && r.remaining > 0);
         const paymentStatus: InvoiceRow["paymentStatus"] = r.remaining <= 0 ? "paid" : overdue ? "overdue" : "pending";
         return {
@@ -143,7 +129,7 @@ export function UserInvoicesPage() {
           paymentStatus,
         };
       })
-      .sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+      .sort((a, b) => b.issueDateIso.localeCompare(a.issueDateIso));
   }, [orders, user, accountEmailByName]);
 
   const filtered = useMemo(() => {
@@ -155,7 +141,9 @@ export function UserInvoicesPage() {
         r.invoiceNo.toLowerCase().includes(q) ||
         r.orderNo.toLowerCase().includes(q) ||
         r.customer.toLowerCase().includes(q) ||
-        r.customerEmail.toLowerCase().includes(q)
+        r.customerEmail.toLowerCase().includes(q) ||
+        r.orderDate.toLowerCase().includes(q) ||
+        r.deliveryDate.toLowerCase().includes(q)
       );
     });
   }, [rows, filter, query]);
@@ -203,6 +191,14 @@ export function UserInvoicesPage() {
             </button>
           ))}
         </div>
+        {apiEnabled() ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Paid</span> uses the same rule as admin billing: recorded
+            customer payments (minus adjustments) up to the invoice total.{" "}
+            <span className="font-medium text-foreground">Pending</span> means there is still an amount due on that
+            invoice.
+          </p>
+        ) : null}
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <label className="relative w-full max-w-md">
@@ -232,7 +228,7 @@ export function UserInvoicesPage() {
 
       <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card">
         <div className="hidden table-scroll md:block">
-          <table className="min-w-[980px] w-full text-left text-sm">
+          <table className="min-w-[1040px] w-full text-left text-sm">
             <thead className="bg-muted text-xs font-semibold uppercase tracking-wide text-foreground">
               <tr>
                 <th className="w-10 px-3 py-3">
@@ -240,9 +236,10 @@ export function UserInvoicesPage() {
                 </th>
                 <th className="px-3 py-3">Invoice</th>
                 <th className="px-3 py-3">Customer</th>
+                <th className="px-3 py-3 whitespace-nowrap">Order date</th>
+                <th className="px-3 py-3 whitespace-nowrap">Delivery date</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">Due date</th>
-                <th className="px-3 py-3">Issued</th>
                 <th className="px-3 py-3 text-right">Amount</th>
                 <th className="w-12 px-3 py-3 text-right">Action</th>
               </tr>
@@ -261,13 +258,14 @@ export function UserInvoicesPage() {
                     <p className="font-medium text-slate-900">{r.customer}</p>
                     <p className="text-xs text-slate-500">{r.customerEmail}</p>
                   </td>
+                  <td className="px-3 py-3 whitespace-nowrap text-slate-700">{r.orderDate}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-slate-700">{r.deliveryDate}</td>
                   <td className="px-3 py-3">
                     <InvoiceStatusChip status={r.paymentStatus} />
                   </td>
                   <td className="px-3 py-3 text-slate-700">{r.dueDate}</td>
-                  <td className="px-3 py-3 text-slate-700">{r.issueDate}</td>
                   <td className="px-3 py-3 text-right font-semibold text-slate-900">
-                    ${Math.round(r.amount).toLocaleString("en-US")}
+                    {`৳ ${Math.round(r.amount).toLocaleString("en-US")}`}
                   </td>
                   <td className="px-3 py-3 text-right">
                     <DropdownMenu>
@@ -312,19 +310,23 @@ export function UserInvoicesPage() {
               </div>
               <p className="mt-2 text-sm font-medium text-slate-900">{r.customer}</p>
               <p className="text-xs text-slate-500">{r.customerEmail}</p>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-slate-600">
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                <div>
+                  <p className="font-semibold">Order date</p>
+                  <p>{r.orderDate}</p>
+                </div>
+                <div>
+                  <p className="font-semibold">Delivery date</p>
+                  <p>{r.deliveryDate}</p>
+                </div>
                 <div>
                   <p className="font-semibold">Due</p>
                   <p>{r.dueDate}</p>
                 </div>
-                <div>
-                  <p className="font-semibold">Issued</p>
-                  <p>{r.issueDate}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">Amount</p>
-                  <p className="font-bold text-slate-900">${Math.round(r.amount).toLocaleString("en-US")}</p>
-                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-sm">
+                <span className="font-semibold text-slate-600">Amount</span>
+                <span className="font-bold text-slate-900">{`৳ ${Math.round(r.amount).toLocaleString("en-US")}`}</span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link to={`/user/invoices/${r.id}`} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900">

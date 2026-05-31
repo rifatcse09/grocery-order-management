@@ -8,14 +8,31 @@ import {
   type ReactNode,
 } from "react";
 import type { Role, SessionUser } from "../types";
+import {
+  apiCreateUser,
+  apiEnabled,
+  apiListUsers,
+  apiLogin,
+  apiRegister,
+  apiUpdateProfile,
+} from "../lib/api";
+import { flagNewUserSignup } from "../lib/orderNotifications";
+import { clearPresence } from "../lib/userPresence";
 
 interface AuthState {
   user: SessionUser | null;
-  login: (email: string, password: string, role: Role) => { ok: boolean; message?: string };
-  register: (payload: RegisterPayload) => { ok: boolean; message?: string };
-  createAccountByAdmin: (payload: AdminCreatePayload) => { ok: boolean; message?: string };
+  login: (email: string, password: string) => Promise<{ ok: boolean; role?: Role; message?: string }>;
+  register: (payload: RegisterPayload) => Promise<{ ok: boolean; message?: string }>;
+  createAccountByAdmin: (payload: AdminCreatePayload) => Promise<{ ok: boolean; message?: string }>;
+  updateAccountByAdmin: (id: string, patch: Partial<AdminCreatePayload>) => Promise<{ ok: boolean; message?: string }>;
+  deleteAccountByAdmin: (id: string) => Promise<{ ok: boolean; message?: string }>;
   listAccounts: () => SessionUser[];
-  updateProfile: (patch: { name: string; phone: string }) => { ok: boolean; message?: string };
+  updateProfile: (patch: {
+    name: string;
+    phone: string;
+    billingAddress: string;
+    deliveryAddress: string;
+  }) => Promise<{ ok: boolean; message?: string }>;
   updatePassword: (currentPassword: string, nextPassword: string) => { ok: boolean; message?: string };
   logout: () => void;
 }
@@ -23,6 +40,7 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 const SESSION_KEY = "gom_session";
 const ACCOUNTS_KEY = "gom_accounts";
+const TOKEN_KEY = "gom_token";
 
 interface Account extends SessionUser {
   password: string;
@@ -42,7 +60,7 @@ interface AdminCreatePayload {
   phone: string;
   email: string;
   password: string;
-  role: Exclude<Role, "admin">;
+  role: Role;
   billingAddress?: string;
   deliveryAddress?: string;
 }
@@ -78,6 +96,16 @@ const demoProfiles: Record<Role, Account> = {
     billingAddress: "—",
     deliveryAddress: "—",
   },
+  master_admin: {
+    id: "ma1",
+    name: "Demo Master Admin",
+    email: "master@demo.local",
+    password: "demo123",
+    phone: "+8801911000001",
+    role: "master_admin",
+    billingAddress: "—",
+    deliveryAddress: "—",
+  },
 };
 
 function toSession(account: Account): SessionUser {
@@ -86,7 +114,7 @@ function toSession(account: Account): SessionUser {
 }
 
 function loadAccounts(): Account[] {
-  const defaults = [demoProfiles.user, demoProfiles.moderator, demoProfiles.admin];
+  const defaults = [demoProfiles.user, demoProfiles.moderator, demoProfiles.admin, demoProfiles.master_admin];
   try {
     const raw = localStorage.getItem(ACCOUNTS_KEY);
     if (raw) {
@@ -98,6 +126,12 @@ function loadAccounts(): Account[] {
           )
           .map((a) => {
             const fallback = defaults.find((d) => d.id === a.id || d.email === a.email);
+            const raw = a as unknown as Record<string, unknown>;
+            const registeredAt =
+              a.registeredAt ??
+              (raw.created_at as string | undefined) ??
+              (raw.createdAt as string | undefined) ??
+              undefined;
             return {
               id: a.id,
               name: a.name ?? fallback?.name ?? "User",
@@ -107,11 +141,13 @@ function loadAccounts(): Account[] {
               role: a.role,
               billingAddress: a.billingAddress ?? fallback?.billingAddress ?? "",
               deliveryAddress: a.deliveryAddress ?? fallback?.deliveryAddress ?? "",
+              registeredAt,
+              deletedAt: a.deletedAt,
             } satisfies Account;
           });
 
         // Keep built-in demo accounts always available for quick role login.
-        const merged = [...normalized];
+        const merged: Account[] = [...normalized];
         for (const d of defaults) {
           if (!merged.some((a) => a.id === d.id)) merged.push(d);
         }
@@ -140,19 +176,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
   }, [accounts]);
 
-  const login = useCallback(
-    (email: string, password: string, role: Role) => {
-      const emailNorm = email.trim().toLowerCase();
-      const fallbackEmail = demoProfiles[role].email.toLowerCase();
-      const targetEmail = emailNorm || fallbackEmail;
-      const accountFromStore = accounts.find(
-        (a) => a.role === role && a.email.toLowerCase() === targetEmail,
-      );
-      const account = accountFromStore ?? demoProfiles[role];
+  useEffect(() => {
+    if (!apiEnabled() || !user || (user.role !== "admin" && user.role !== "master_admin")) return;
+    void apiListUsers()
+      .then((rows) => {
+        setAccounts(
+          rows.map((a) => {
+            const raw = a as unknown as Record<string, unknown>;
+            const registeredAt =
+              (a.registeredAt) ??
+              (raw.created_at as string | undefined) ??
+              (raw.createdAt as string | undefined) ??
+              (raw.registered_at as string | undefined) ??
+              undefined;
+            return { ...a, password: "", registeredAt };
+          }),
+        );
+      })
+      .catch(() => {
+        // Keep local snapshot if API listing fails.
+      });
+  }, [user]);
 
-      const isBuiltInDemo = account.id === demoProfiles[role].id;
+  const login = useCallback(
+    async (email: string, password: string) => {
+      if (apiEnabled()) {
+        try {
+          const res = await apiLogin({ email, password });
+          setUser(res.user);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
+          localStorage.setItem(TOKEN_KEY, res.token);
+          return { ok: true, role: res.user.role };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "Sign in failed." };
+        }
+      }
+      const emailNorm = email.trim().toLowerCase();
+      if (emailNorm === "") {
+        return { ok: false, message: "Email is required." };
+      }
+      const account = accounts.find((a) => a.email.toLowerCase() === emailNorm);
+      if (!account) {
+        return { ok: false, message: "Account not found." };
+      }
+      const isBuiltInDemo = Object.values(demoProfiles).some((d) => d.id === account.id);
       const passwordOk = isBuiltInDemo
-        ? password.trim().length > 0 || password === demoProfiles[role].password
+        ? password.trim().length > 0
         : account.password === password;
 
       if (!passwordOk) {
@@ -166,13 +235,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const next = toSession(account);
       setUser(next);
       localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-      return { ok: true };
+      return { ok: true, role: next.role };
     },
     [accounts],
   );
 
   const register = useCallback(
-    (payload: RegisterPayload) => {
+    async (payload: RegisterPayload) => {
+      if (apiEnabled()) {
+        try {
+          const res = await apiRegister(payload);
+          setUser(res.user);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(res.user));
+          localStorage.setItem(TOKEN_KEY, res.token);
+          flagNewUserSignup(res.user.id, res.user.name, res.user.email);
+          return { ok: true };
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : "Sign up failed." };
+        }
+      }
       const emailNorm = payload.email.trim().toLowerCase();
       if (!emailNorm || !payload.password.trim()) {
         return { ok: false, message: "Email and password are required." };
@@ -189,20 +270,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: payload.password,
         billingAddress: payload.billingAddress.trim(),
         deliveryAddress: payload.deliveryAddress.trim(),
+        registeredAt: new Date().toISOString(),
       };
       setAccounts((prev) => [account, ...prev]);
       const session = toSession(account);
       setUser(session);
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      flagNewUserSignup(account.id, account.name, account.email);
       return { ok: true };
     },
     [accounts],
   );
 
   const createAccountByAdmin = useCallback(
-    (payload: AdminCreatePayload) => {
-      if (!user || user.role !== "admin") {
-        return { ok: false, message: "Only admin can create accounts." };
+    async (payload: AdminCreatePayload) => {
+      if (apiEnabled()) {
+        try {
+          const created = await apiCreateUser(payload);
+          setAccounts((prev) => [{ ...created, password: "" }, ...prev.filter((p) => p.id !== created.id)]);
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof Error ? error.message : "Failed to create account.",
+          };
+        }
+      }
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can create accounts." };
       }
       const emailNorm = payload.email.trim().toLowerCase();
       if (!emailNorm || !payload.password.trim() || !payload.name.trim()) {
@@ -220,8 +315,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: payload.password.trim(),
         billingAddress: payload.billingAddress?.trim() || "—",
         deliveryAddress: payload.deliveryAddress?.trim() || "—",
+        registeredAt: new Date().toISOString(),
       };
       setAccounts((prev) => [account, ...prev]);
+      return { ok: true };
+    },
+    [accounts, user],
+  );
+
+  const updateAccountByAdmin = useCallback(
+    async (id: string, patch: Partial<AdminCreatePayload>) => {
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can edit accounts." };
+      }
+      const existing = accounts.find((a) => a.id === id);
+      if (!existing) return { ok: false, message: "Account not found." };
+
+      const emailNorm = patch.email ? patch.email.trim().toLowerCase() : existing.email;
+      const emailConflict = accounts.some((a) => a.id !== id && a.email.toLowerCase() === emailNorm);
+      if (emailConflict) return { ok: false, message: "Email already used by another account." };
+
+      const updated: Account = {
+        ...existing,
+        name: patch.name?.trim() || existing.name,
+        phone: patch.phone?.trim() ?? existing.phone,
+        email: emailNorm,
+        role: patch.role ?? existing.role,
+        billingAddress: patch.billingAddress?.trim() || existing.billingAddress,
+        deliveryAddress: patch.deliveryAddress?.trim() || existing.deliveryAddress,
+        ...(patch.password?.trim() ? { password: patch.password.trim() } : {}),
+      };
+      setAccounts((prev) => prev.map((a) => (a.id === id ? updated : a)));
+      return { ok: true };
+    },
+    [accounts, user],
+  );
+
+  const deleteAccountByAdmin = useCallback(
+    async (id: string) => {
+      if (!user || (user.role !== "admin" && user.role !== "master_admin")) {
+        return { ok: false, message: "Only administrators can delete accounts." };
+      }
+      const target = accounts.find((a) => a.id === id);
+      if (!target) return { ok: false, message: "Account not found." };
+      if (target.id === user.id) return { ok: false, message: "You cannot delete your own account." };
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, deletedAt: new Date().toISOString() } : a)),
+      );
       return { ok: true };
     },
     [accounts, user],
@@ -230,15 +370,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const listAccounts = useCallback(() => accounts.map((a) => toSession(a)), [accounts]);
 
   const updateProfile = useCallback(
-    (patch: { name: string; phone: string }) => {
+    async (patch: {
+      name: string;
+      phone: string;
+      billingAddress: string;
+      deliveryAddress: string;
+    }) => {
       if (!user) return { ok: false, message: "No active session." };
       const name = patch.name.trim();
       const phone = patch.phone.trim();
+      const billingAddress = patch.billingAddress.trim();
+      const deliveryAddress = patch.deliveryAddress.trim();
       if (!name) return { ok: false, message: "Name is required." };
+
+      if (apiEnabled()) {
+        try {
+          const updated = await apiUpdateProfile({
+            name,
+            phone,
+            billingAddress,
+            deliveryAddress,
+          });
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === user.id ? { ...a, ...updated } : a)),
+          );
+          setUser(updated);
+          localStorage.setItem(SESSION_KEY, JSON.stringify(updated));
+          return { ok: true };
+        } catch (error) {
+          return {
+            ok: false,
+            message: error instanceof Error ? error.message : "Profile update failed.",
+          };
+        }
+      }
+
       setAccounts((prev) =>
-        prev.map((a) => (a.id === user.id ? { ...a, name, phone } : a)),
+        prev.map((a) =>
+          a.id === user.id
+            ? { ...a, name, phone, billingAddress, deliveryAddress }
+            : a,
+        ),
       );
-      const next = { ...user, name, phone };
+      const next = { ...user, name, phone, billingAddress, deliveryAddress };
       setUser(next);
       localStorage.setItem(SESSION_KEY, JSON.stringify(next));
       return { ok: true };
@@ -268,9 +442,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    if (user?.id) clearPresence(user.id);
     setUser(null);
     localStorage.removeItem(SESSION_KEY);
-  }, []);
+    localStorage.removeItem(TOKEN_KEY);
+  }, [user]);
 
   const value = useMemo(
     () => ({
@@ -278,6 +454,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       createAccountByAdmin,
+      updateAccountByAdmin,
+      deleteAccountByAdmin,
       listAccounts,
       updateProfile,
       updatePassword,
@@ -288,6 +466,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       createAccountByAdmin,
+      updateAccountByAdmin,
       listAccounts,
       updateProfile,
       updatePassword,

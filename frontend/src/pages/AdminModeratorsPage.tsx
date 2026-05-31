@@ -4,7 +4,7 @@ import { AdminAccountsDataTable } from "../components/admin/AdminAccountsDataTab
 
 export function AdminModeratorsPage() {
   const { listAccounts } = useAuth();
-  const moderators = useMemo(() => listAccounts().filter((a) => a.role === "moderator"), [listAccounts]);
+  const moderators = useMemo(() => listAccounts().filter((a) => a.role === "moderator" && !a.deletedAt), [listAccounts]);
 
   return <AdminAccountsDataTable kind="moderators" accounts={moderators} />;
 }

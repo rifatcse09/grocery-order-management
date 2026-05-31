@@ -23,13 +23,15 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useOrders } from "../context/OrdersContext";
 import { BrandLogo } from "./BrandLogo";
 import {
-  moderatorNewSubmittedCount,
+  clearNewSignupNotification,
   NOTIFICATIONS_EVENT,
-  readAdminNotifyOrderIds,
+  readNewSignups,
+  readNewSignupUserIds,
+  type SignupNotification,
 } from "../lib/orderNotifications";
+import { startHeartbeat } from "../lib/userPresence";
 import type { Role } from "../types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -53,34 +55,59 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
+/**
+ * Dashboard root entries (/admin, /moderator/dashboard) are exact-only so that
+ * sub-routes like /admin/orders/123 do not accidentally activate them.
+ * All other nav items match their own path and any sub-paths; the longest
+ * match wins, so /admin/orders/new activates "New order" not "Order list".
+ */
+function navItemActive(path: string, to: string): boolean {
+  if (to === "/admin" || to === "/moderator/dashboard") return path === to;
+  return path === to || path.startsWith(`${to}/`);
+}
+
 const navFor: Record<
   Role,
   { to: string; label: string; icon: typeof LayoutDashboard }[]
 > = {
   user: [
-    { to: "/user/orders", label: "Orders", icon: ClipboardList },
     { to: "/user/orders/new", label: "New order", icon: Package },
+    { to: "/user/orders", label: "Orders", icon: ClipboardList },
     { to: "/user/invoices", label: "Invoices", icon: FileText },
     { to: "/user/catalog/categories", label: "Category list", icon: BookText },
     { to: "/user/catalog/products", label: "Product list", icon: Package },
   ],
   moderator: [
+    { to: "/moderator/orders/new", label: "New order", icon: Plus },
     { to: "/moderator/dashboard", label: "Dashboard", icon: BarChart3 },
-    { to: "/moderator/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
+    { to: "/moderator/orders", label: "Order list", icon: ClipboardList },
     { to: "/moderator/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
-    { to: "/moderator/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
-    { to: "/moderator/billing-invoices", label: "Billing invoices", icon: FileText },
+    { to: "/moderator/purchase-statements", label: "Purchase statements", icon: FileText },
     { to: "/moderator/catalog/categories", label: "Category list", icon: Package },
-    { to: "/moderator/ledger", label: "Ledger", icon: BookText },
+    { to: "/moderator/catalog/products", label: "Product list", icon: Package },
   ],
   admin: [
+    { to: "/admin/orders/new", label: "New order (bookkeeping)", icon: Plus },
     { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
     { to: "/admin/orders", label: "Order list", icon: ClipboardList },
-    { to: "/admin/purchase-invoices", label: "Purchase invoices", icon: ClipboardList },
     { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
-    { to: "/admin/purchase-statements", label: "Purchase billing cycle statements", icon: FileText },
-    { to: "/admin/billing-invoices", label: "Billing invoices", icon: FileText },
-    { to: "/admin/statements", label: "Billing cycle statements", icon: FileText },
+    { to: "/admin/purchase-statements", label: "Purchase statements", icon: FileText },
+    { to: "/admin/statements", label: "Billing statements", icon: FileText },
+    { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
+    { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
+    { to: "/admin/catalog/categories", label: "Category list", icon: BookText },
+    { to: "/admin/catalog/products", label: "Product list", icon: Package },
+    { to: "/admin/users", label: "User list", icon: Users },
+    { to: "/admin/moderators", label: "Moderator list", icon: UserCog },
+    { to: "/admin/create", label: "Create user/moderator", icon: UserPlus },
+  ],
+  master_admin: [
+    { to: "/admin/orders/new", label: "New order (bookkeeping)", icon: Plus },
+    { to: "/admin", label: "Admin dashboard", icon: BarChart3 },
+    { to: "/admin/orders", label: "Order list", icon: ClipboardList },
+    { to: "/admin/purchase-pending-bills", label: "Purchase pending bills", icon: FileText },
+    { to: "/admin/purchase-statements", label: "Purchase statements", icon: FileText },
+    { to: "/admin/statements", label: "Billing statements", icon: FileText },
     { to: "/admin/outstanding", label: "Pending bills", icon: FileText },
     { to: "/admin/ledger", label: "Financial ledger", icon: BookText },
     { to: "/admin/catalog/categories", label: "Category list", icon: BookText },
@@ -93,16 +120,18 @@ const navFor: Record<
 
 export function AppShell() {
   const { user, logout, updateProfile, updatePassword } = useAuth();
-  const { orders } = useOrders();
   const navigate = useNavigate();
   const location = useLocation();
   const [notifTick, setNotifTick] = useState(0);
+  const [newSignups, setNewSignups] = useState<SignupNotification[]>(() => readNewSignups());
   const [showProfile, setShowProfile] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [name, setName] = useState(user?.name ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
+  const [billingAddress, setBillingAddress] = useState(user?.billingAddress ?? "");
+  const [deliveryAddress, setDeliveryAddress] = useState(user?.deliveryAddress ?? "");
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -121,24 +150,46 @@ export function AppShell() {
   }, [dark]);
 
   useEffect(() => {
-    const bump = () => setNotifTick((t) => t + 1);
+    const bump = () => {
+      setNotifTick((t) => t + 1);
+      setNewSignups(readNewSignups());
+    };
     window.addEventListener(NOTIFICATIONS_EVENT, bump);
     return () => window.removeEventListener(NOTIFICATIONS_EVENT, bump);
   }, []);
 
   useEffect(() => {
     if (!user) return;
+    return startHeartbeat(user.id);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
     setName(user.name);
     setPhone(user.phone);
-  }, [user?.name, user?.phone, user]);
+    setBillingAddress(user.billingAddress);
+    setDeliveryAddress(user.deliveryAddress);
+  }, [user?.name, user?.phone, user?.billingAddress, user?.deliveryAddress, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (user.role !== "user") return;
+    const needsProfile =
+      !user.phone.trim() || !user.billingAddress.trim() || !user.deliveryAddress.trim();
+    if (needsProfile) {
+      setShowProfile(true);
+      setMessage("Please complete profile before creating orders.");
+    }
+  }, [user]);
 
   const orderNotifyCount = useMemo(() => {
     void notifTick;
     if (!user) return 0;
-    if (user.role === "admin") return readAdminNotifyOrderIds().length;
-    if (user.role === "moderator") return moderatorNewSubmittedCount(orders);
+    // Bell badge = new user signups only (admin/master_admin)
+    if (user.role === "admin" || user.role === "master_admin")
+      return readNewSignupUserIds().length;
     return 0;
-  }, [notifTick, user, orders]);
+  }, [notifTick, user]);
 
   if (!user) return <Outlet />;
 
@@ -149,18 +200,15 @@ export function AppShell() {
   const activeNavTo = useMemo(() => {
     const path = location.pathname;
     const matches = dedup
-      .filter(({ to }) => path === to || path.startsWith(`${to}/`))
+      .filter(({ to }) => navItemActive(path, to))
       .sort((a, b) => b.to.length - a.to.length);
     return matches[0]?.to ?? null;
   }, [dedup, location.pathname]);
-
-  const ordersPath =
-    user.role === "admin" ? "/admin/orders" : user.role === "moderator" ? "/moderator/orders" : "/user/orders";
   const primaryCta =
     user.role === "user"
       ? { to: "/user/orders/new", label: "New order", Icon: Plus }
       : user.role === "moderator"
-        ? { to: "/moderator/orders", label: "Orders", Icon: ClipboardList }
+        ? { to: "/moderator/orders/new", label: "New order", Icon: Plus }
         : { to: "/admin/orders", label: "Orders", Icon: ClipboardList };
   const PrimaryIcon = primaryCta.Icon;
   const initials = user.name
@@ -258,6 +306,19 @@ export function AppShell() {
             <LogOut className="h-5 w-5 shrink-0" />
             <span className={cn(sidebarCollapsed && "md:hidden")}>Logout</span>
           </Button>
+
+          <div className={cn("mt-3 border-t border-border pt-3 text-center", sidebarCollapsed && "md:hidden")}>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              Designed &amp; developed by{" "}
+              <a href="https://invatiqsoft.com/" target="_blank" rel="noopener noreferrer" className="font-semibold text-foreground hover:underline">InvatiqSoft</a>
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              <a href="mailto:support@invatiqsoft.com" className="hover:underline">support@invatiqsoft.com</a>
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              <a href="tel:+8801867254624" className="hover:underline">01867254624</a>
+            </p>
+          </div>
         </div>
       </aside>
 
@@ -288,24 +349,105 @@ export function AppShell() {
                 <span className="truncate">{primaryCta.label}</span>
               </Button>
               <Separator orientation="vertical" className="mx-0.5 hidden h-7 sm:block" />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="relative h-9 w-9 shrink-0 text-muted-foreground"
-                onClick={() => navigate(ordersPath)}
-                aria-label={
-                  orderNotifyCount > 0
-                    ? `${orderNotifyCount} notification${orderNotifyCount === 1 ? "" : "s"}`
-                    : "Notifications"
-                }
-                title="Notifications"
-              >
-                <Bell className="h-4 w-4" />
-                {orderNotifyCount > 0 ? (
-                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-zinc-950" />
-                ) : null}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="relative h-9 w-9 shrink-0 text-muted-foreground"
+                    aria-label={
+                      orderNotifyCount > 0
+                        ? `${orderNotifyCount} notification${orderNotifyCount === 1 ? "" : "s"}`
+                        : "Notifications"
+                    }
+                    title="Notifications"
+                  >
+                    <Bell className="h-4 w-4" />
+                    {orderNotifyCount > 0 ? (
+                      <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white dark:ring-zinc-950" />
+                    ) : null}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80 p-0">
+                  <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+                    <p className="text-sm font-semibold">Notifications</p>
+                    {orderNotifyCount > 0 && (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                        {orderNotifyCount}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* New customer signups — admin only */}
+                  {(user.role === "admin" || user.role === "master_admin") && newSignups.length > 0 && (
+                    <>
+                      <div className="px-3 pt-2.5 pb-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          New customers ({newSignups.length})
+                        </p>
+                      </div>
+                      {newSignups.map((s) => (
+                        <DropdownMenuItem
+                          key={s.id}
+                          className="flex items-start gap-3 px-3 py-2.5 cursor-pointer"
+                          onSelect={() => {
+                            clearNewSignupNotification(s.id);
+                            navigate("/admin/users");
+                          }}
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
+                            {s.name.trim().charAt(0).toUpperCase()}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold">{s.name}</p>
+                            <p className="truncate text-xs text-muted-foreground">{s.email}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(s.at).toLocaleString("en-GB", {
+                                day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                              })}
+                            </p>
+                          </div>
+                          <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                        </DropdownMenuItem>
+                      ))}
+                      <DropdownMenuItem
+                        className="px-3 py-2 text-xs font-semibold text-primary cursor-pointer"
+                        onSelect={() => navigate("/admin/users")}
+                      >
+                        View all users →
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+
+                  {/* Moderator: new submitted orders */}
+                  {user.role === "moderator" && orderNotifyCount > 0 && (
+                    <>
+                      <div className="px-3 pt-2.5 pb-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          New orders ({orderNotifyCount})
+                        </p>
+                      </div>
+                      <DropdownMenuItem
+                        className="px-3 py-2.5 cursor-pointer"
+                        onSelect={() => navigate("/moderator/orders")}
+                      >
+                        <ClipboardList className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">View submitted orders</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+
+                  {orderNotifyCount === 0 && (
+                    <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                      No new notifications
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -384,7 +526,7 @@ export function AppShell() {
               <UserRound className="h-4 w-4" />
               Profile settings
             </DialogTitle>
-            <DialogDescription>Update your display name and phone number.</DialogDescription>
+            <DialogDescription>Update name, phone, billing and delivery address.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
@@ -395,6 +537,22 @@ export function AppShell() {
               <Label htmlFor="profile-phone">Phone</Label>
               <Input id="profile-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </div>
+            <div className="grid gap-2">
+              <Label htmlFor="profile-billing">Billing address</Label>
+              <Input
+                id="profile-billing"
+                value={billingAddress}
+                onChange={(e) => setBillingAddress(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="profile-delivery">Delivery address</Label>
+              <Input
+                id="profile-delivery"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+              />
+            </div>
             {message ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{message}</p> : null}
           </div>
           <DialogFooter>
@@ -403,8 +561,13 @@ export function AppShell() {
             </Button>
             <Button
               type="button"
-              onClick={() => {
-                const res = updateProfile({ name, phone });
+              onClick={async () => {
+                const res = await updateProfile({
+                  name,
+                  phone,
+                  billingAddress,
+                  deliveryAddress,
+                });
                 setMessage(res.ok ? "Profile updated." : res.message ?? "Update failed.");
                 if (res.ok) setTimeout(() => setShowProfile(false), 700);
               }}

@@ -8,15 +8,26 @@ import {
 } from "react";
 import type { CatalogItem, CategoryDef } from "../types";
 import { seedCatalog } from "../data/catalog";
+import {
+  apiCreateCatalogItem,
+  apiCreateCategory,
+  apiDeleteCatalogItem,
+  apiDeleteCategory,
+  apiEnabled,
+  apiListCatalog,
+  apiUpdateCatalogItem,
+  apiUpdateCategory,
+} from "../lib/api";
 
 interface CatalogState {
   categories: CategoryDef[];
-  addCustomItem: (categoryId: string, nameBn: string, nameEn: string) => CatalogItem | null;
-  addCategory: (nameBn: string, nameEn: string) => CategoryDef | null;
-  updateCategory: (categoryId: string, nameBn: string, nameEn: string) => boolean;
-  deleteCategory: (categoryId: string) => boolean;
-  updateItem: (itemId: string, nameBn: string, nameEn: string) => boolean;
-  deleteItem: (itemId: string) => boolean;
+  loadCatalog: () => Promise<CategoryDef[]>;
+  addCustomItem: (categoryId: string, nameBn: string, nameEn: string) => Promise<CatalogItem | null>;
+  addCategory: (nameBn: string, nameEn: string) => Promise<CategoryDef | null>;
+  updateCategory: (categoryId: string, nameBn: string, nameEn: string) => Promise<boolean>;
+  deleteCategory: (categoryId: string) => Promise<boolean>;
+  updateItem: (itemId: string, nameBn: string, nameEn: string) => Promise<boolean>;
+  deleteItem: (itemId: string) => Promise<boolean>;
 }
 
 const CatalogContext = createContext<CatalogState | null>(null);
@@ -24,6 +35,15 @@ const CatalogContext = createContext<CatalogState | null>(null);
 const STORAGE_FULL_KEY = "gom_catalog_full";
 const STORAGE_KEY = "gom_custom_catalog";
 const STORAGE_CAT_KEY = "gom_custom_categories";
+
+function slugifyEnglishName(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "category";
+}
 
 function loadMerged(): CategoryDef[] {
   try {
@@ -82,11 +102,34 @@ function persistCatalog(categories: CategoryDef[]) {
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<CategoryDef[]>(loadMerged);
+  const loadCatalog = useCallback(async (): Promise<CategoryDef[]> => {
+    if (!apiEnabled()) return loadMerged();
+    try {
+      const rows = await apiListCatalog();
+      if (rows.length > 0) {
+        setCategories(rows);
+        persistCatalog(rows);
+        return rows;
+      }
+    } catch {
+      // Keep local fallback if API is unavailable.
+    }
+    return loadMerged();
+  }, []);
 
-  const addCustomItem = useCallback((categoryId: string, nameBn: string, nameEn: string) => {
+  const addCustomItem = useCallback(async (categoryId: string, nameBn: string, nameEn: string) => {
     const bn = nameBn.trim();
     const en = nameEn.trim();
     if (!bn || !en) return null;
+    if (apiEnabled()) {
+      try {
+        const created = await apiCreateCatalogItem(categoryId, bn, en);
+        await loadCatalog();
+        return created;
+      } catch {
+        return null;
+      }
+    }
     const id = `custom-${categoryId}-${Date.now()}`;
     const item: CatalogItem = { id, categoryId, nameBn: bn, nameEn: en };
     setCategories((prev) => {
@@ -97,13 +140,31 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       return next;
     });
     return item;
-  }, []);
+  }, [loadCatalog]);
 
-  const addCategory = useCallback((nameBn: string, nameEn: string) => {
+  const addCategory = useCallback(async (nameBn: string, nameEn: string) => {
     const bn = nameBn.trim();
     const en = nameEn.trim();
     if (!bn || !en) return null;
-    const id = `custom-cat-${Date.now()}`;
+    if (apiEnabled()) {
+      try {
+        const created = await apiCreateCategory(bn, en);
+        await loadCatalog();
+        return created;
+      } catch {
+        return null;
+      }
+    }
+    const baseId = `custom-cat-${slugifyEnglishName(en)}`;
+    const existing = new Set(categories.map((c) => c.id));
+    let id = baseId.slice(0, 50);
+    let suffix = 2;
+    while (existing.has(id)) {
+      const suffixText = `-${suffix}`;
+      const trimLen = Math.max(1, 50 - suffixText.length);
+      id = `${baseId.slice(0, trimLen)}${suffixText}`;
+      suffix += 1;
+    }
     const category: CategoryDef = { id, nameBn: bn, nameEn: en, items: [] };
     setCategories((prev) => {
       const next = [...prev, category];
@@ -111,12 +172,21 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       return next;
     });
     return category;
-  }, []);
+  }, [loadCatalog]);
 
-  const updateCategory = useCallback((categoryId: string, nameBn: string, nameEn: string) => {
+  const updateCategory = useCallback(async (categoryId: string, nameBn: string, nameEn: string) => {
     const bn = nameBn.trim();
     const en = nameEn.trim();
     if (!bn || !en) return false;
+    if (apiEnabled()) {
+      try {
+        await apiUpdateCategory(categoryId, bn, en);
+        await loadCatalog();
+        return true;
+      } catch {
+        return false;
+      }
+    }
     let changed = false;
     setCategories((prev) => {
       const next = prev.map((c) => {
@@ -130,7 +200,16 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return changed;
   }, []);
 
-  const deleteCategory = useCallback((categoryId: string) => {
+  const deleteCategory = useCallback(async (categoryId: string) => {
+    if (apiEnabled()) {
+      try {
+        await apiDeleteCategory(categoryId);
+        await loadCatalog();
+        return true;
+      } catch {
+        return false;
+      }
+    }
     let changed = false;
     setCategories((prev) => {
       const next = prev.filter((c) => c.id !== categoryId);
@@ -141,10 +220,19 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return changed;
   }, []);
 
-  const updateItem = useCallback((itemId: string, nameBn: string, nameEn: string) => {
+  const updateItem = useCallback(async (itemId: string, nameBn: string, nameEn: string) => {
     const bn = nameBn.trim();
     const en = nameEn.trim();
     if (!bn || !en) return false;
+    if (apiEnabled()) {
+      try {
+        await apiUpdateCatalogItem(itemId, bn, en);
+        await loadCatalog();
+        return true;
+      } catch {
+        return false;
+      }
+    }
     let changed = false;
     setCategories((prev) => {
       const next = prev.map((c) => {
@@ -163,7 +251,16 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     return changed;
   }, []);
 
-  const deleteItem = useCallback((itemId: string) => {
+  const deleteItem = useCallback(async (itemId: string) => {
+    if (apiEnabled()) {
+      try {
+        await apiDeleteCatalogItem(itemId);
+        await loadCatalog();
+        return true;
+      } catch {
+        return false;
+      }
+    }
     let changed = false;
     setCategories((prev) => {
       const next = prev.map((c) => {
@@ -183,6 +280,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       categories,
+      loadCatalog,
       addCustomItem,
       addCategory,
       updateCategory,
@@ -190,7 +288,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       updateItem,
       deleteItem,
     }),
-    [categories, addCustomItem, addCategory, updateCategory, deleteCategory, updateItem, deleteItem],
+    [categories, loadCatalog, addCustomItem, addCategory, updateCategory, deleteCategory, updateItem, deleteItem],
   );
 
   return (

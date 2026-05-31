@@ -1,5 +1,5 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Calendar,
@@ -8,6 +8,7 @@ import {
   Package,
   Pen,
   Phone,
+  Truck,
   User,
 } from "lucide-react";
 import { ConfirmActionModal } from "../components/ConfirmActionModal";
@@ -16,6 +17,8 @@ import { StatusBadge } from "../components/StatusBadge";
 import { canEditOrder, validateLineQuantity } from "../lib/quantityRules";
 import { formatOrderSubmittedAt } from "../lib/formatOrderSubmit";
 import { formatDeliveryWindow } from "../lib/deliveryWindow";
+import { formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
+import { formatShortDeliveredAt } from "../lib/deliveryPunctuality";
 
 function formatQty(kg: string, gram: string, piece: string) {
   const parts: string[] = [];
@@ -27,10 +30,14 @@ function formatQty(kg: string, gram: string, piece: string) {
 
 export function ReviewOrderPage() {
   const { id } = useParams();
-  const { getById, upsertOrder, deleteOrder } = useOrders();
+  const { loadOrders, getById, upsertOrder, deleteOrder } = useOrders();
   const navigate = useNavigate();
   const base = id ? getById(id) : undefined;
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  useEffect(() => {
+    void loadOrders();
+  }, [loadOrders]);
 
   const order = useMemo(() => {
     if (!base) return undefined;
@@ -55,7 +62,7 @@ export function ReviewOrderPage() {
   const linesOk = order.lines.every(
     (l) => validateLineQuantity(l.kg, l.gram, l.piece) == null,
   );
-  const deliveryOk = canEditOrder(order.deliveryDate);
+  const deliveryOk = canEditOrder(order.deliveryDate, order.deliveryTime);
   const signed = Boolean(order.signatureDataUrl);
 
   const confirm = () => {
@@ -102,7 +109,7 @@ export function ReviewOrderPage() {
 
       {!deliveryOk ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          Delivery is within 48 hours; submission is not allowed.
+          Delivery is within 24 hours; submission is not allowed.
         </div>
       ) : null}
 
@@ -155,11 +162,18 @@ export function ReviewOrderPage() {
           Order details
         </h2>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          <DetailTile icon={Calendar} label="Order date" value={order.orderDate} />
+          <DetailTile icon={Calendar} label="Order date" value={formatDateDdMmYyyyOrDash(order.orderDate)} />
           <DetailTile icon={Calendar} label="Submitted" value={formatOrderSubmittedAt(order)} />
-          <DetailTile icon={Calendar} label="Delivery date" value={order.deliveryDate} />
+          <DetailTile icon={Calendar} label="Delivery date" value={formatDateDdMmYyyyOrDash(order.deliveryDate)} />
           <DetailTile icon={Phone} label="Phone" value={order.phone} />
           <DetailTile icon={Clock} label="Time window" value={formatDeliveryWindow(order.deliveryTime)} />
+          {order.status === "delivered" || order.status === "invoiced" ? (
+            <DetailTile
+              icon={Truck}
+              label="Delivered"
+              value={order.deliveredAt ? formatShortDeliveredAt(order.deliveredAt) : "Time will appear when recorded"}
+            />
+          ) : null}
           <div className="sm:col-span-2">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -185,7 +199,7 @@ export function ReviewOrderPage() {
         <div className="border-b border-border bg-muted px-5 py-4">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <Package className="h-5 w-5 text-foreground" />
-            Line items
+            Items
             <span className="ml-2 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-foreground">
               Read-only
             </span>

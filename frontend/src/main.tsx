@@ -7,9 +7,15 @@ import { OrdersProvider } from "./context/OrdersContext";
 import App from "./App";
 import "./index.css";
 
+/** Must match Vite `base` / `VITE_BASE_URL` (e.g. `/hmc` when the app lives at https://host/hmc/). */
+function routerBasename(): string | undefined {
+  const trimmed = import.meta.env.BASE_URL.replace(/\/$/, "");
+  return trimmed === "" ? undefined : trimmed;
+}
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename()}>
       <AuthProvider>
         <CatalogProvider>
           <OrdersProvider>

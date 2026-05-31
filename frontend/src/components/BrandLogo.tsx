@@ -4,7 +4,7 @@ type BrandLogoProps = {
   className?: string;
   /**
    * Graphic mark (cow mark). Use only where a full lockup is required.
-   * Invoices and challans render `/hmc-logo.png` in their own templates.
+   * Invoices and challans use the same public asset path as this img (via BASE_URL).
    */
   showMark?: boolean;
   /** Narrow header bar: shorter type, tagline only from `sm` up. */
@@ -23,7 +23,7 @@ export function BrandLogo({ className = "", showMark = false, compact = false }:
     >
       {showMark ? (
         <img
-          src="/hmc-logo.png"
+          src={`${import.meta.env.BASE_URL}hmc-logo.png`}
           alt=""
           className={cn(
             "w-auto shrink-0 object-contain",

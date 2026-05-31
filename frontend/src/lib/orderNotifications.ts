@@ -62,11 +62,66 @@ export function markModeratorSeenOrder(orderId: string) {
   dispatch();
 }
 
-/** Submitted orders the moderator has not opened yet (for header badge). */
+/** Submitted orders count for the header badge — always matches the order list. */
 export function moderatorNewSubmittedCount(orders: Order[]): number {
-  const seen = readModeratorSeenOrderIds();
-  return orders.filter((o) => o.status === "submitted" && !seen.has(o.id)).length;
+  return orders.filter((o) => o.status === "submitted").length;
 }
+
+// ── New user signup notifications (admin only) ───────────────────────────────
+
+const KEY_NEW_SIGNUPS = "gom_new_user_signups";
+
+export interface SignupNotification {
+  id: string;
+  name: string;
+  email: string;
+  at: string; // ISO timestamp
+}
+
+export function readNewSignups(): SignupNotification[] {
+  try {
+    const raw = localStorage.getItem(KEY_NEW_SIGNUPS);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as unknown;
+    return Array.isArray(arr)
+      ? arr.filter(
+          (x): x is SignupNotification =>
+            typeof x === "object" && x !== null && "id" in x && "email" in x,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Backwards-compatible helper — returns just the IDs. */
+export function readNewSignupUserIds(): string[] {
+  return readNewSignups().map((s) => s.id);
+}
+
+/** Call immediately after a new customer self-registers. */
+export function flagNewUserSignup(userId: string, name: string, email: string) {
+  const cur = readNewSignups();
+  if (cur.some((s) => s.id === userId)) return;
+  cur.unshift({ id: userId, name, email, at: new Date().toISOString() });
+  localStorage.setItem(KEY_NEW_SIGNUPS, JSON.stringify(cur));
+  dispatch();
+}
+
+/** Call when admin dismisses a single signup notification. */
+export function clearNewSignupNotification(userId: string) {
+  const next = readNewSignups().filter((s) => s.id !== userId);
+  localStorage.setItem(KEY_NEW_SIGNUPS, JSON.stringify(next));
+  dispatch();
+}
+
+/** Call when admin visits the Users list page — clears all pending signup flags. */
+export function clearAllSignupNotifications() {
+  localStorage.setItem(KEY_NEW_SIGNUPS, JSON.stringify([]));
+  dispatch();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 
 /** True if moderator saved pricing-like data (unit price or line total on any line). */
 export function orderHasPricingData(order: Order): boolean {

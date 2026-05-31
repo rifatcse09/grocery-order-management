@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -31,13 +31,21 @@ import {
 import { StatMetricCard, type MetricCardTone } from "../components/StatMetricCard";
 import { BdTakaIcon } from "../components/icons/BdTakaIcon";
 import { useAuth } from "../context/AuthContext";
+import { useCatalog } from "../context/CatalogContext";
 import { useOrders } from "../context/OrdersContext";
-import type { OrderStatus } from "../types";
-
-const COLORS = ["#2563EB", "#FF5C35", "#10B981", "#F59E0B", "#0f766e", "#64748B"];
+import type { Order, OrderStatus } from "../types";
+import { apiListAdjustments, apiListPayments, type AdjustmentTxn, type PaymentTxn } from "../lib/api";
+import { getCategoryColor } from "../lib/categoryColors";
+import {
+  UNCATEGORIZED_LABEL,
+  UNNAMED_CATEGORY_LABEL,
+  UNKNOWN_CATEGORY_LABEL,
+  UNKNOWN_ITEM_LABEL,
+} from "../lib/uiLabels";
 
 export function AdminDashboardPage() {
   const { orders } = useOrders();
+  const { categories } = useCatalog();
   const { user } = useAuth();
   const [historyQuery, setHistoryQuery] = useState("");
   const [trendMode, setTrendMode] = useState<"weekly" | "monthly">("weekly");
@@ -46,13 +54,33 @@ export function AdminDashboardPage() {
   const [customerFilter, setCustomerFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [productFilter, setProductFilter] = useState("all");
+  const [transactions, setTransactions] = useState<{ payments: PaymentTxn[]; adjustments: AdjustmentTxn[] }>({
+    payments: [],
+    adjustments: [],
+  });
+
+  useEffect(() => {
+    void Promise.all([apiListPayments(), apiListAdjustments()])
+      .then(([payments, adjustments]) => setTransactions({ payments, adjustments }))
+      .catch(() => setTransactions({ payments: [], adjustments: [] }));
+  }, []);
+
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((c) => {
+      const label = c.nameEn || c.nameBn || UNNAMED_CATEGORY_LABEL;
+      map.set(c.id, label);
+    });
+    return map;
+  }, [categories]);
 
   const filterMeta = useMemo(() => {
     const customers = [...new Set(orders.map((o) => o.contactPerson).filter(Boolean))].sort();
-    const categories = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.categoryId)).filter(Boolean))].sort();
+    const categories = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.categoryId)).filter(Boolean))]
+      .sort((a, b) => categoryDisplayName(a, categoryNameById).localeCompare(categoryDisplayName(b, categoryNameById)));
     const products = [...new Set(orders.flatMap((o) => o.lines.map((l) => l.itemNameEn || l.itemNameBn)).filter(Boolean))].sort();
     return { customers, categories, products };
-  }, [orders]);
+  }, [orders, categoryNameById]);
 
   const filteredOrders = useMemo(() => {
     const today = new Date();
@@ -113,16 +141,25 @@ export function AdminDashboardPage() {
     return { byStatus, totalSales, invoiced, avg, completionRate, avgProcessing, delayed };
   }, [filteredOrders]);
 
-  const categorySales = [
-    { name: "Fresh produce", amount: 185000 },
-    { name: "Dry store", amount: 240000 },
-    { name: "Egg / meat / fish", amount: 310000 },
-    { name: "Pantry", amount: 420000 },
-    { name: "Spices", amount: 98000 },
-    { name: "Household", amount: 54000 },
-  ];
+  const categorySales = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredOrders.forEach((order) => {
+      order.lines.forEach((line) => {
+        const categoryCode = line.categoryId || "uncategorized";
+        map.set(categoryCode, (map.get(categoryCode) ?? 0) + Number(line.lineTotal ?? 0));
+      });
+    });
+    return [...map.entries()]
+      .map(([code, amount]) => ({
+        code,
+        name: categoryDisplayName(code, categoryNameById),
+        amount: Math.round(amount),
+      }))
+      .sort((a, b) => b.amount - a.amount)
+      .slice(0, 8);
+  }, [filteredOrders, categoryNameById]);
 
-  const pieData = categorySales.map((c) => ({ name: c.name, value: c.amount }));
+  const pieData = categorySales.map((c) => ({ code: c.code, name: c.name, value: c.amount }));
   const totalCat = pieData.reduce((s, p) => s + p.value, 0);
 
   const trendAnalytics = useMemo(() => {
@@ -188,7 +225,7 @@ export function AdminDashboardPage() {
           (parseFloat(l.gram || "0") || 0) / 1000 +
           (parseFloat(l.piece || "0") || 0);
         const prev = map.get(key) ?? {
-          name: l.itemNameEn || l.itemNameBn || "Unknown item",
+          name: l.itemNameEn || l.itemNameBn || UNKNOWN_ITEM_LABEL,
           orders: 0,
           qtyScore: 0,
           sales: 0,
@@ -213,33 +250,61 @@ export function AdminDashboardPage() {
   const isModeratorView = user?.role === "moderator";
 
   const paymentSummary = useMemo(() => {
-    const PAYMENTS_KEY = "gom_statement_payments";
-    const customerSet = new Set(filteredOrders.map((o) => o.contactPerson).filter(Boolean));
-    const billedTotal = filteredOrders
-      .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
-      .reduce((s, o) => s + (o.grandTotal ?? 0), 0);
-    let settledTotal = 0;
-    try {
-      const raw = localStorage.getItem(PAYMENTS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Record<string, number>;
-        Object.entries(parsed).forEach(([key, paid]) => {
-          const amount = Number(paid);
-          if (!Number.isFinite(amount) || amount <= 0) return;
-          const customerName = key.split("::")[1] || "";
-          if (!customerSet.has(customerName)) return;
-          settledTotal += amount;
-        });
-      }
-    } catch {
-      // ignore malformed local storage values
-    }
-    const settledBounded = Math.min(billedTotal, settledTotal);
+    const isModerator = user?.role === "moderator";
+    const billedTotal = isModerator
+      ? filteredOrders
+          .filter((o) => o.purchaseInvoiceGenerated && (o.purchaseInvoiceGeneratedBy ?? "admin") === "moderator")
+          .reduce((s, o) => s + Number(o.purchaseSubtotal ?? 0), 0)
+      : filteredOrders
+          .filter((o) => o.status === "invoiced" || o.invoiceGenerated)
+          .reduce((s, o) => s + Number(o.grandTotal ?? 0), 0);
+    const paid = transactions.payments
+      .filter((txn) => ((txn.invoice_type ?? "billing") === "purchase") === isModerator)
+      .reduce((s, txn) => s + Number(txn.amount || 0), 0);
+    const adjusted = transactions.adjustments
+      .filter((txn) => (txn.type === "purchase") === isModerator)
+      .reduce((s, txn) => s + Number(txn.amount || 0), 0);
+    const settledTotal = Math.max(0, paid - adjusted);
     return {
-      settledTotal: settledBounded,
-      pendingTotal: Math.max(0, billedTotal - settledBounded),
+      settledTotal: Math.min(billedTotal, settledTotal),
+      pendingTotal: Math.max(0, billedTotal - settledTotal),
     };
-  }, [filteredOrders]);
+  }, [filteredOrders, transactions, user?.role]);
+
+  const rollingSales = useMemo(() => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - 6);
+    const monthStart = new Date(now);
+    monthStart.setDate(now.getDate() - 29);
+    let today = 0;
+    let todayDeliveredCount = 0;
+    let weekly = 0;
+    let weeklyDeliveredCount = 0;
+    let monthly = 0;
+    let monthlyDeliveredCount = 0;
+    /** Delivery KPIs use full order list (date-range filters use *order date* only). */
+    const ordersForDeliverySalesKpi =
+      customerFilter === "all"
+        ? orders
+        : orders.filter((o) => o.contactPerson === customerFilter);
+    ordersForDeliverySalesKpi.forEach((o) => {
+      if (deliveredStatusTodayLocalDay(o, now)) {
+        today += orderLineTotalSumExcludingInvoice(o);
+        todayDeliveredCount += 1;
+      }
+      if (deliveredAtCalendarDayInRange(o, weekStart, now)) {
+        weekly += orderLineTotalSumExcludingInvoice(o);
+        weeklyDeliveredCount += 1;
+      }
+      if (deliveredAtCalendarDayInRange(o, monthStart, now)) {
+        monthly += orderLineTotalSumExcludingInvoice(o);
+        monthlyDeliveredCount += 1;
+      }
+    });
+    return { today, todayDeliveredCount, weekly, weeklyDeliveredCount, monthly, monthlyDeliveredCount };
+  }, [orders, customerFilter]);
 
   const totalPurchase = useMemo(() => {
     return filteredOrders.reduce((s, o) => {
@@ -258,9 +323,10 @@ export function AdminDashboardPage() {
 
     filteredOrders.forEach((o) => {
       o.lines.forEach((l) => {
-        const itemName = l.itemNameEn || l.itemNameBn || "Unknown item";
-        const category = l.categoryId || "uncategorized";
-        const key = `${category}::${itemName}`;
+        const itemName = l.itemNameEn || l.itemNameBn || UNKNOWN_ITEM_LABEL;
+        const categoryCode = l.categoryId || "uncategorized";
+        const category = categoryDisplayName(categoryCode, categoryNameById);
+        const key = `${categoryCode}::${itemName}`;
         const prev = grouped.get(key) ?? { item: itemName, category, orders: 0, qtyScore: 0, amount: 0 };
         const qtyScore =
           (parseFloat(l.kg || "0") || 0) +
@@ -282,7 +348,7 @@ export function AdminDashboardPage() {
         return r.item.toLowerCase().includes(query) || r.category.toLowerCase().includes(query);
       })
       .sort((a, b) => b.amount - a.amount || b.orders - a.orders);
-  }, [filteredOrders, historyQuery]);
+  }, [filteredOrders, historyQuery, categoryNameById]);
   const deliveryMetrics = useMemo(() => {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -371,7 +437,7 @@ export function AdminDashboardPage() {
               <option value="all">All categories</option>
               {filterMeta.categories.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {categoryDisplayName(c, categoryNameById)}
                 </option>
               ))}
             </select>
@@ -391,6 +457,16 @@ export function AdminDashboardPage() {
             </select>
           </Filter>
         </div>
+        {!isModeratorView ? (
+          <p className="mt-3 text-xs text-slate-500">
+            <span className="font-semibold text-slate-700">Today / weekly / monthly sales</span> use completion date:{" "}
+            <span className="font-semibold text-slate-700">deliveredAt</span> when set, otherwise{" "}
+            <span className="font-semibold text-slate-700">billing invoice created</span> for invoiced-only orders
+            (line item totals; not billing invoice totals). The date range above filters by{" "}
+            <span className="font-semibold text-slate-700">order date</span> only for charts and tables below. Customer
+            filter still applies to those three cards.
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -399,33 +475,48 @@ export function AdminDashboardPage() {
           value={
             isModeratorView
               ? `৳ ${Math.round(totalPurchase).toLocaleString("en-US")}`
-              : "৳ 85,000"
+              : `৳ ${Math.round(rollingSales.today).toLocaleString("en-US")}`
           }
           icon={BdTakaIcon}
           tone="coral"
           sparkSeed="dash-today-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.todayDeliveredCount} completed today (delivered or invoiced) · sum of line items`
+          }
         />
         <StatMetricCard
           title={isModeratorView ? "Pending bills" : "Weekly sales"}
           value={
             isModeratorView
               ? `৳ ${Math.round(paymentSummary.pendingTotal).toLocaleString("en-US")}`
-              : "৳ 420,000"
+              : `৳ ${Math.round(rollingSales.weekly).toLocaleString("en-US")}`
           }
           icon={CalendarDays}
           tone="teal"
           sparkSeed="dash-weekly-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.weeklyDeliveredCount} completed in last 7 days · sum of line items`
+          }
         />
         <StatMetricCard
           title={isModeratorView ? "Settled by admin" : "Monthly sales"}
           value={
             isModeratorView
               ? `৳ ${Math.round(paymentSummary.settledTotal).toLocaleString("en-US")}`
-              : "৳ 1,800,000"
+              : `৳ ${Math.round(rollingSales.monthly).toLocaleString("en-US")}`
           }
           icon={BarChart3}
           tone="navy"
           sparkSeed="dash-monthly-sales"
+          secondaryLine={
+            isModeratorView
+              ? undefined
+              : `${rollingSales.monthlyDeliveredCount} completed in last 30 days · sum of line items`
+          }
         />
       </div>
 
@@ -518,7 +609,7 @@ export function AdminDashboardPage() {
                   paddingAngle={2}
                 >
                   {pieData.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    <Cell key={i} fill={getCategoryColor(String(pieData[i]?.code ?? ""))} />
                   ))}
                 </Pie>
                 <Tooltip formatter={(v: number) => [`৳ ${v.toLocaleString("en-US")}`, ""]} />
@@ -540,7 +631,11 @@ export function AdminDashboardPage() {
                 <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-25} textAnchor="end" height={90} />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v: number) => [`৳ ${v.toLocaleString("en-US")}`, ""]} />
-                <Bar dataKey="amount" fill="#2563EB" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="amount" radius={[6, 6, 0, 0]}>
+                  {categorySales.map((entry) => (
+                    <Cell key={`bar-${entry.code}`} fill={getCategoryColor(entry.code)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -761,9 +856,78 @@ function InsightList({
   );
 }
 
+/** Sum of line `lineTotal` only — does not use billing invoice totals (`grandTotal` / `billingSubtotal`). */
+function orderLineTotalSumExcludingInvoice(o: Order): number {
+  return o.lines.reduce((s, l) => s + Number(l.lineTotal ?? 0), 0);
+}
+
+/**
+ * Calendar yyyy-mm-dd for delivered-at (handles MySQL "YYYY-MM-DD HH:mm:ss" without TZ quirks).
+ * ISO strings with T/Z still go through the local Date calendar.
+ */
+function calendarDayFromDeliveredAt(raw: string): string | null {
+  const t = raw.trim();
+  if (!t) return null;
+  if (t.includes("T") || t.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(t)) {
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) ? null : formatIso(d);
+  }
+  const m = /^(\d{4}-\d{2}-\d{2})[ T]/.exec(t);
+  if (m) return m[1];
+  const d = new Date(t);
+  return Number.isNaN(d.getTime()) ? null : formatIso(d);
+}
+
+/** Counts `delivered` and `invoiced` (after billing, status is no longer `delivered`). */
+function isDeliveredOrInvoicedForSalesKpi(o: Order): boolean {
+  return o.status === "delivered" || o.status === "invoiced";
+}
+
+/**
+ * Day used for today / weekly / monthly sales: `deliveredAt` when present; else billing invoice time for invoiced
+ * orders (covers legacy rows missing `deliveredAt`).
+ */
+function calendarDayForSalesKpi(o: Order): string | null {
+  const dAt = o.deliveredAt?.trim();
+  if (dAt) {
+    const fromDelivered = calendarDayFromDeliveredAt(dAt);
+    if (fromDelivered) return fromDelivered;
+  }
+  if (o.status === "invoiced") {
+    const inv = o.billingInvoiceCreatedAt?.trim();
+    if (inv) return calendarDayFromDeliveredAt(inv);
+  }
+  return null;
+}
+
+/** Completed order (`delivered` or `invoiced`) and completion calendar day in [startDay, endDay] inclusive. */
+function deliveredAtCalendarDayInRange(o: Order, startDay: Date, endDay: Date): boolean {
+  if (!isDeliveredOrInvoicedForSalesKpi(o)) return false;
+  const day = calendarDayForSalesKpi(o);
+  if (!day) return false;
+  const lo = formatIso(startDay);
+  const hi = formatIso(endDay);
+  return day >= lo && day <= hi;
+}
+
+/** Completed today: `delivered` or `invoiced`, using `calendarDayForSalesKpi`. */
+function deliveredStatusTodayLocalDay(o: Order, dayStart: Date): boolean {
+  if (!isDeliveredOrInvoicedForSalesKpi(o)) return false;
+  const day = calendarDayForSalesKpi(o);
+  if (!day) return false;
+  return day === formatIso(dayStart);
+}
+
 function parseIso(iso: string): Date | null {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function startOfWeek(date: Date): Date {
@@ -771,6 +935,12 @@ function startOfWeek(date: Date): Date {
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - d.getDay());
   return d;
+}
+
+function categoryDisplayName(code: string, categoryNameById: Map<string, string>): string {
+  if (!code) return UNCATEGORIZED_LABEL;
+  if (code === "uncategorized") return UNCATEGORIZED_LABEL;
+  return categoryNameById.get(code) ?? UNKNOWN_CATEGORY_LABEL;
 }
 
 function Filter({ label, children }: { label: string; children: ReactNode }) {

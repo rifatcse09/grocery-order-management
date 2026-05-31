@@ -1,15 +1,19 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useEffect, useMemo } from "react";
 import { ArrowLeft, Receipt, User } from "lucide-react";
 import { BanglaInvoiceTemplate } from "../components/BanglaInvoiceTemplate";
 import { StatusBadge } from "../components/StatusBadge";
 import { useOrders } from "../context/OrdersContext";
+import { formatMoneyBn } from "../lib/banglaNumerals";
+import { billedAmountsForLine } from "../lib/billingLineAmounts";
 import { hasBillingInvoice } from "../lib/invoiceFlow";
 
 export function UserInvoiceDetailPage() {
   const { id } = useParams();
+  const location = useLocation();
   const { getById } = useOrders();
   const order = id ? getById(id) : undefined;
+  const backTo = location.pathname.startsWith("/admin/") ? "/admin/billing-invoices" : "/user/invoices";
 
   useEffect(() => {
     if (!order) return;
@@ -23,10 +27,17 @@ export function UserInvoiceDetailPage() {
   }, [order]);
 
   const lineCount = order?.lines.length ?? 0;
-  const subtotal = useMemo(
-    () => (order ? order.lines.reduce((s, l) => s + (l.lineTotal ?? 0), 0) : 0),
-    [order],
-  );
+  const subtotal = useMemo(() => {
+    if (!order) return 0;
+    const fromOrder = order.billingSubtotal ?? order.grandTotal;
+    if (Number.isFinite(Number(fromOrder)) && Number(fromOrder) > 0) return Number(fromOrder);
+    const markups = order.billingCategoryMarkups ?? {};
+    const globalPct = Number(order.markupPercent ?? 0);
+    return order.lines.reduce(
+      (s, l) => s + billedAmountsForLine(l, markups, globalPct).billedLine,
+      0,
+    );
+  }, [order]);
   const printDoc = () => window.print();
   const saveAsPdf = () => window.print();
 
@@ -37,7 +48,7 @@ export function UserInvoiceDetailPage() {
       <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Order not found.</p>
         <Link
-          to="/user/invoices"
+          to={backTo}
           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -52,7 +63,7 @@ export function UserInvoiceDetailPage() {
       <div className="rounded-2xl border border-border bg-muted p-8 text-center">
         <p className="text-slate-700">Invoice is not available for this order yet.</p>
         <Link
-          to="/user/invoices"
+          to={backTo}
           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -65,7 +76,7 @@ export function UserInvoiceDetailPage() {
   return (
     <div className="space-y-8 print:space-y-0">
       <Link
-        to="/user/invoices"
+        to={backTo}
         className="inline-flex items-center gap-2 text-sm font-semibold text-primary hover:text-foreground print:hidden"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -102,13 +113,15 @@ export function UserInvoiceDetailPage() {
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Line total (sum)</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {subtotal > 0 ? `৳ ${Math.round(subtotal).toLocaleString("en-US")}` : "—"}
+            {subtotal > 0 ? `৳ ${formatMoneyBn(Math.round(subtotal), { minFractionDigits: 0, maxFractionDigits: 0 })}` : "—"}
           </p>
         </div>
         <div className="rounded-2xl border border-border bg-muted p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-foreground">Grand total</p>
           <p className="mt-1 text-2xl font-extrabold text-slate-900">
-            {order.grandTotal != null ? `৳ ${Math.round(order.grandTotal).toLocaleString("en-US")}` : "—"}
+            {order.grandTotal != null
+              ? `৳ ${formatMoneyBn(Math.round(order.grandTotal), { minFractionDigits: 0, maxFractionDigits: 0 })}`
+              : "—"}
           </p>
         </div>
       </div>
