@@ -23,7 +23,7 @@ import {
   resolveStatementTxnBucketMeta,
   statementBucketKeyForTxn,
 } from "../lib/statementPaymentAllocation";
-import { formatDateDdMmYyyy } from "../lib/formatDisplayDate";
+import { formatDateDdMmYyyy, formatDateDdMmYyyyOrDash } from "../lib/formatDisplayDate";
 import {
   formatStatementTaka,
   roundMoney,
@@ -303,7 +303,7 @@ export function PurchaseBillingStatementsPage() {
       const due = statementBalanceDue(cap, net);
       return {
         orderNo: inv.orderNo,
-        orderDate: inv.orderDate,
+        deliveryDate: o?.deliveryDate?.trim() || inv.orderDate,
         cap,
         invoiceAmt,
         net,
@@ -625,13 +625,13 @@ export function PurchaseBillingStatementsPage() {
           <div className="table-scroll mt-3 max-h-[min(40vh,320px)] rounded-2xl border border-border shadow-inner">
             <table className="min-w-[720px] w-full text-left text-base">
               <caption className="px-3 py-2 text-left text-xs font-semibold text-slate-700">
-                Per-order purchase settlement (invoice date, cap, net paid, still due — same payments as ledger when book
+                Per-order purchase settlement (delivery date, cap, net paid, still due — same payments as ledger when book
                 = Supplier)
               </caption>
               <thead className="sticky top-0 z-10 border-b border-border bg-muted text-sm font-semibold uppercase tracking-wide text-foreground shadow-sm">
                 <tr>
                   <th className="px-3 py-2">Order</th>
-                  <th className="px-3 py-2">Order date</th>
+                  <th className="px-3 py-2">Order delivery date</th>
                   <th className="px-3 py-2 text-right">Invoice cap</th>
                   <th className="px-3 py-2 text-right">Net paid (purchase)</th>
                   <th className="px-3 py-2 text-right">Still due (order)</th>
@@ -644,7 +644,7 @@ export function PurchaseBillingStatementsPage() {
                       {row.orderNo}
                       {!row.hasOrder ? <span className="ml-1 text-xs font-normal text-amber-700">(order not in list)</span> : null}
                     </td>
-                    <td className="px-3 py-3 whitespace-nowrap text-slate-700">{formatDateDdMmYyyy(row.orderDate)}</td>
+                    <td className="px-3 py-3 whitespace-nowrap text-slate-700">{formatDateDdMmYyyyOrDash(row.deliveryDate)}</td>
                     <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.cap)}</td>
                     <td className="px-3 py-3 text-right">৳ {formatStatementTaka(row.net)}</td>
                     <td className="px-3 py-3 text-right font-semibold">৳ {formatStatementTaka(row.due)}</td>
