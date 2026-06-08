@@ -1,0 +1,27 @@
+{
+  "name": "invatiq-reel",
+  "version": "1.0.0",
+  "description": "Invatiq Soft – Facebook/Instagram Reel (Remotion)",
+  "remotion": {
+    "entryPoint": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "npx remotion studio",
+    "render": "npx remotion render InvatiqReel out/invatiq-reel.mp4",
+    "build": "npx remotion render InvatiqReel out/invatiq-reel.mp4 --log=verbose"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.473",
+    "@remotion/google-fonts": "^4.0.473",
+    "@remotion/media-utils": "^4.0.473",
+    "@remotion/renderer": "^4.0.473",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "remotion": "^4.0.473"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}
