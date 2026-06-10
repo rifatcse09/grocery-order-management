@@ -24,6 +24,16 @@ import { AdminOrderDetailPage } from "./pages/AdminOrderDetailPage";
 import { AdminCatalogPage } from "./pages/AdminCatalogPage";
 import { PurchaseBillingStatementsPage } from "./pages/PurchaseBillingStatementsPage";
 import { PurchaseInvoiceDetailPage } from "./pages/PurchaseInvoiceDetailPage";
+import { SuppliersPage } from "./pages/SuppliersPage";
+import { SupplierHistoryPage } from "./pages/SupplierHistoryPage";
+import { PurchaseOrdersPage } from "./pages/PurchaseOrdersPage";
+import { PurchaseOrderFormPage } from "./pages/PurchaseOrderFormPage";
+import { PurchaseOrderDetailPage } from "./pages/PurchaseOrderDetailPage";
+import { InventoryDashboardPage } from "./pages/InventoryDashboardPage";
+import { InventoryPage } from "./pages/InventoryPage";
+import { StockMovementsPage } from "./pages/StockMovementsPage";
+import { InventoryBillsPage } from "./pages/InventoryBillsPage";
+import { StockAdjustmentsPage } from "./pages/StockAdjustmentsPage";
 
 function RequireAuth() {
   const { user } = useAuth();
@@ -70,6 +80,16 @@ export default function App() {
             <Route path="/moderator/catalog" element={<Navigate to="/moderator/catalog/categories" replace />} />
             <Route path="/moderator/catalog/categories" element={<AdminCatalogPage view="categories" />} />
             <Route path="/moderator/catalog/products" element={<AdminCatalogPage view="products" />} />
+            {/* Inventory module (moderator read access) */}
+            <Route path="/moderator/inventory" element={<InventoryDashboardPage />} />
+            <Route path="/moderator/inventory/stock" element={<InventoryPage />} />
+            <Route path="/moderator/inventory/movements" element={<StockMovementsPage />} />
+            <Route path="/moderator/purchase-orders" element={<PurchaseOrdersPage />} />
+            <Route path="/moderator/purchase-orders/new" element={<PurchaseOrderFormPage />} />
+            <Route path="/moderator/purchase-orders/:id/edit" element={<PurchaseOrderFormPage />} />
+            <Route path="/moderator/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
+            <Route path="/moderator/suppliers" element={<SuppliersPage />} />
+            <Route path="/moderator/suppliers/:id/history" element={<SupplierHistoryPage />} />
           </Route>
           <Route element={<RequireRole allow={["admin", "master_admin"]} />}>
             <Route path="/admin" element={<AdminDashboardPage />} />
@@ -94,6 +114,18 @@ export default function App() {
             <Route path="/admin/moderators" element={<AdminModeratorsPage />} />
             <Route path="/admin/moderators/:id/edit" element={<AdminCreateAccountPage />} />
             <Route path="/admin/create" element={<AdminCreateAccountPage />} />
+            {/* Inventory module */}
+            <Route path="/admin/inventory" element={<InventoryDashboardPage />} />
+            <Route path="/admin/inventory/stock" element={<InventoryPage />} />
+            <Route path="/admin/inventory/movements" element={<StockMovementsPage />} />
+            <Route path="/admin/inventory/bills" element={<InventoryBillsPage />} />
+            <Route path="/admin/inventory/adjustments" element={<StockAdjustmentsPage />} />
+            <Route path="/admin/purchase-orders" element={<PurchaseOrdersPage />} />
+            <Route path="/admin/purchase-orders/new" element={<PurchaseOrderFormPage />} />
+            <Route path="/admin/purchase-orders/:id/edit" element={<PurchaseOrderFormPage />} />
+            <Route path="/admin/purchase-orders/:id" element={<PurchaseOrderDetailPage />} />
+            <Route path="/admin/suppliers" element={<SuppliersPage />} />
+            <Route path="/admin/suppliers/:id/history" element={<SupplierHistoryPage />} />
           </Route>
         </Route>
       </Route>
