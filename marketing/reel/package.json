@@ -1,0 +1,30 @@
+{
+  "name": "rina-shop-reel",
+  "version": "1.0.0",
+  "description": "WhatsApp-style chat reel for Rina Shop – rendered with Remotion",
+  "scripts": {
+    "start": "remotion studio",
+    "dev": "remotion studio",
+    "build": "remotion render",
+    "render": "npx remotion render src/index.ts WhatsAppReel out/reel.mp4",
+    "upgrade": "remotion upgrade"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.290",
+    "@remotion/google-fonts": "4.0.290",
+    "remotion": "4.0.290"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": false },
+    "react-dom": { "optional": false }
+  }
+}
