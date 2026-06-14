@@ -1731,5 +1731,662 @@ if ($path === '/api/v1/admin/reports/summary' && $method === 'GET') {
     ]);
 }
 
+// ─── SUPPLIERS ──────────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/suppliers' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $query = strtolower(trim((string)($_GET['query'] ?? '')));
+    $active = $_GET['active'] ?? 'true';
+    $like = '%' . $query . '%';
+
+    $where = [];
+    $params = [];
+    if ($query !== '') {
+        $where[] = '(LOWER(s.name) LIKE :like OR LOWER(s.contact_person) LIKE :like OR LOWER(s.phone) LIKE :like)';
+        $params['like'] = $like;
+    }
+    if ($active === 'true') { $where[] = 's.is_active = 1'; }
+
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $rows = db()->prepare("SELECT s.*, (SELECT COUNT(*) FROM purchase_orders po WHERE po.supplier_id = s.id) AS po_count FROM suppliers s {$whereClause} ORDER BY s.name ASC");
+    $rows->execute($params);
+    $data = array_map(fn($r) => supplier_row($r), $rows->fetchAll());
+    json_response(200, ['data' => $data]);
+}
+
+if ($path === '/api/v1/suppliers' && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $in = json_input();
+    $name = trim((string)($in['name'] ?? ''));
+    if ($name === '') { json_response(422, ['message' => 'Supplier name is required.']); }
+    $now = date('Y-m-d H:i:s');
+    $stmt = db()->prepare('INSERT INTO suppliers (name, contact_person, phone, email, address, notes, is_active, created_at, updated_at) VALUES (:name, :cp, :phone, :email, :addr, :notes, 1, :now, :now)');
+    $stmt->execute(['name' => $name, 'cp' => trim((string)($in['contactPerson'] ?? '')), 'phone' => trim((string)($in['phone'] ?? '')), 'email' => trim((string)($in['email'] ?? '')), 'addr' => trim((string)($in['address'] ?? '')), 'notes' => trim((string)($in['notes'] ?? '')), 'now' => $now]);
+    $id = (int)db()->lastInsertId();
+    po_log_activity($user['id'], 'supplier', $id, 'created', null, ['name' => $name]);
+    $row = db()->prepare('SELECT *, 0 AS po_count FROM suppliers WHERE id = :id')->execute(['id' => $id]);
+    $s = db()->prepare('SELECT *, 0 AS po_count FROM suppliers WHERE id = :id');
+    $s->execute(['id' => $id]);
+    json_response(201, ['data' => supplier_row($s->fetch())]);
+}
+
+if (preg_match('#^/api/v1/suppliers/(\d+)$#', $path, $m)) {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $supplierId = (int)$m[1];
+    $sStmt = db()->prepare('SELECT s.*, (SELECT COUNT(*) FROM purchase_orders po WHERE po.supplier_id = s.id) AS po_count FROM suppliers s WHERE s.id = :id');
+    $sStmt->execute(['id' => $supplierId]);
+    $supplier = $sStmt->fetch();
+    if (!$supplier) { json_response(404, ['message' => 'Supplier not found.']); }
+
+    if ($method === 'GET') {
+        json_response(200, ['data' => supplier_row($supplier)]);
+    }
+
+    if ($method === 'PUT') {
+        $in = json_input();
+        $name = trim((string)($in['name'] ?? ''));
+        if ($name === '') { json_response(422, ['message' => 'Supplier name is required.']); }
+        $before = supplier_row($supplier);
+        $stmt = db()->prepare('UPDATE suppliers SET name=:name, contact_person=:cp, phone=:phone, email=:email, address=:addr, notes=:notes, is_active=:active, updated_at=NOW() WHERE id=:id');
+        $stmt->execute(['name' => $name, 'cp' => trim((string)($in['contactPerson'] ?? '')), 'phone' => trim((string)($in['phone'] ?? '')), 'email' => trim((string)($in['email'] ?? '')), 'addr' => trim((string)($in['address'] ?? '')), 'notes' => trim((string)($in['notes'] ?? '')), 'active' => isset($in['isActive']) ? (int)(bool)$in['isActive'] : 1, 'id' => $supplierId]);
+        po_log_activity($user['id'], 'supplier', $supplierId, 'updated', $before, ['name' => $name]);
+        $updated = db()->prepare('SELECT s.*, (SELECT COUNT(*) FROM purchase_orders po WHERE po.supplier_id = s.id) AS po_count FROM suppliers s WHERE s.id = :id');
+        $updated->execute(['id' => $supplierId]);
+        json_response(200, ['data' => supplier_row($updated->fetch())]);
+    }
+
+    if ($method === 'DELETE') {
+        $before = supplier_row($supplier);
+        db()->prepare('UPDATE suppliers SET is_active=0, updated_at=NOW() WHERE id=:id')->execute(['id' => $supplierId]);
+        po_log_activity($user['id'], 'supplier', $supplierId, 'deactivated', $before, null);
+        json_response(200, ['ok' => true]);
+    }
+}
+
+if (preg_match('#^/api/v1/suppliers/(\d+)/purchase-history$#', $path, $m) && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $supplierId = (int)$m[1];
+    $s = db()->prepare('SELECT * FROM suppliers WHERE id = :id');
+    $s->execute(['id' => $supplierId]);
+    $supplier = $s->fetch();
+    if (!$supplier) { json_response(404, ['message' => 'Supplier not found.']); }
+
+    $poStmt = db()->prepare('SELECT po.*, COUNT(pol.id) AS line_count FROM purchase_orders po LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id WHERE po.supplier_id = :sid GROUP BY po.id ORDER BY po.purchase_date DESC');
+    $poStmt->execute(['sid' => $supplierId]);
+    $pos = $poStmt->fetchAll();
+
+    $billStmt = db()->prepare('SELECT COALESCE(SUM(pb.amount),0) AS total_billed, COALESCE(SUM(pb.paid_amount),0) AS total_paid FROM purchase_bills pb WHERE pb.supplier_id = :sid');
+    $billStmt->execute(['sid' => $supplierId]);
+    $billSums = $billStmt->fetch();
+
+    $unitsStmt = db()->prepare('SELECT COALESCE(SUM(sm.quantity_in),0) AS total_units FROM stock_movements sm WHERE sm.supplier_id = :sid AND sm.transaction_type = \'purchase_receipt\'');
+    $unitsStmt->execute(['sid' => $supplierId]);
+    $units = $unitsStmt->fetch();
+
+    json_response(200, [
+        'data' => [
+            'supplier' => supplier_row($supplier + ['po_count' => count($pos)]),
+            'purchaseOrders' => array_map(fn($r) => po_row($r), $pos),
+            'totalBilled' => (float)($billSums['total_billed'] ?? 0),
+            'totalPaid' => (float)($billSums['total_paid'] ?? 0),
+            'outstandingBalance' => (float)($billSums['total_billed'] ?? 0) - (float)($billSums['total_paid'] ?? 0),
+            'totalUnitsPurchased' => (float)($units['total_units'] ?? 0),
+        ],
+    ]);
+}
+
+// ─── PURCHASE ORDERS ────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/purchase-orders' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $status = trim((string)($_GET['status'] ?? ''));
+    $supplierId = (int)($_GET['supplierId'] ?? 0);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 20)));
+    $offset = ($page - 1) * $perPage;
+
+    $where = []; $params = [];
+    if ($status !== '') { $where[] = 'po.status = :status'; $params['status'] = $status; }
+    if ($supplierId > 0) { $where[] = 'po.supplier_id = :sid'; $params['sid'] = $supplierId; }
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+    $total = (int)db()->prepare("SELECT COUNT(*) AS c FROM purchase_orders po {$whereClause}")->execute($params) ? db()->prepare("SELECT COUNT(*) AS c FROM purchase_orders po {$whereClause}")->execute($params) || true : 0;
+    $cStmt = db()->prepare("SELECT COUNT(*) AS c FROM purchase_orders po {$whereClause}");
+    $cStmt->execute($params);
+    $total = (int)($cStmt->fetch()['c'] ?? 0);
+
+    $rStmt = db()->prepare("SELECT po.*, s.name AS supplier_name, u.name AS created_by_name, COUNT(pol.id) AS line_count FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id LEFT JOIN users u ON u.id = po.created_by LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id {$whereClause} GROUP BY po.id ORDER BY po.created_at DESC LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) { $rStmt->bindValue(":$k", $v); }
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    $rows = $rStmt->fetchAll();
+
+    json_response(200, ['data' => array_map(fn($r) => po_row($r), $rows), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+if ($path === '/api/v1/purchase-orders' && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $in = json_input();
+    $supplierId = (int)($in['supplierId'] ?? 0);
+    $purchaseDate = trim((string)($in['purchaseDate'] ?? date('Y-m-d')));
+    $lines = (array)($in['lines'] ?? []);
+    if ($supplierId <= 0) { json_response(422, ['message' => 'Supplier is required.']); }
+    if (empty($lines)) { json_response(422, ['message' => 'At least one line item is required.']); }
+    $supplierCheck = db()->prepare('SELECT id FROM suppliers WHERE id = :id AND is_active = 1');
+    $supplierCheck->execute(['id' => $supplierId]);
+    if (!$supplierCheck->fetch()) { json_response(422, ['message' => 'Invalid supplier.']); }
+
+    $poNumber = generate_po_number();
+    $now = date('Y-m-d H:i:s');
+    $totalCost = 0;
+    foreach ($lines as $l) { $totalCost += (float)($l['quantity'] ?? 0) * (float)($l['unitCost'] ?? 0); }
+
+    $stmt = db()->prepare('INSERT INTO purchase_orders (po_number, supplier_id, purchase_date, expected_receipt_date, status, total_cost, remarks, created_by, created_at, updated_at) VALUES (:po, :sid, :pd, :erd, \'draft\', :total, :remarks, :uid, :now, :now)');
+    $stmt->execute(['po' => $poNumber, 'sid' => $supplierId, 'pd' => $purchaseDate, 'erd' => trim((string)($in['expectedReceiptDate'] ?? '')) ?: null, 'total' => $totalCost, 'remarks' => trim((string)($in['remarks'] ?? '')), 'uid' => $user['id'], 'now' => $now]);
+    $poId = (int)db()->lastInsertId();
+
+    $lineStmt = db()->prepare('INSERT INTO purchase_order_lines (purchase_order_id, item_code, item_name_en, item_name_bn, quantity, unit_cost, received_quantity, created_at, updated_at) VALUES (:pid, :code, :en, :bn, :qty, :uc, 0, :now, :now)');
+    foreach ($lines as $l) {
+        $lineStmt->execute(['pid' => $poId, 'code' => trim((string)($l['itemCode'] ?? '')), 'en' => trim((string)($l['itemNameEn'] ?? '')), 'bn' => trim((string)($l['itemNameBn'] ?? '')), 'qty' => (float)($l['quantity'] ?? 0), 'uc' => (float)($l['unitCost'] ?? 0), 'now' => $now]);
+    }
+
+    po_log_activity($user['id'], 'purchase_order', $poId, 'created', null, ['po_number' => $poNumber, 'supplier_id' => $supplierId]);
+    $po = fetch_po_full($poId);
+    json_response(201, ['data' => $po]);
+}
+
+if (preg_match('#^/api/v1/purchase-orders/(\d+)$#', $path, $m)) {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $poId = (int)$m[1];
+    $po = fetch_po_full($poId);
+    if (!$po) { json_response(404, ['message' => 'Purchase order not found.']); }
+
+    if ($method === 'GET') {
+        json_response(200, ['data' => $po]);
+    }
+
+    if ($method === 'PUT') {
+        if (!in_array($po['status'], ['draft'], true)) {
+            json_response(422, ['message' => 'Only draft purchase orders can be edited.']);
+        }
+        $in = json_input();
+        $supplierId = (int)($in['supplierId'] ?? $po['supplierId']);
+        $purchaseDate = trim((string)($in['purchaseDate'] ?? $po['purchaseDate']));
+        $lines = (array)($in['lines'] ?? []);
+        if (empty($lines)) { json_response(422, ['message' => 'At least one line item is required.']); }
+
+        $totalCost = 0;
+        foreach ($lines as $l) { $totalCost += (float)($l['quantity'] ?? 0) * (float)($l['unitCost'] ?? 0); }
+
+        $before = $po;
+        db()->prepare('UPDATE purchase_orders SET supplier_id=:sid, purchase_date=:pd, expected_receipt_date=:erd, total_cost=:total, remarks=:remarks, updated_at=NOW() WHERE id=:id')
+            ->execute(['sid' => $supplierId, 'pd' => $purchaseDate, 'erd' => trim((string)($in['expectedReceiptDate'] ?? '')) ?: null, 'total' => $totalCost, 'remarks' => trim((string)($in['remarks'] ?? '')), 'id' => $poId]);
+
+        db()->prepare('DELETE FROM purchase_order_lines WHERE purchase_order_id = :id')->execute(['id' => $poId]);
+        $now = date('Y-m-d H:i:s');
+        $lineStmt = db()->prepare('INSERT INTO purchase_order_lines (purchase_order_id, item_code, item_name_en, item_name_bn, quantity, unit_cost, received_quantity, created_at, updated_at) VALUES (:pid, :code, :en, :bn, :qty, :uc, 0, :now, :now)');
+        foreach ($lines as $l) {
+            $lineStmt->execute(['pid' => $poId, 'code' => trim((string)($l['itemCode'] ?? '')), 'en' => trim((string)($l['itemNameEn'] ?? '')), 'bn' => trim((string)($l['itemNameBn'] ?? '')), 'qty' => (float)($l['quantity'] ?? 0), 'uc' => (float)($l['unitCost'] ?? 0), 'now' => $now]);
+        }
+        po_log_activity($user['id'], 'purchase_order', $poId, 'updated', $before, fetch_po_full($poId));
+        json_response(200, ['data' => fetch_po_full($poId)]);
+    }
+
+    if ($method === 'DELETE') {
+        if (!in_array($po['status'], ['draft', 'confirmed'], true)) {
+            json_response(422, ['message' => 'Only draft or confirmed POs can be cancelled.']);
+        }
+        $before = $po;
+        db()->prepare('UPDATE purchase_orders SET status=\'cancelled\', updated_at=NOW() WHERE id=:id')->execute(['id' => $poId]);
+        po_log_activity($user['id'], 'purchase_order', $poId, 'cancelled', $before, ['status' => 'cancelled']);
+        json_response(200, ['ok' => true]);
+    }
+}
+
+if (preg_match('#^/api/v1/purchase-orders/(\d+)/confirm$#', $path, $m) && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $poId = (int)$m[1];
+    $po = fetch_po_full($poId);
+    if (!$po) { json_response(404, ['message' => 'Purchase order not found.']); }
+    if ($po['status'] !== 'draft') { json_response(422, ['message' => 'Only draft POs can be confirmed.']); }
+
+    $before = $po;
+    db()->prepare('UPDATE purchase_orders SET status=\'confirmed\', confirmed_at=NOW(), updated_at=NOW() WHERE id=:id')->execute(['id' => $poId]);
+    po_log_activity($user['id'], 'purchase_order', $poId, 'confirmed', $before, ['status' => 'confirmed']);
+    json_response(200, ['data' => fetch_po_full($poId)]);
+}
+
+if (preg_match('#^/api/v1/purchase-orders/(\d+)/cancel$#', $path, $m) && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $poId = (int)$m[1];
+    $po = fetch_po_full($poId);
+    if (!$po) { json_response(404, ['message' => 'Purchase order not found.']); }
+    if (in_array($po['status'], ['received', 'cancelled'], true)) {
+        json_response(422, ['message' => 'Cannot cancel a received or already-cancelled PO.']);
+    }
+    $before = $po;
+    db()->prepare('UPDATE purchase_orders SET status=\'cancelled\', updated_at=NOW() WHERE id=:id')->execute(['id' => $poId]);
+    po_log_activity($user['id'], 'purchase_order', $poId, 'cancelled', $before, ['status' => 'cancelled']);
+    json_response(200, ['data' => fetch_po_full($poId)]);
+}
+
+if (preg_match('#^/api/v1/purchase-orders/(\d+)/receive$#', $path, $m) && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $poId = (int)$m[1];
+    $po = fetch_po_full($poId);
+    if (!$po) { json_response(404, ['message' => 'Purchase order not found.']); }
+    if (!in_array($po['status'], ['confirmed', 'partially_received'], true)) {
+        json_response(422, ['message' => 'PO must be confirmed or partially received to record a receipt.']);
+    }
+    $in = json_input();
+    $receiptDate = trim((string)($in['receiptDate'] ?? date('Y-m-d')));
+    $receipts = (array)($in['lines'] ?? []);
+    if (empty($receipts)) { json_response(422, ['message' => 'No receipt lines provided.']); }
+
+    $now = date('Y-m-d H:i:s');
+    foreach ($receipts as $receipt) {
+        $lineId = (int)($receipt['lineId'] ?? 0);
+        $recvQty = (float)($receipt['receivedQuantity'] ?? 0);
+        if ($recvQty <= 0) continue;
+
+        $lineStmt = db()->prepare('SELECT * FROM purchase_order_lines WHERE id = :id AND purchase_order_id = :pid');
+        $lineStmt->execute(['id' => $lineId, 'pid' => $poId]);
+        $line = $lineStmt->fetch();
+        if (!$line) continue;
+
+        $newReceived = (float)$line['received_quantity'] + $recvQty;
+        db()->prepare('UPDATE purchase_order_lines SET received_quantity = :r, updated_at = NOW() WHERE id = :id')
+            ->execute(['r' => $newReceived, 'id' => $lineId]);
+
+        // Update inventory
+        $invStmt = db()->prepare('SELECT * FROM inventory WHERE item_code = :code');
+        $invStmt->execute(['code' => $line['item_code']]);
+        $inv = $invStmt->fetch();
+        $unitCost = (float)$line['unit_cost'];
+
+        if ($inv) {
+            $oldQty = (float)$inv['quantity_on_hand'];
+            $newQty = $oldQty + $recvQty;
+            $oldAvg = (float)$inv['avg_unit_cost'];
+            $newAvg = $oldQty > 0 ? (($oldQty * $oldAvg) + ($recvQty * $unitCost)) / $newQty : $unitCost;
+            db()->prepare('UPDATE inventory SET quantity_on_hand=:qty, avg_unit_cost=:avg, updated_at=NOW() WHERE item_code=:code')
+                ->execute(['qty' => $newQty, 'avg' => $newAvg, 'code' => $line['item_code']]);
+            $balanceAfter = $newQty;
+        } else {
+            db()->prepare('INSERT INTO inventory (item_code, item_name_en, item_name_bn, quantity_on_hand, avg_unit_cost, min_threshold, supplier_id, created_at, updated_at) VALUES (:code, :en, :bn, :qty, :avg, 0, :sid, :now, :now)')
+                ->execute(['code' => $line['item_code'], 'en' => $line['item_name_en'] ?? '', 'bn' => $line['item_name_bn'] ?? '', 'qty' => $recvQty, 'avg' => $unitCost, 'sid' => $po['supplierId'], 'now' => $now]);
+            $balanceAfter = $recvQty;
+        }
+
+        // Stock movement record
+        db()->prepare('INSERT INTO stock_movements (item_code, item_name_en, item_name_bn, transaction_type, quantity_in, quantity_out, balance_after, unit_cost, reference_type, reference_id, reference_no, supplier_id, user_id, notes, created_at) VALUES (:code, :en, :bn, \'purchase_receipt\', :qty_in, 0, :bal, :uc, \'purchase_order\', :ref_id, :ref_no, :sid, :uid, :notes, :now)')
+            ->execute(['code' => $line['item_code'], 'en' => $line['item_name_en'] ?? '', 'bn' => $line['item_name_bn'] ?? '', 'qty_in' => $recvQty, 'bal' => $balanceAfter, 'uc' => $unitCost, 'ref_id' => $poId, 'ref_no' => $po['poNumber'], 'sid' => $po['supplierId'], 'uid' => $user['id'], 'notes' => "Receipt date: {$receiptDate}", 'now' => $now]);
+    }
+
+    // Refresh PO lines to determine new status
+    $allLines = db()->prepare('SELECT quantity, received_quantity FROM purchase_order_lines WHERE purchase_order_id = :id');
+    $allLines->execute(['id' => $poId]);
+    $allLinesData = $allLines->fetchAll();
+    $allReceived = true;
+    $anyReceived = false;
+    foreach ($allLinesData as $l) {
+        if ((float)$l['received_quantity'] > 0) { $anyReceived = true; }
+        if ((float)$l['received_quantity'] < (float)$l['quantity']) { $allReceived = false; }
+    }
+    $newStatus = $allReceived ? 'received' : ($anyReceived ? 'partially_received' : 'confirmed');
+    db()->prepare('UPDATE purchase_orders SET status=:s, updated_at=NOW() WHERE id=:id')->execute(['s' => $newStatus, 'id' => $poId]);
+
+    // Auto-generate purchase bill if fully received for the first time
+    if ($newStatus === 'received') {
+        $existsBill = db()->prepare('SELECT COUNT(*) AS c FROM purchase_bills WHERE purchase_order_id = :id');
+        $existsBill->execute(['id' => $poId]);
+        if ((int)($existsBill->fetch()['c'] ?? 0) === 0) {
+            $billNo = generate_bill_number();
+            $due = date('Y-m-d', strtotime('+30 days'));
+            db()->prepare('INSERT INTO purchase_bills (bill_no, purchase_order_id, supplier_id, amount, paid_amount, status, due_date, created_at, updated_at) VALUES (:bn, :pid, :sid, :amt, 0, \'pending\', :due, :now, :now)')
+                ->execute(['bn' => $billNo, 'pid' => $poId, 'sid' => $po['supplierId'], 'amt' => $po['totalCost'], 'due' => $due, 'now' => $now]);
+        }
+    }
+
+    po_log_activity($user['id'], 'purchase_order', $poId, 'received', ['status' => $po['status']], ['status' => $newStatus, 'receipt_date' => $receiptDate]);
+    json_response(200, ['data' => fetch_po_full($poId)]);
+}
+
+// ─── INVENTORY ──────────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/inventory' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $query = strtolower(trim((string)($_GET['query'] ?? '')));
+    $lowStock = $_GET['lowStock'] ?? '';
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(200, (int)($_GET['perPage'] ?? 50)));
+    $offset = ($page - 1) * $perPage;
+    $like = '%' . $query . '%';
+
+    $where = [];
+    $params = [];
+    if ($query !== '') {
+        $where[] = '(LOWER(i.item_code) LIKE :like OR LOWER(i.item_name_en) LIKE :like OR LOWER(i.item_name_bn) LIKE :like)';
+        $params['like'] = $like;
+    }
+    if ($lowStock === 'true') {
+        $where[] = 'i.quantity_on_hand <= i.min_threshold';
+    }
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+    $cStmt = db()->prepare("SELECT COUNT(*) AS c FROM inventory i {$whereClause}");
+    $cStmt->execute($params);
+    $total = (int)($cStmt->fetch()['c'] ?? 0);
+
+    $rStmt = db()->prepare("SELECT i.*, s.name AS supplier_name FROM inventory i LEFT JOIN suppliers s ON s.id = i.supplier_id {$whereClause} ORDER BY i.item_name_en ASC LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) { $rStmt->bindValue(":$k", $v); }
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    $rows = $rStmt->fetchAll();
+
+    json_response(200, ['data' => array_map(fn($r) => inv_row($r), $rows), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+if ($path === '/api/v1/inventory/dashboard' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+
+    $totals = db()->query('SELECT COUNT(*) AS total_products, COALESCE(SUM(quantity_on_hand), 0) AS total_units, COALESCE(SUM(quantity_on_hand * avg_unit_cost), 0) AS total_value FROM inventory')->fetch();
+    $lowStockCount = (int)db()->query('SELECT COUNT(*) AS c FROM inventory WHERE quantity_on_hand <= min_threshold AND min_threshold > 0')->fetch()['c'];
+
+    $lowStockItems = db()->query('SELECT i.*, s.name AS supplier_name FROM inventory i LEFT JOIN suppliers s ON s.id = i.supplier_id WHERE i.quantity_on_hand <= i.min_threshold AND i.min_threshold > 0 ORDER BY i.quantity_on_hand ASC LIMIT 20')->fetchAll();
+
+    $recentMovements = db()->query('SELECT sm.*, u.name AS user_name FROM stock_movements sm LEFT JOIN users u ON u.id = sm.user_id ORDER BY sm.created_at DESC LIMIT 20')->fetchAll();
+
+    json_response(200, [
+        'data' => [
+            'totalInventoryValue' => round((float)($totals['total_value'] ?? 0), 2),
+            'totalUnitsInStock' => round((float)($totals['total_units'] ?? 0), 3),
+            'lowStockItemsCount' => $lowStockCount,
+            'totalUniqueProducts' => (int)($totals['total_products'] ?? 0),
+            'lowStockItems' => array_map(fn($r) => inv_row($r), $lowStockItems),
+            'recentMovements' => array_map(fn($r) => movement_row($r), $recentMovements),
+        ],
+    ]);
+}
+
+if ($path === '/api/v1/inventory/manual-adjustment' && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin']);
+    $in = json_input();
+    $itemCode = trim((string)($in['itemCode'] ?? ''));
+    $quantity = (float)($in['quantity'] ?? 0);
+    $notes = trim((string)($in['notes'] ?? ''));
+    if ($itemCode === '') { json_response(422, ['message' => 'Item code is required.']); }
+    if ($quantity == 0) { json_response(422, ['message' => 'Quantity cannot be zero.']); }
+
+    $invStmt = db()->prepare('SELECT * FROM inventory WHERE item_code = :code');
+    $invStmt->execute(['code' => $itemCode]);
+    $inv = $invStmt->fetch();
+
+    $now = date('Y-m-d H:i:s');
+    if ($inv) {
+        $newQty = max(0, (float)$inv['quantity_on_hand'] + $quantity);
+        db()->prepare('UPDATE inventory SET quantity_on_hand=:qty, updated_at=NOW() WHERE item_code=:code')->execute(['qty' => $newQty, 'code' => $itemCode]);
+        $balanceAfter = $newQty;
+    } else {
+        $newQty = max(0, $quantity);
+        // Try to get item info from catalog
+        $ci = db()->prepare("SELECT ci.code, ci.name_en, ci.name_bn FROM catalog_items ci WHERE ci.code = :code LIMIT 1");
+        $ci->execute(['code' => $itemCode]);
+        $item = $ci->fetch();
+        db()->prepare('INSERT INTO inventory (item_code, item_name_en, item_name_bn, quantity_on_hand, avg_unit_cost, min_threshold, created_at, updated_at) VALUES (:code, :en, :bn, :qty, 0, 0, :now, :now)')
+            ->execute(['code' => $itemCode, 'en' => $item['name_en'] ?? $itemCode, 'bn' => $item['name_bn'] ?? '', 'qty' => $newQty, 'now' => $now]);
+        $balanceAfter = $newQty;
+    }
+
+    $qtyIn = $quantity > 0 ? $quantity : 0;
+    $qtyOut = $quantity < 0 ? abs($quantity) : 0;
+    db()->prepare('INSERT INTO stock_movements (item_code, item_name_en, item_name_bn, transaction_type, quantity_in, quantity_out, balance_after, unit_cost, reference_type, user_id, notes, created_at) VALUES (:code, :en, :bn, \'manual_adjustment\', :qi, :qo, :bal, NULL, \'manual\', :uid, :notes, :now)')
+        ->execute(['code' => $itemCode, 'en' => $inv['item_name_en'] ?? $itemCode, 'bn' => $inv['item_name_bn'] ?? '', 'qi' => $qtyIn, 'qo' => $qtyOut, 'bal' => $balanceAfter, 'uid' => $user['id'], 'notes' => $notes, 'now' => $now]);
+
+    po_log_activity($user['id'], 'inventory', 0, 'manual_adjustment', ['item_code' => $itemCode, 'old_qty' => $inv ? (float)$inv['quantity_on_hand'] : 0], ['item_code' => $itemCode, 'new_qty' => $balanceAfter, 'adjustment' => $quantity, 'notes' => $notes]);
+    json_response(200, ['ok' => true, 'newQuantity' => $balanceAfter]);
+}
+
+if (preg_match('#^/api/v1/inventory/([^/]+)/threshold$#', $path, $m) && $method === 'PUT') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin']);
+    $itemCode = urldecode($m[1]);
+    $in = json_input();
+    $threshold = (float)($in['minThreshold'] ?? 0);
+    $supplierId = isset($in['supplierId']) ? (int)$in['supplierId'] : null;
+
+    $invStmt = db()->prepare('SELECT * FROM inventory WHERE item_code = :code');
+    $invStmt->execute(['code' => $itemCode]);
+    $inv = $invStmt->fetch();
+    if (!$inv) { json_response(404, ['message' => 'Inventory item not found.']); }
+
+    $updateParams = ['threshold' => $threshold, 'code' => $itemCode];
+    $supplierSql = '';
+    if ($supplierId !== null) { $supplierSql = ', supplier_id = :sid'; $updateParams['sid'] = $supplierId; }
+    db()->prepare("UPDATE inventory SET min_threshold = :threshold{$supplierSql}, updated_at = NOW() WHERE item_code = :code")->execute($updateParams);
+    json_response(200, ['ok' => true]);
+}
+
+// ─── STOCK MOVEMENTS ────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/stock-movements' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $itemCode = trim((string)($_GET['itemCode'] ?? ''));
+    $txType = trim((string)($_GET['type'] ?? ''));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 30)));
+    $offset = ($page - 1) * $perPage;
+
+    $where = []; $params = [];
+    if ($itemCode !== '') { $where[] = 'sm.item_code = :ic'; $params['ic'] = $itemCode; }
+    if ($txType !== '') { $where[] = 'sm.transaction_type = :tt'; $params['tt'] = $txType; }
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+    $cStmt = db()->prepare("SELECT COUNT(*) AS c FROM stock_movements sm {$whereClause}");
+    $cStmt->execute($params);
+    $total = (int)($cStmt->fetch()['c'] ?? 0);
+
+    $rStmt = db()->prepare("SELECT sm.*, u.name AS user_name, s.name AS supplier_name FROM stock_movements sm LEFT JOIN users u ON u.id = sm.user_id LEFT JOIN suppliers s ON s.id = sm.supplier_id {$whereClause} ORDER BY sm.created_at DESC LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) { $rStmt->bindValue(":$k", $v); }
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    $rows = $rStmt->fetchAll();
+
+    json_response(200, ['data' => array_map(fn($r) => movement_row($r), $rows), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+// ─── PURCHASE BILLS (INVENTORY) ─────────────────────────────────────────────
+
+if ($path === '/api/v1/inventory-bills' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $status = trim((string)($_GET['status'] ?? ''));
+    $supplierId = (int)($_GET['supplierId'] ?? 0);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 20)));
+    $offset = ($page - 1) * $perPage;
+
+    $where = []; $params = [];
+    if ($status !== '') { $where[] = 'pb.status = :status'; $params['status'] = $status; }
+    if ($supplierId > 0) { $where[] = 'pb.supplier_id = :sid'; $params['sid'] = $supplierId; }
+    $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+
+    $cStmt = db()->prepare("SELECT COUNT(*) AS c FROM purchase_bills pb {$whereClause}");
+    $cStmt->execute($params);
+    $total = (int)($cStmt->fetch()['c'] ?? 0);
+
+    $rStmt = db()->prepare("SELECT pb.*, s.name AS supplier_name, po.po_number FROM purchase_bills pb LEFT JOIN suppliers s ON s.id = pb.supplier_id LEFT JOIN purchase_orders po ON po.id = pb.purchase_order_id {$whereClause} ORDER BY pb.created_at DESC LIMIT :limit OFFSET :offset");
+    foreach ($params as $k => $v) { $rStmt->bindValue(":$k", $v); }
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    $rows = $rStmt->fetchAll();
+
+    json_response(200, ['data' => array_map(fn($r) => bill_row($r), $rows), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+if (preg_match('#^/api/v1/inventory-bills/(\d+)$#', $path, $m) && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $billId = (int)$m[1];
+    $bStmt = db()->prepare('SELECT pb.*, s.name AS supplier_name, po.po_number FROM purchase_bills pb LEFT JOIN suppliers s ON s.id = pb.supplier_id LEFT JOIN purchase_orders po ON po.id = pb.purchase_order_id WHERE pb.id = :id');
+    $bStmt->execute(['id' => $billId]);
+    $bill = $bStmt->fetch();
+    if (!$bill) { json_response(404, ['message' => 'Bill not found.']); }
+    $pStmt = db()->prepare('SELECT pbp.*, u.name AS created_by_name FROM purchase_bill_payments pbp LEFT JOIN users u ON u.id = pbp.created_by WHERE pbp.purchase_bill_id = :id ORDER BY pbp.payment_date ASC');
+    $pStmt->execute(['id' => $billId]);
+    $payments = $pStmt->fetchAll();
+    json_response(200, ['data' => bill_row($bill), 'payments' => array_map(fn($p) => ['id' => (int)$p['id'], 'amount' => (float)$p['amount'], 'paymentDate' => $p['payment_date'], 'note' => $p['note'] ?? '', 'createdByName' => $p['created_by_name'] ?? '', 'createdAt' => $p['created_at']], $payments)]);
+}
+
+if (preg_match('#^/api/v1/inventory-bills/(\d+)/pay$#', $path, $m) && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin']);
+    $billId = (int)$m[1];
+    $bStmt = db()->prepare('SELECT * FROM purchase_bills WHERE id = :id');
+    $bStmt->execute(['id' => $billId]);
+    $bill = $bStmt->fetch();
+    if (!$bill) { json_response(404, ['message' => 'Bill not found.']); }
+    if ($bill['status'] === 'fully_paid') { json_response(422, ['message' => 'Bill is already fully paid.']); }
+
+    $in = json_input();
+    $amount = (float)($in['amount'] ?? 0);
+    $paymentDate = trim((string)($in['paymentDate'] ?? date('Y-m-d')));
+    $note = trim((string)($in['note'] ?? ''));
+    if ($amount <= 0) { json_response(422, ['message' => 'Payment amount must be positive.']); }
+
+    $now = date('Y-m-d H:i:s');
+    db()->prepare('INSERT INTO purchase_bill_payments (purchase_bill_id, amount, payment_date, note, created_by, created_at, updated_at) VALUES (:bid, :amt, :pd, :note, :uid, :now, :now)')
+        ->execute(['bid' => $billId, 'amt' => $amount, 'pd' => $paymentDate, 'note' => $note, 'uid' => $user['id'], 'now' => $now]);
+
+    $newPaid = (float)$bill['paid_amount'] + $amount;
+    $newStatus = $newPaid >= (float)$bill['amount'] ? 'fully_paid' : 'partially_paid';
+    db()->prepare('UPDATE purchase_bills SET paid_amount=:paid, status=:status, updated_at=NOW() WHERE id=:id')
+        ->execute(['paid' => $newPaid, 'status' => $newStatus, 'id' => $billId]);
+
+    po_log_activity($user['id'], 'purchase_bill', $billId, 'payment_recorded', ['paid_amount' => (float)$bill['paid_amount'], 'status' => $bill['status']], ['paid_amount' => $newPaid, 'status' => $newStatus, 'payment' => $amount]);
+    $bStmt2 = db()->prepare('SELECT pb.*, s.name AS supplier_name, po.po_number FROM purchase_bills pb LEFT JOIN suppliers s ON s.id = pb.supplier_id LEFT JOIN purchase_orders po ON po.id = pb.purchase_order_id WHERE pb.id = :id');
+    $bStmt2->execute(['id' => $billId]);
+    json_response(200, ['data' => bill_row($bStmt2->fetch())]);
+}
+
+// ─── STOCK RETURNS ───────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/stock-returns' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 20)));
+    $offset = ($page - 1) * $perPage;
+
+    $total = (int)db()->query('SELECT COUNT(*) AS c FROM stock_returns')->fetch()['c'];
+    $rStmt = db()->prepare('SELECT sr.*, s.name AS supplier_name, u.name AS created_by_name FROM stock_returns sr LEFT JOIN suppliers s ON s.id = sr.supplier_id LEFT JOIN users u ON u.id = sr.created_by ORDER BY sr.return_date DESC LIMIT :limit OFFSET :offset');
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    json_response(200, ['data' => array_map(fn($r) => stock_return_row($r), $rStmt->fetchAll()), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+if ($path === '/api/v1/stock-returns' && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $in = json_input();
+    $itemCode = trim((string)($in['itemCode'] ?? ''));
+    $quantity = (float)($in['quantity'] ?? 0);
+    $returnReason = trim((string)($in['returnReason'] ?? ''));
+    $returnDate = trim((string)($in['returnDate'] ?? date('Y-m-d')));
+    if ($itemCode === '' || $quantity <= 0 || $returnReason === '') {
+        json_response(422, ['message' => 'Item code, quantity, and return reason are required.']);
+    }
+    $supplierId = isset($in['supplierId']) ? (int)$in['supplierId'] : null;
+
+    $invStmt = db()->prepare('SELECT * FROM inventory WHERE item_code = :code');
+    $invStmt->execute(['code' => $itemCode]);
+    $inv = $invStmt->fetch();
+    if (!$inv) { json_response(404, ['message' => 'Inventory item not found.']); }
+    if ((float)$inv['quantity_on_hand'] < $quantity) { json_response(422, ['message' => 'Insufficient stock for return.']); }
+
+    $now = date('Y-m-d H:i:s');
+    db()->prepare('INSERT INTO stock_returns (item_code, item_name_en, item_name_bn, quantity, supplier_id, return_reason, return_date, created_by, created_at, updated_at) VALUES (:code, :en, :bn, :qty, :sid, :reason, :rd, :uid, :now, :now)')
+        ->execute(['code' => $itemCode, 'en' => $inv['item_name_en'] ?? '', 'bn' => $inv['item_name_bn'] ?? '', 'qty' => $quantity, 'sid' => $supplierId, 'reason' => $returnReason, 'rd' => $returnDate, 'uid' => $user['id'], 'now' => $now]);
+    $returnId = (int)db()->lastInsertId();
+
+    $newQty = (float)$inv['quantity_on_hand'] - $quantity;
+    db()->prepare('UPDATE inventory SET quantity_on_hand=:qty, updated_at=NOW() WHERE item_code=:code')->execute(['qty' => $newQty, 'code' => $itemCode]);
+
+    db()->prepare('INSERT INTO stock_movements (item_code, item_name_en, item_name_bn, transaction_type, quantity_in, quantity_out, balance_after, unit_cost, reference_type, reference_id, supplier_id, user_id, notes, created_at) VALUES (:code, :en, :bn, \'stock_return\', 0, :qo, :bal, NULL, \'stock_return\', :ref_id, :sid, :uid, :notes, :now)')
+        ->execute(['code' => $itemCode, 'en' => $inv['item_name_en'] ?? '', 'bn' => $inv['item_name_bn'] ?? '', 'qo' => $quantity, 'bal' => $newQty, 'ref_id' => $returnId, 'sid' => $supplierId, 'uid' => $user['id'], 'notes' => $returnReason, 'now' => $now]);
+
+    po_log_activity($user['id'], 'stock_return', $returnId, 'created', null, ['item_code' => $itemCode, 'quantity' => $quantity]);
+    json_response(201, ['ok' => true]);
+}
+
+// ─── DAMAGED STOCK ───────────────────────────────────────────────────────────
+
+if ($path === '/api/v1/damaged-stock' && $method === 'GET') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = max(1, min(100, (int)($_GET['perPage'] ?? 20)));
+    $offset = ($page - 1) * $perPage;
+
+    $total = (int)db()->query('SELECT COUNT(*) AS c FROM damaged_stock')->fetch()['c'];
+    $rStmt = db()->prepare('SELECT ds.*, u.name AS created_by_name FROM damaged_stock ds LEFT JOIN users u ON u.id = ds.created_by ORDER BY ds.damage_date DESC LIMIT :limit OFFSET :offset');
+    $rStmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $rStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $rStmt->execute();
+    json_response(200, ['data' => array_map(fn($r) => damaged_row($r), $rStmt->fetchAll()), 'meta' => ['page' => $page, 'perPage' => $perPage, 'total' => $total]]);
+}
+
+if ($path === '/api/v1/damaged-stock' && $method === 'POST') {
+    $user = require_auth();
+    require_role($user, ['admin', 'master_admin', 'moderator']);
+    $in = json_input();
+    $itemCode = trim((string)($in['itemCode'] ?? ''));
+    $quantity = (float)($in['quantity'] ?? 0);
+    $damageReason = trim((string)($in['damageReason'] ?? ''));
+    $damageDate = trim((string)($in['damageDate'] ?? date('Y-m-d')));
+    if ($itemCode === '' || $quantity <= 0 || $damageReason === '') {
+        json_response(422, ['message' => 'Item code, quantity, and damage reason are required.']);
+    }
+
+    $invStmt = db()->prepare('SELECT * FROM inventory WHERE item_code = :code');
+    $invStmt->execute(['code' => $itemCode]);
+    $inv = $invStmt->fetch();
+    if (!$inv) { json_response(404, ['message' => 'Inventory item not found.']); }
+    if ((float)$inv['quantity_on_hand'] < $quantity) { json_response(422, ['message' => 'Insufficient stock to record damage.']); }
+
+    $now = date('Y-m-d H:i:s');
+    db()->prepare('INSERT INTO damaged_stock (item_code, item_name_en, item_name_bn, quantity, damage_reason, damage_date, notes, created_by, created_at, updated_at) VALUES (:code, :en, :bn, :qty, :reason, :dd, :notes, :uid, :now, :now)')
+        ->execute(['code' => $itemCode, 'en' => $inv['item_name_en'] ?? '', 'bn' => $inv['item_name_bn'] ?? '', 'qty' => $quantity, 'reason' => $damageReason, 'dd' => $damageDate, 'notes' => trim((string)($in['notes'] ?? '')), 'uid' => $user['id'], 'now' => $now]);
+    $damageId = (int)db()->lastInsertId();
+
+    $newQty = (float)$inv['quantity_on_hand'] - $quantity;
+    db()->prepare('UPDATE inventory SET quantity_on_hand=:qty, updated_at=NOW() WHERE item_code=:code')->execute(['qty' => $newQty, 'code' => $itemCode]);
+
+    db()->prepare('INSERT INTO stock_movements (item_code, item_name_en, item_name_bn, transaction_type, quantity_in, quantity_out, balance_after, unit_cost, reference_type, reference_id, user_id, notes, created_at) VALUES (:code, :en, :bn, \'damaged_stock\', 0, :qo, :bal, NULL, \'damaged_stock\', :ref_id, :uid, :notes, :now)')
+        ->execute(['code' => $itemCode, 'en' => $inv['item_name_en'] ?? '', 'bn' => $inv['item_name_bn'] ?? '', 'qo' => $quantity, 'bal' => $newQty, 'ref_id' => $damageId, 'uid' => $user['id'], 'notes' => $damageReason, 'now' => $now]);
+
+    po_log_activity($user['id'], 'damaged_stock', $damageId, 'created', null, ['item_code' => $itemCode, 'quantity' => $quantity]);
+    json_response(201, ['ok' => true]);
+}
+
 json_response(404, ['message' => 'Not found']);
 }

@@ -1360,3 +1360,206 @@ function sync_latest_challan_snapshot_from_order(int $orderId): void
         'id' => (int)$ch['id'],
     ]);
 }
+
+// ─── PO / INVENTORY HELPERS ─────────────────────────────────────────────────
+
+function supplier_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'name' => (string)$r['name'],
+        'contactPerson' => (string)($r['contact_person'] ?? ''),
+        'phone' => (string)($r['phone'] ?? ''),
+        'email' => (string)($r['email'] ?? ''),
+        'address' => (string)($r['address'] ?? ''),
+        'notes' => (string)($r['notes'] ?? ''),
+        'isActive' => (bool)$r['is_active'],
+        'poCount' => (int)($r['po_count'] ?? 0),
+        'createdAt' => (string)($r['created_at'] ?? ''),
+    ];
+}
+
+function po_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'poNumber' => (string)$r['po_number'],
+        'supplierId' => (int)$r['supplier_id'],
+        'supplierName' => (string)($r['supplier_name'] ?? ''),
+        'purchaseDate' => (string)$r['purchase_date'],
+        'expectedReceiptDate' => $r['expected_receipt_date'] ? (string)$r['expected_receipt_date'] : null,
+        'status' => (string)$r['status'],
+        'totalCost' => (float)$r['total_cost'],
+        'remarks' => (string)($r['remarks'] ?? ''),
+        'createdBy' => (int)$r['created_by'],
+        'createdByName' => (string)($r['created_by_name'] ?? ''),
+        'confirmedAt' => $r['confirmed_at'] ? (string)$r['confirmed_at'] : null,
+        'lineCount' => (int)($r['line_count'] ?? 0),
+        'createdAt' => (string)($r['created_at'] ?? ''),
+        'updatedAt' => (string)($r['updated_at'] ?? ''),
+    ];
+}
+
+function fetch_po_full(int $poId): ?array
+{
+    $stmt = db()->prepare('SELECT po.*, s.name AS supplier_name, u.name AS created_by_name, COUNT(pol.id) AS line_count FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id LEFT JOIN users u ON u.id = po.created_by LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id WHERE po.id = :id GROUP BY po.id');
+    $stmt->execute(['id' => $poId]);
+    $po = $stmt->fetch();
+    if (!$po) return null;
+
+    $linesStmt = db()->prepare('SELECT * FROM purchase_order_lines WHERE purchase_order_id = :id ORDER BY id ASC');
+    $linesStmt->execute(['id' => $poId]);
+    $lines = $linesStmt->fetchAll();
+
+    $result = po_row($po);
+    $result['lines'] = array_map(fn($l) => [
+        'id' => (int)$l['id'],
+        'itemCode' => (string)$l['item_code'],
+        'itemNameEn' => (string)($l['item_name_en'] ?? ''),
+        'itemNameBn' => (string)($l['item_name_bn'] ?? ''),
+        'quantity' => (float)$l['quantity'],
+        'unitCost' => (float)$l['unit_cost'],
+        'totalCost' => (float)$l['quantity'] * (float)$l['unit_cost'],
+        'receivedQuantity' => (float)$l['received_quantity'],
+        'pendingQuantity' => max(0, (float)$l['quantity'] - (float)$l['received_quantity']),
+    ], $lines);
+    return $result;
+}
+
+function inv_row(array $r): array
+{
+    return [
+        'itemCode' => (string)$r['item_code'],
+        'itemNameEn' => (string)($r['item_name_en'] ?? ''),
+        'itemNameBn' => (string)($r['item_name_bn'] ?? ''),
+        'quantityOnHand' => (float)$r['quantity_on_hand'],
+        'avgUnitCost' => (float)($r['avg_unit_cost'] ?? 0),
+        'inventoryValue' => round((float)$r['quantity_on_hand'] * (float)($r['avg_unit_cost'] ?? 0), 2),
+        'minThreshold' => (float)$r['min_threshold'],
+        'isLowStock' => (float)$r['min_threshold'] > 0 && (float)$r['quantity_on_hand'] <= (float)$r['min_threshold'],
+        'supplierId' => $r['supplier_id'] ? (int)$r['supplier_id'] : null,
+        'supplierName' => (string)($r['supplier_name'] ?? ''),
+        'updatedAt' => (string)($r['updated_at'] ?? ''),
+    ];
+}
+
+function movement_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'itemCode' => (string)$r['item_code'],
+        'itemNameEn' => (string)($r['item_name_en'] ?? ''),
+        'itemNameBn' => (string)($r['item_name_bn'] ?? ''),
+        'transactionType' => (string)$r['transaction_type'],
+        'quantityIn' => (float)$r['quantity_in'],
+        'quantityOut' => (float)$r['quantity_out'],
+        'balanceAfter' => (float)$r['balance_after'],
+        'unitCost' => isset($r['unit_cost']) ? (float)$r['unit_cost'] : null,
+        'referenceType' => $r['reference_type'] ?? null,
+        'referenceId' => isset($r['reference_id']) ? (int)$r['reference_id'] : null,
+        'referenceNo' => $r['reference_no'] ?? null,
+        'supplierId' => isset($r['supplier_id']) ? (int)$r['supplier_id'] : null,
+        'supplierName' => (string)($r['supplier_name'] ?? ''),
+        'userId' => isset($r['user_id']) ? (int)$r['user_id'] : null,
+        'userName' => (string)($r['user_name'] ?? ''),
+        'notes' => (string)($r['notes'] ?? ''),
+        'createdAt' => (string)($r['created_at'] ?? ''),
+    ];
+}
+
+function bill_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'billNo' => (string)$r['bill_no'],
+        'purchaseOrderId' => (int)$r['purchase_order_id'],
+        'poNumber' => (string)($r['po_number'] ?? ''),
+        'supplierId' => (int)$r['supplier_id'],
+        'supplierName' => (string)($r['supplier_name'] ?? ''),
+        'amount' => (float)$r['amount'],
+        'paidAmount' => (float)$r['paid_amount'],
+        'balance' => round((float)$r['amount'] - (float)$r['paid_amount'], 2),
+        'status' => (string)$r['status'],
+        'dueDate' => $r['due_date'] ? (string)$r['due_date'] : null,
+        'createdAt' => (string)($r['created_at'] ?? ''),
+    ];
+}
+
+function stock_return_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'itemCode' => (string)$r['item_code'],
+        'itemNameEn' => (string)($r['item_name_en'] ?? ''),
+        'itemNameBn' => (string)($r['item_name_bn'] ?? ''),
+        'quantity' => (float)$r['quantity'],
+        'supplierId' => $r['supplier_id'] ? (int)$r['supplier_id'] : null,
+        'supplierName' => (string)($r['supplier_name'] ?? ''),
+        'returnReason' => (string)$r['return_reason'],
+        'returnDate' => (string)$r['return_date'],
+        'createdByName' => (string)($r['created_by_name'] ?? ''),
+        'createdAt' => (string)($r['created_at'] ?? ''),
+    ];
+}
+
+function damaged_row(array $r): array
+{
+    return [
+        'id' => (int)$r['id'],
+        'itemCode' => (string)$r['item_code'],
+        'itemNameEn' => (string)($r['item_name_en'] ?? ''),
+        'itemNameBn' => (string)($r['item_name_bn'] ?? ''),
+        'quantity' => (float)$r['quantity'],
+        'damageReason' => (string)$r['damage_reason'],
+        'damageDate' => (string)$r['damage_date'],
+        'notes' => (string)($r['notes'] ?? ''),
+        'createdByName' => (string)($r['created_by_name'] ?? ''),
+        'createdAt' => (string)($r['created_at'] ?? ''),
+    ];
+}
+
+function generate_po_number(): string
+{
+    $prefix = 'PO-' . date('Ymd') . '-';
+    $stmt = db()->prepare("SELECT po_number FROM purchase_orders WHERE po_number LIKE :prefix ORDER BY id DESC LIMIT 1");
+    $stmt->execute(['prefix' => $prefix . '%']);
+    $last = $stmt->fetch();
+    $seq = 1;
+    if ($last) {
+        $parts = explode('-', $last['po_number']);
+        $seq = (int)end($parts) + 1;
+    }
+    return $prefix . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+}
+
+function generate_bill_number(): string
+{
+    $prefix = 'BILL-' . date('Ym') . '-';
+    $stmt = db()->prepare("SELECT bill_no FROM purchase_bills WHERE bill_no LIKE :prefix ORDER BY id DESC LIMIT 1");
+    $stmt->execute(['prefix' => $prefix . '%']);
+    $last = $stmt->fetch();
+    $seq = 1;
+    if ($last) {
+        $parts = explode('-', $last['bill_no']);
+        $seq = (int)end($parts) + 1;
+    }
+    return $prefix . str_pad((string)$seq, 4, '0', STR_PAD_LEFT);
+}
+
+function po_log_activity(int $userId, string $entityType, int $entityId, string $action, ?array $before, ?array $after): void
+{
+    try {
+        $stmt = db()->prepare('INSERT INTO activity_logs (actor_user_id, entity_type, entity_id, action, before_json, after_json, created_at, updated_at) VALUES (:uid, :et, :eid, :action, :before, :after, NOW(), NOW())');
+        $stmt->execute([
+            'uid' => $userId,
+            'et' => $entityType,
+            'eid' => $entityId,
+            'action' => $action,
+            'before' => $before !== null ? json_encode($before) : null,
+            'after' => $after !== null ? json_encode($after) : null,
+        ]);
+    } catch (\Throwable) {
+        // Non-fatal
+    }
+}
+

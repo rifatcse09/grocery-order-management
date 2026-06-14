@@ -869,3 +869,348 @@ export async function apiDeleteCatalogItem(itemId: string): Promise<void> {
     method: "DELETE",
   });
 }
+
+// ─── SUPPLIERS ───────────────────────────────────────────────────────────────
+
+export type Supplier = {
+  id: number;
+  name: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+  address: string;
+  notes: string;
+  isActive: boolean;
+  poCount: number;
+  createdAt: string;
+};
+
+export type SupplierPayload = {
+  name: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  isActive?: boolean;
+};
+
+export async function apiListSuppliers(params?: { query?: string; active?: boolean }): Promise<Supplier[]> {
+  const qs = new URLSearchParams();
+  if (params?.query) qs.set("query", params.query);
+  if (params?.active !== undefined) qs.set("active", params.active ? "true" : "false");
+  const res = await req<{ data: Supplier[] }>(`/api/v1/suppliers?${qs}`);
+  return res.data;
+}
+
+export async function apiCreateSupplier(payload: SupplierPayload): Promise<Supplier> {
+  const res = await req<{ data: Supplier }>("/api/v1/suppliers", { method: "POST", body: JSON.stringify(payload) });
+  return res.data;
+}
+
+export async function apiUpdateSupplier(id: number, payload: SupplierPayload): Promise<Supplier> {
+  const res = await req<{ data: Supplier }>(`/api/v1/suppliers/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  return res.data;
+}
+
+export async function apiDeactivateSupplier(id: number): Promise<void> {
+  await req(`/api/v1/suppliers/${id}`, { method: "DELETE" });
+}
+
+export async function apiGetSupplierHistory(id: number): Promise<{
+  supplier: Supplier;
+  purchaseOrders: PurchaseOrder[];
+  totalBilled: number;
+  totalPaid: number;
+  outstandingBalance: number;
+  totalUnitsPurchased: number;
+}> {
+  const res = await req<{ data: { supplier: Supplier; purchaseOrders: PurchaseOrder[]; totalBilled: number; totalPaid: number; outstandingBalance: number; totalUnitsPurchased: number } }>(`/api/v1/suppliers/${id}/purchase-history`);
+  return res.data;
+}
+
+// ─── PURCHASE ORDERS ─────────────────────────────────────────────────────────
+
+export type POLine = {
+  id?: number;
+  itemCode: string;
+  itemNameEn: string;
+  itemNameBn: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+  receivedQuantity: number;
+  pendingQuantity: number;
+};
+
+export type PurchaseOrder = {
+  id: number;
+  poNumber: string;
+  supplierId: number;
+  supplierName: string;
+  purchaseDate: string;
+  expectedReceiptDate: string | null;
+  status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
+  totalCost: number;
+  remarks: string;
+  createdBy: number;
+  createdByName: string;
+  confirmedAt: string | null;
+  lineCount: number;
+  lines?: POLine[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type POCreatePayload = {
+  supplierId: number;
+  purchaseDate: string;
+  expectedReceiptDate?: string;
+  remarks?: string;
+  lines: { itemCode: string; itemNameEn: string; itemNameBn: string; quantity: number; unitCost: number }[];
+};
+
+export async function apiListPurchaseOrders(params?: {
+  status?: string;
+  supplierId?: number;
+  page?: number;
+  perPage?: number;
+}): Promise<{ data: PurchaseOrder[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.supplierId) qs.set("supplierId", String(params.supplierId));
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/purchase-orders?${qs}`);
+}
+
+export async function apiGetPurchaseOrder(id: number): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>(`/api/v1/purchase-orders/${id}`);
+  return res.data;
+}
+
+export async function apiCreatePurchaseOrder(payload: POCreatePayload): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>("/api/v1/purchase-orders", { method: "POST", body: JSON.stringify(payload) });
+  return res.data;
+}
+
+export async function apiUpdatePurchaseOrder(id: number, payload: POCreatePayload): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>(`/api/v1/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  return res.data;
+}
+
+export async function apiConfirmPurchaseOrder(id: number): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>(`/api/v1/purchase-orders/${id}/confirm`, { method: "POST" });
+  return res.data;
+}
+
+export async function apiCancelPurchaseOrder(id: number): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>(`/api/v1/purchase-orders/${id}/cancel`, { method: "POST" });
+  return res.data;
+}
+
+export async function apiReceivePurchaseOrder(
+  id: number,
+  payload: { receiptDate: string; lines: { lineId: number; receivedQuantity: number }[] }
+): Promise<PurchaseOrder> {
+  const res = await req<{ data: PurchaseOrder }>(`/api/v1/purchase-orders/${id}/receive`, { method: "POST", body: JSON.stringify(payload) });
+  return res.data;
+}
+
+// ─── INVENTORY ───────────────────────────────────────────────────────────────
+
+export type InventoryItem = {
+  itemCode: string;
+  itemNameEn: string;
+  itemNameBn: string;
+  quantityOnHand: number;
+  avgUnitCost: number;
+  inventoryValue: number;
+  minThreshold: number;
+  isLowStock: boolean;
+  supplierId: number | null;
+  supplierName: string;
+  updatedAt: string;
+};
+
+export type StockMovement = {
+  id: number;
+  itemCode: string;
+  itemNameEn: string;
+  itemNameBn: string;
+  transactionType: "purchase_receipt" | "order_fulfillment" | "stock_return" | "damaged_stock" | "manual_adjustment";
+  quantityIn: number;
+  quantityOut: number;
+  balanceAfter: number;
+  unitCost: number | null;
+  referenceType: string | null;
+  referenceId: number | null;
+  referenceNo: string | null;
+  supplierId: number | null;
+  supplierName: string;
+  userId: number | null;
+  userName: string;
+  notes: string;
+  createdAt: string;
+};
+
+export async function apiListInventory(params?: {
+  query?: string;
+  lowStock?: boolean;
+  page?: number;
+  perPage?: number;
+}): Promise<{ data: InventoryItem[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.query) qs.set("query", params.query);
+  if (params?.lowStock) qs.set("lowStock", "true");
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/inventory?${qs}`);
+}
+
+export async function apiGetInventoryDashboard(): Promise<{
+  totalInventoryValue: number;
+  totalUnitsInStock: number;
+  lowStockItemsCount: number;
+  totalUniqueProducts: number;
+  lowStockItems: InventoryItem[];
+  recentMovements: StockMovement[];
+}> {
+  const res = await req<{ data: { totalInventoryValue: number; totalUnitsInStock: number; lowStockItemsCount: number; totalUniqueProducts: number; lowStockItems: InventoryItem[]; recentMovements: StockMovement[] } }>("/api/v1/inventory/dashboard");
+  return res.data;
+}
+
+export async function apiManualStockAdjustment(itemCode: string, quantity: number, notes: string): Promise<{ newQuantity: number }> {
+  const res = await req<{ ok: boolean; newQuantity: number }>("/api/v1/inventory/manual-adjustment", {
+    method: "POST",
+    body: JSON.stringify({ itemCode, quantity, notes }),
+  });
+  return { newQuantity: res.newQuantity };
+}
+
+export async function apiSetInventoryThreshold(itemCode: string, minThreshold: number, supplierId?: number): Promise<void> {
+  await req(`/api/v1/inventory/${encodeURIComponent(itemCode)}/threshold`, {
+    method: "PUT",
+    body: JSON.stringify({ minThreshold, supplierId }),
+  });
+}
+
+export async function apiListStockMovements(params?: {
+  itemCode?: string;
+  type?: string;
+  page?: number;
+  perPage?: number;
+}): Promise<{ data: StockMovement[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.itemCode) qs.set("itemCode", params.itemCode);
+  if (params?.type) qs.set("type", params.type);
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/stock-movements?${qs}`);
+}
+
+// ─── PURCHASE BILLS (INVENTORY) ───────────────────────────────────────────────
+
+export type InventoryBill = {
+  id: number;
+  billNo: string;
+  purchaseOrderId: number;
+  poNumber: string;
+  supplierId: number;
+  supplierName: string;
+  amount: number;
+  paidAmount: number;
+  balance: number;
+  status: "pending" | "partially_paid" | "fully_paid";
+  dueDate: string | null;
+  createdAt: string;
+};
+
+export async function apiListInventoryBills(params?: {
+  status?: string;
+  supplierId?: number;
+  page?: number;
+  perPage?: number;
+}): Promise<{ data: InventoryBill[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.supplierId) qs.set("supplierId", String(params.supplierId));
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/inventory-bills?${qs}`);
+}
+
+export async function apiGetInventoryBill(id: number): Promise<{ data: InventoryBill; payments: { id: number; amount: number; paymentDate: string; note: string; createdByName: string; createdAt: string }[] }> {
+  return req(`/api/v1/inventory-bills/${id}`);
+}
+
+export async function apiPayInventoryBill(id: number, amount: number, paymentDate: string, note?: string): Promise<InventoryBill> {
+  const res = await req<{ data: InventoryBill }>(`/api/v1/inventory-bills/${id}/pay`, {
+    method: "POST",
+    body: JSON.stringify({ amount, paymentDate, note }),
+  });
+  return res.data;
+}
+
+// ─── STOCK RETURNS & DAMAGED STOCK ──────────────────────────────────────────
+
+export type StockReturn = {
+  id: number;
+  itemCode: string;
+  itemNameEn: string;
+  itemNameBn: string;
+  quantity: number;
+  supplierId: number | null;
+  supplierName: string;
+  returnReason: string;
+  returnDate: string;
+  createdByName: string;
+  createdAt: string;
+};
+
+export type DamagedStock = {
+  id: number;
+  itemCode: string;
+  itemNameEn: string;
+  itemNameBn: string;
+  quantity: number;
+  damageReason: string;
+  damageDate: string;
+  notes: string;
+  createdByName: string;
+  createdAt: string;
+};
+
+export async function apiListStockReturns(params?: { page?: number; perPage?: number }): Promise<{ data: StockReturn[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/stock-returns?${qs}`);
+}
+
+export async function apiCreateStockReturn(payload: {
+  itemCode: string;
+  quantity: number;
+  supplierId?: number;
+  returnReason: string;
+  returnDate: string;
+}): Promise<void> {
+  await req("/api/v1/stock-returns", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function apiListDamagedStock(params?: { page?: number; perPage?: number }): Promise<{ data: DamagedStock[]; meta: { page: number; perPage: number; total: number } }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.perPage) qs.set("perPage", String(params.perPage));
+  return req(`/api/v1/damaged-stock?${qs}`);
+}
+
+export async function apiCreateDamagedStock(payload: {
+  itemCode: string;
+  quantity: number;
+  damageReason: string;
+  damageDate: string;
+  notes?: string;
+}): Promise<void> {
+  await req("/api/v1/damaged-stock", { method: "POST", body: JSON.stringify(payload) });
+}
